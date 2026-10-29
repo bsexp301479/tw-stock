@@ -80,13 +80,22 @@ def cmd_export(args):
 
 
 def cmd_serve(args):
+    import errno
     import functools
     import http.server
     import webbrowser
     from .config import SITE_DIR
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(SITE_DIR))
-    with http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler) as httpd:
-        url = f"http://localhost:{args.port}/"
+    url = f"http://localhost:{args.port}/"
+    try:
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler)
+    except OSError as e:
+        if e.errno not in (errno.EADDRINUSE, 10048):  # 10048：Windows 的 WSAEADDRINUSE
+            raise
+        print(f"⚠️  埠 {args.port} 已被使用，可能網站已經在執行：{url}")
+        print(f"   要另開一個請指定其他埠，例如：python -m twstock serve --port {args.port + 1}")
+        return 1
+    with httpd:
         print(f"🌐 本機預覽：{url}（Ctrl+C 停止）")
         if not args.no_browser:
             webbrowser.open(url)
