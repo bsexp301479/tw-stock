@@ -108,21 +108,41 @@ DDL = [
         CONSTRAINT UQ_institutional UNIQUE (stock_id, trade_date)
     )
     """,
+    # 期貨每日行情（每個合約月份一列；夜盤的 trade_date 是成交量歸屬日，即隔天）
     """
-    IF OBJECT_ID('futures_minute_prices') IS NULL
-    CREATE TABLE futures_minute_prices (
-        id          BIGINT IDENTITY(1,1) PRIMARY KEY,
-        symbol      NVARCHAR(20)  NOT NULL,
-        trade_date  DATE          NOT NULL,
-        trade_time  TIME(0)       NOT NULL,
-        session     NVARCHAR(5)   NOT NULL DEFAULT 'DAY',   -- DAY 日盤 / NIGHT 夜盤
-        open_price  DECIMAL(10,2) NOT NULL,
-        high_price  DECIMAL(10,2) NOT NULL,
-        low_price   DECIMAL(10,2) NOT NULL,
-        close_price DECIMAL(10,2) NOT NULL,
-        volume      INT           NOT NULL,
-        created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
-        CONSTRAINT UK_futures_minute_prices UNIQUE (symbol, trade_date, trade_time, session)
+    IF OBJECT_ID('futures_daily_prices') IS NULL
+    CREATE TABLE futures_daily_prices (
+        id             BIGINT IDENTITY(1,1) PRIMARY KEY,
+        trade_date     DATE          NOT NULL,
+        commodity_id   NVARCHAR(10)  NOT NULL,   -- TX 台指期、MTX 小台…
+        contract_month CHAR(6)       NOT NULL,   -- 202611
+        session        NVARCHAR(5)   NOT NULL,   -- DAY 日盤 / NIGHT 夜盤
+        open_price     DECIMAL(10,2) NULL,
+        high_price     DECIMAL(10,2) NULL,
+        low_price      DECIMAL(10,2) NULL,
+        close_price    DECIMAL(10,2) NULL,
+        change         DECIMAL(10,2) NULL,
+        volume         INT           NULL,
+        settlement     DECIMAL(10,2) NULL,       -- 夜盤沒有
+        open_interest  INT           NULL,       -- 未沖銷契約數，夜盤沒有
+        created_at     DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_futures_daily UNIQUE (commodity_id, contract_month, session, trade_date)
+    )
+    """,
+    # 產業鏈族群（櫃買中心產業價值鏈平台）；含興櫃，所以存代號而非 stocks 外鍵
+    """
+    IF OBJECT_ID('industry_chains') IS NULL
+    CREATE TABLE industry_chains (
+        id           INT IDENTITY(1,1) PRIMARY KEY,
+        chain_id     NVARCHAR(10)  NOT NULL,
+        chain_name   NVARCHAR(50)  NOT NULL,    -- 半導體
+        segment_id   NVARCHAR(10)  NOT NULL,
+        segment_name NVARCHAR(100) NOT NULL,    -- IC/晶圓製造
+        sub_id       NVARCHAR(10)  NOT NULL,    -- 沒有細項時為空字串
+        sub_name     NVARCHAR(100) NOT NULL,    -- 晶圓製造
+        stock_code   NVARCHAR(10)  NOT NULL,
+        updated_at   DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_industry_chains UNIQUE (chain_id, segment_id, sub_id, stock_code)
     )
     """,
     # 索引
@@ -134,6 +154,8 @@ DDL = [
     "CREATE INDEX IX_monthly_rev_stock ON monthly_revenue(stock_id, revenue_year DESC, revenue_month DESC)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_institutional_date') "
     "CREATE INDEX IX_institutional_date ON institutional_trades(trade_date)",
+    "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_industry_chains_code') "
+    "CREATE INDEX IX_industry_chains_code ON industry_chains(stock_code)",
 ]
 
 
@@ -152,4 +174,4 @@ def setup_database():
     conn.commit()
     conn.close()
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
-          "institutional_trades、futures_minute_prices")
+          "institutional_trades、futures_daily_prices、industry_chains")

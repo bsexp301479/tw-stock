@@ -1,8 +1,9 @@
 """
 把資料庫內容匯出成靜態 JSON（site/data/），網站只讀這些檔案、不需要後端：
 
-  latest.json        今日總覽：大盤統計、類股/概念股資金流（含回放用的每日座標）、每檔股票最新指標
-  stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比
+  latest.json        今日總覽：大盤統計、台指期日 K、類股/產業鏈/概念股資金流（含回放用的每日座標）、
+                     每檔股票最新指標
+  stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈
 """
 import json
 from collections import defaultdict
@@ -31,6 +32,47 @@ def _pct(close, change):
     if close is None or change is None or close == change:
         return None
     return float(change) / (float(close) - float(change)) * 100
+
+
+def _load_chains(cur):
+    """回傳 ({產業鏈: [代號...]}, {代號: [[產業鏈, 區段, [細項...]], ...]})。"""
+    groups, tags = defaultdict(list), defaultdict(dict)
+    for chain, seg, sub, code in cur.execute("""
+        SELECT chain_name, segment_name, sub_name, stock_code FROM industry_chains
+        ORDER BY chain_id, segment_id, sub_id"""):
+        if code not in groups[chain]:
+            groups[chain].append(code)
+        subs = tags[code].setdefault((chain, seg), [])
+        if sub and sub not in subs:
+            subs.append(sub)
+    return dict(groups), {c: [[ch, seg, subs] for (ch, seg), subs in t.items()] for c, t in tags.items()}
+
+
+def _load_futures(cur, commodity="TX"):
+    """近月連續日 K（日盤）＋最近一次夜盤。近月 = 當天有成交價的最近到期月份。"""
+    near = {}
+    for r in cur.execute("""
+        SELECT trade_date, session, contract_month, open_price, high_price, low_price, close_price,
+               change, volume, open_interest
+        FROM futures_daily_prices
+        WHERE commodity_id = ? AND close_price IS NOT NULL
+        ORDER BY trade_date, session, contract_month""", commodity):
+        near.setdefault((r[0], r[1]), r)     # 同日同時段第一筆 = 最近月份
+    day = [v for (d, s), v in sorted(near.items()) if s == "DAY"]
+    night = [v for (d, s), v in sorted(near.items()) if s == "NIGHT"]
+    if not day:
+        return None
+    n = night[-1] if night else None
+    return {
+        "id": commodity, "name": "台指期近月",
+        "d": [str(r[0]) for r in day], "m": [r[2] for r in day],
+        "o": [_f(r[3]) for r in day], "h": [_f(r[4]) for r in day], "l": [_f(r[5]) for r in day],
+        "c": [_f(r[6]) for r in day], "ch": [_f(r[7]) for r in day],
+        "v": [r[8] for r in day], "oi": [r[9] for r in day],
+        # 夜盤 trade_date 是歸屬日：標示 D 的夜盤 = D 前一個交易日 15:00 ~ D 05:00
+        "night": {"date": str(n[0]), "m": n[2], "o": _f(n[3]), "h": _f(n[4]), "l": _f(n[5]),
+                  "c": _f(n[6]), "ch": _f(n[7]), "v": n[8]} if n else None,
+    }
 
 
 def export_all():
@@ -73,6 +115,8 @@ def export_all():
         FROM monthly_revenue m JOIN stocks s ON s.stock_id = m.stock_id
         ORDER BY s.stock_code, m.revenue_year, m.revenue_month"""):
         revenue[r[0]].append([r[1], r[2], r[3], _f(r[4]), _f(r[5])])
+    chains, chain_of = _load_chains(cur)
+    futures = _load_futures(cur)
     conn.close()
 
     concepts = load_concepts()
@@ -96,7 +140,7 @@ def export_all():
         d_, o, h, l, c, v, tv, ch, fn, tn, dn, total = zip(*rows)
 
         _write(SITE_DATA_DIR / "stocks" / f"{code}.json", {
-            "code": code, **info, "concepts": concept_of.get(code, []),
+            "code": code, **info, "concepts": concept_of.get(code, []), "chains": chain_of.get(code, []),
             "prices": {"d": [str(x) for x in d_], "o": [_f(x) for x in o], "h": [_f(x) for x in h],
                        "l": [_f(x) for x in l], "c": [_f(x) for x in c],
                        "v": [round(x / 1000) if x else 0 for x in v]},           # 張
@@ -159,8 +203,10 @@ def export_all():
         "dates": replay_dates,
         "market": {k: {**v, "turnover": round(v["turnover"], 1)} for k, v in market.items()},
         "insti": {k: round(v, 1) for k, v in insti_total.items()},
+        "futures": futures,
         "groups": {
             "industry": group_flows(industries, daily, dates, REPLAY),
+            "chain": group_flows(chains, daily, dates, REPLAY),
             "concept": group_flows(concepts, daily, dates, REPLAY),
         },
         "stocks": snapshot,
@@ -168,7 +214,8 @@ def export_all():
     _write(SITE_DATA_DIR / "latest.json", latest)
     size = (SITE_DATA_DIR / "latest.json").stat().st_size / 1024
     print(f"✅ 匯出完成：資料日 {latest_date}，個股 {len(prices)} 檔，"
-          f"類股 {len(latest['groups']['industry'])}、概念 {len(latest['groups']['concept'])}，"
+          f"類股 {len(latest['groups']['industry'])}、產業鏈 {len(latest['groups']['chain'])}、"
+          f"概念 {len(latest['groups']['concept'])}，台指期 {len(futures['d']) if futures else 0} 天，"
           f"latest.json {size:.0f} KB")
     if str(dates[-1]) != str(latest_date):
         print(f"⚠️  法人資料只到 {dates[-1]}，資金流以該日為準")

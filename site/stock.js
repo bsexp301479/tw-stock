@@ -30,6 +30,7 @@ window.renderStock = async function (code) {
             <span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span></div>
           <div class="tags">
             <span class="pill">${data.market === 'TWSE' ? '上市' : '上櫃'}</span><span class="pill">${esc(data.industry)}</span>
+            ${(data.chains || []).map(([chain, seg, subs]) => `<span class="pill chain" title="${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}">${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}</span>`).join('')}
             ${data.concepts.map(c => `<span class="pill">${esc(c)}</span>`).join('')}
             <span class="muted small">${P.d[last]} 收盤</span>
           </div>

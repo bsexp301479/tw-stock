@@ -62,7 +62,8 @@ MIN_INTERVAL = {
     "www.tpex.org.tw":     3.0,
     "openapi.twse.com.tw": 1.0,
     "mopsov.twse.com.tw":  3.0,
-    "mis.taifex.com.tw":   1.5,
+    "www.taifex.com.tw":   3.0,
+    "ic.tpex.org.tw":      2.0,
 }
 DEFAULT_INTERVAL = 3.0
 RETRY_BACKOFF = (30, 60, 120)   # 失敗後依序等待秒數，用完仍失敗就放棄

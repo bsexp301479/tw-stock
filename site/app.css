@@ -120,6 +120,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl .nm b{font-weight:500}
 .tbl .nm span{color:var(--text3);font-size:11px;margin-left:6px}
 .pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--card2);border:1px solid var(--border);color:var(--text2)}
+.pill.chain{border-color:color-mix(in srgb,var(--blue) 45%,var(--border));color:var(--text)}
+
+/* 台指期 */
+.fut-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.fut-sub{display:flex;flex-wrap:wrap;gap:4px 16px;margin:4px 0 8px}
+.fut-sub b{font-weight:500;color:var(--text)}
 
 /* 泡泡圖 */
 #bubble{width:100%;height:min(72vh,680px)}

@@ -7,7 +7,8 @@
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
   python -m twstock export                           從資料庫匯出網站 JSON（site/data）
   python -m twstock serve                            本機預覽網站 http://localhost:8000
-  python -m twstock futures --date 2026-10-28        台指期分鐘 K 線
+  python -m twstock futures --start 2025-01-01       台指期日 K（期交所每日行情）
+  python -m twstock chains                           更新產業鏈族群（櫃買產業價值鏈平台）
   python -m twstock chanlun 2330                     纏論結構圖（output/chanlun_2330.svg）
 """
 import argparse
@@ -33,8 +34,13 @@ def cmd_setup_db(args):
     setup_database()
 
 
+CHAINS_REFRESH_DAYS = 30
+
+
 def cmd_collect(args):
+    from .collectors.chains import chains_age_days, update_chains
     from .collectors.daily import collect_for_date
+    from .collectors.futures import collect_futures
     from .collectors.industry import update_industry
     from .collectors.revenue import collect_monthly_revenue, revenue_month_for
     from .fetch import FetchError
@@ -51,6 +57,17 @@ def cmd_collect(args):
                     collect_monthly_revenue(*month)
                 except FetchError as e:
                     print(f"  ⚠️  月營收抓取失敗，下次執行會再補：{e}")
+            # 期貨與產業鏈失敗不影響當日股票資料，下次執行會再補
+            try:
+                collect_futures(d)
+            except FetchError as e:
+                print(f"  ⚠️  台指期抓取失敗：{e}")
+            age = chains_age_days()
+            if age is None or age >= CHAINS_REFRESH_DAYS:
+                try:
+                    update_chains()
+                except (FetchError, RuntimeError) as e:
+                    print(f"  ⚠️  產業鏈更新失敗：{e}")
     except FetchError as e:
         print(f"\n❌ {e}")
         return 1
@@ -85,10 +102,17 @@ def cmd_serve(args):
     import http.server
     import webbrowser
     from .config import SITE_DIR
+    class Server(http.server.ThreadingHTTPServer):
+        def handle_error(self, request, client_address):
+            # 瀏覽器預先開的連線沒用到就關閉，屬正常情況，不印 Traceback
+            if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError)):
+                return
+            super().handle_error(request, client_address)
+
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(SITE_DIR))
     url = f"http://localhost:{args.port}/"
     try:
-        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler)
+        httpd = Server(("127.0.0.1", args.port), handler)
     except OSError as e:
         if e.errno not in (errno.EADDRINUSE, 10048):  # 10048：Windows 的 WSAEADDRINUSE
             raise
@@ -108,7 +132,13 @@ def cmd_serve(args):
 def cmd_futures(args):
     from .collectors.futures import collect_futures
     start = args.date or args.start or date.today()
-    collect_futures(start, args.end if args.start else start, args.symbol)
+    end = (args.end or date.today()) if args.start and not args.date else start
+    collect_futures(start, end, args.commodity)
+
+
+def cmd_chains(args):
+    from .collectors.chains import update_chains
+    update_chains()
 
 
 def cmd_chanlun(args):
@@ -152,12 +182,14 @@ def main(argv=None):
     s.add_argument("--no-browser", action="store_true", help="不自動開瀏覽器")
     s.set_defaults(fn=cmd_serve)
 
-    s = sub.add_parser("futures", help="台指期分鐘 K 線")
-    s.add_argument("--date", type=_date)
-    s.add_argument("--start", type=_date)
-    s.add_argument("--end", type=_date)
-    s.add_argument("--symbol", default="TX00")
+    s = sub.add_parser("futures", help="期貨日 K（預設台指期 TX）")
+    s.add_argument("--date", type=_date, help="單日，預設今天")
+    s.add_argument("--start", type=_date, help="補抓起日")
+    s.add_argument("--end", type=_date, help="補抓迄日，預設今天")
+    s.add_argument("--commodity", default="TX", help="契約代號，如 TX、MTX、TMF")
     s.set_defaults(fn=cmd_futures)
+
+    sub.add_parser("chains", help="更新產業鏈族群").set_defaults(fn=cmd_chains)
 
     s = sub.add_parser("chanlun", help="纏論結構圖 SVG")
     s.add_argument("code")

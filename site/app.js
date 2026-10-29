@@ -4,7 +4,7 @@
 const App = {
   latest: null,
   stockCache: {},
-  group: localStore('group', 'industry'),   // industry 類股 / concept 概念股
+  group: localStore('group', 'industry'),   // industry 類股 / chain 產業鏈 / concept 概念股
   watch: new Set(JSON.parse(localStore('watch', '[]'))),
 };
 
@@ -48,7 +48,7 @@ function onSeg(id, fn) {
     if (b) fn(b.dataset.v);
   });
 }
-function groupSeg() { return segHTML('grpSeg', [['industry', '類股'], ['concept', '概念股']], App.group); }
+function groupSeg() { return segHTML('grpSeg', [['industry', '類股'], ['chain', '產業鏈'], ['concept', '概念股']], App.group); }
 
 // ─── 路由 ───────────────────────────────────────────────
 const routes = {
@@ -65,6 +65,7 @@ async function route() {
   const view = $('#view');
   if (window.Plotly && $('#bubble')) Plotly.purge('bubble');
   window.disposeStockCharts?.();
+  disposeFuturesChart();
   try {
     await (routes[page] || renderToday)(arg);
   } catch (e) {
@@ -146,6 +147,8 @@ function renderToday() {
       </div>
     </section>
 
+    ${futuresHTML(L.futures)}
+
     <section class="sec">
       <div class="sec-h"><h2>資金象限</h2><span class="sp"></span>${groupSeg()}</div>
       <a class="quads" href="#/bubble">
@@ -174,6 +177,88 @@ function renderToday() {
   onSeg('grpSeg', v => { setGroup(v); renderToday(); });
   onSeg('spanSeg', v => { localStore('span', null, v); renderToday(); });
   $('#view').addEventListener('click', onRowClick);
+  drawFutures(L.futures);
+}
+
+// ─── 台指期日 K（首頁） ─────────────────────────────────
+let futChart = null;
+function disposeFuturesChart() { futChart?.remove(); futChart = null; }
+
+const md = d => d.slice(5).replace('-', '/');
+
+function futuresHTML(F) {
+  if (!F || !F.d.length) return '';
+  const k = F.d.length - 1, c = F.c[k], ch = F.ch[k], pct = ch != null && c !== ch ? ch / (c - ch) * 100 : null;
+  const N = F.night;
+  let night = '';
+  if (N) {
+    // 夜盤歸屬日 D = 前一個交易日 15:00 ~ D 05:00
+    const from = [...F.d].reverse().find(d => d < N.date);
+    const np = N.ch != null && N.c !== N.ch ? N.ch / (N.c - N.ch) * 100 : null;
+    night = `<span>夜盤 ${from ? md(from) + ' 15:00～' : ''}${md(N.date)} 05:00　收 <b class="num ${cls(N.ch)}">${fmt(N.c)}</b>
+      <span class="num ${cls(N.ch)}">${sgn(N.ch, 0)} (${sgn(np)}%)</span></span>`;
+  }
+  return `<section class="sec card">
+      <div class="sec-h"><h2>${esc(F.name)}</h2><span class="muted small">日盤・契約 ${F.m[k]}</span>
+        <span class="sp"></span><span class="muted small">拖曳平移、滾輪縮放</span></div>
+      <div class="fut-head">
+        <span class="s-price num ${cls(ch)}" style="font-size:26px">${fmt(c)}</span>
+        <span class="s-chg num ${cls(ch)}">${ch > 0 ? '▲' : ch < 0 ? '▼' : ''} ${fmt(Math.abs(ch ?? 0))} (${sgn(pct)}%)</span>
+        <span class="muted small">${F.d[k]}</span>
+      </div>
+      <div class="fut-sub muted small"><span>成交量 <b class="num">${fmt(F.v[k])}</b> 口</span>
+        <span>未平倉 <b class="num">${fmt(F.oi[k])}</b> 口</span>${night}</div>
+      <div class="kleg" id="fLegend"></div>
+      <div id="fC" class="chart-box" style="height:300px"></div>
+    </section>`;
+}
+
+function drawFutures(F) {
+  disposeFuturesChart();
+  if (!F || !F.d.length || !$('#fC') || !window.LightweightCharts) return;
+  const LC = window.LightweightCharts;
+  const UP = css('--up'), DN = css('--dn'), grid = css('--border');
+  const T = F.d, n = T.length;
+  const ma5 = calcMA(F.c, 5), ma20 = calcMA(F.c, 20);
+  const pad = x => String(x).padStart(2, '0');
+  const ymd = t => typeof t === 'string' ? t.split('-').map(Number) : [t.year, t.month, t.day];
+  const intFmt = { type: 'custom', minMove: 1, formatter: v => fmt(v) };
+
+  futChart = LC.createChart($('#fC'), {
+    autoSize: true,
+    layout: { background: { type: 'solid', color: 'transparent' }, textColor: css('--text2'), fontSize: 10 },
+    grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+    crosshair: { mode: LC.CrosshairMode.Normal },
+    rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.06, bottom: 0.24 } },
+    // autoSize 建立當下寬度為 0，用 setVisibleLogicalRange 會算出極小間距；固定 K 棒間距即可
+    timeScale: { borderVisible: false, fixLeftEdge: true, rightOffset: 3, barSpacing: 7,
+      tickMarkFormatter: (t, type) => { const [y, m, d] = ymd(t); return type === 0 ? String(y) : type === 1 ? `${m}月` : `${m}/${d}`; } },
+    localization: { locale: 'zh-TW', timeFormatter: t => ymd(t).map(pad).join('/') },
+  });
+  const kSer = futChart.addCandlestickSeries({ upColor: UP, downColor: DN, borderUpColor: UP, borderDownColor: DN, wickUpColor: UP, wickDownColor: DN, priceFormat: intFmt });
+  kSer.setData(T.map((t, i) => ({ time: t, open: F.o[i], high: F.h[i], low: F.l[i], close: F.c[i] })));
+  const line = (vals, color) => futChart.addLineSeries({ color, lineWidth: 1, priceFormat: intFmt, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+    .setData(vals.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
+  line(ma5, '#888780'); line(ma20, '#EF9F27');
+  // 成交量疊在下方 20%
+  const vSer = futChart.addHistogramSeries({ priceScaleId: 'vol', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
+  futChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+  vSer.setData(T.map((t, i) => ({ time: t, value: F.v[i] ?? 0, color: (F.c[i] >= F.o[i] ? UP : DN) + '66' })));
+
+  const legend = $('#fLegend');
+  const show = i => {
+    const ch = F.ch[i], c = cls(ch), p = ch != null && F.c[i] !== ch ? ch / (F.c[i] - ch) * 100 : null;
+    const ma = (label, v, color) => v == null ? '' : `<span style="color:${color}">${label} <b style="color:${color}">${fmt(v)}</b></span>`;
+    legend.innerHTML = `<span><b>${T[i]}</b></span><span>開 <b>${fmt(F.o[i])}</b></span><span>高 <b class="up">${fmt(F.h[i])}</b></span>` +
+      `<span>低 <b class="dn">${fmt(F.l[i])}</b></span><span>收 <b class="${c}">${fmt(F.c[i])}</b></span>` +
+      `<span class="${c}">${sgn(ch, 0)} (${sgn(p)}%)</span><span>量 <b>${fmt(F.v[i])}</b></span>` +
+      ma('MA5', ma5[i], '#888780') + ma('MA20', ma20[i], '#EF9F27');
+  };
+  show(n - 1);
+  futChart.subscribeCrosshairMove(p => {
+    const i = p.time ? T.indexOf(typeof p.time === 'string' ? p.time : ymd(p.time).map(pad).join('-')) : -1;
+    show(i >= 0 ? i : n - 1);
+  });
 }
 
 function onRowClick(e) {
