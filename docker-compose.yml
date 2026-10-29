@@ -1,0 +1,19 @@
+# 本機 SQL Server。密碼讀取同目錄 .env 的 DB_PASSWORD（docker compose 會自動載入 .env）。
+#   Apple Silicon Mac：預設 azure-sql-edge（ARM 原生）
+#   Windows / Intel：在 .env 加上 MSSQL_IMAGE=mcr.microsoft.com/mssql/server:2022-latest
+# 已有自建容器（例如 MySqlServer）佔用 1433 埠時，不需要再啟動這個。
+services:
+  mssql:
+    image: ${MSSQL_IMAGE:-mcr.microsoft.com/azure-sql-edge}
+    container_name: twstock-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${DB_PASSWORD:?請先在 .env 設定 DB_PASSWORD}
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    restart: unless-stopped
+
+volumes:
+  mssql-data:

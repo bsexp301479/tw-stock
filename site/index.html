@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>台股資金流</title>
+<meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+<link rel="stylesheet" href="app.css">
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+<script src="app.js" defer></script>
+<script src="stock.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/today">
+    <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><circle cx="11" cy="19" r="8" fill="var(--up)"/><circle cx="22" cy="12" r="6" fill="var(--amber)"/><circle cx="23" cy="24" r="4" fill="var(--dn)"/></svg>
+    <span>台股資金流</span>
+  </a>
+  <div class="search">
+    <input id="q" type="search" placeholder="搜尋代號或名稱，如 2330、台積電" autocomplete="off" aria-label="搜尋股票">
+    <div id="qList" class="qlist" hidden></div>
+  </div>
+  <nav class="tabs" aria-label="主選單">
+    <a href="#/today" data-tab="today">今日</a>
+    <a href="#/bubble" data-tab="bubble">泡泡圖</a>
+    <a href="#/rank" data-tab="rank">排行</a>
+    <a href="#/watch" data-tab="watch">自選</a>
+  </nav>
+</header>
+
+<div class="datebar" id="dateBar"></div>
+<main id="view" class="wrap"><div class="loading">載入中…</div></main>
+
+<nav class="bottom" aria-label="主選單">
+  <a href="#/today" data-tab="today"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>今日</a>
+  <a href="#/bubble" data-tab="bubble"><svg viewBox="0 0 24 24"><circle cx="8" cy="14" r="5"/><circle cx="17" cy="8" r="4"/><circle cx="17" cy="18" r="2.5"/></svg>泡泡圖</a>
+  <a href="#/rank" data-tab="rank"><svg viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>排行</a>
+  <a href="#/watch" data-tab="watch"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>自選</a>
+</nav>
+
+<footer class="foot wrap">資料來源：臺灣證券交易所、證券櫃檯買賣中心、公開資訊觀測站。僅供研究參考，不構成投資建議。</footer>
+</body>
+</html>

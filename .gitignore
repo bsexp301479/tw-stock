@@ -1,0 +1,17 @@
+# 帳密
+.env
+
+# 產生的資料與輸出
+site/data/
+output/
+logs/
+data/cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 系統檔
+.DS_Store
+Thumbs.db
