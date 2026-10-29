@@ -20,10 +20,15 @@ function localStore(key, fallback, value) {
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => n == null || isNaN(n) ? '--' : Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
-const pfmt = n => fmt(n, 2);                                              // 股價一律兩位小數
+// 股價最多兩位小數，尾數的 0 不顯示（2,415、90.9、12.35）
+const pfmt = n => n == null || isNaN(n) ? '--' : Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
+const psgn = n => n == null ? '--' : (n > 0 ? '+' : '') + pfmt(n);                 // 價差：+1.2、-10
 const sgn = (n, d = 2) => n == null ? '--' : (n > 0 ? '+' : '') + fmt(n, d);
 const cls = n => n > 0 ? 'up' : n < 0 ? 'dn' : 'flat';
-const yi = n => n == null ? '--' : sgn(n, Math.abs(n) >= 100 ? 0 : 1) + '億';
+// 表格的漲跌欄；今天無成交的股票顯示「無成交」（收盤價為最後成交日）
+const pctCell = s => s.nt ? `<td class="flat small" title="最後成交 ${s.nt}">無成交</td>` : `<td class="num ${cls(s.p)}">${sgn(s.p)}%</td>`;
+// 不到 0.05 億四捨五入後是 0，避免顯示「-0.0億」
+const yi = n => n == null ? '--' : Math.abs(n) < 0.05 ? '0億' : sgn(n, Math.abs(n) >= 100 ? 0 : 1) + '億';
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 async function getJSON(url) {
@@ -127,7 +132,7 @@ function renderToday() {
   const mk = (m, label) => `<div class="card stat">
       <div class="l">${label}成交額</div>
       <div class="v num">${fmt(L.market[m].turnover)}<span class="small muted"> 億</span></div>
-      <div class="s num"><span class="up">▲${L.market[m].up}</span>　<span class="dn">▼${L.market[m].down}</span>　<span class="flat">－${L.market[m].flat}</span></div>
+      <div class="s num">漲 <span class="up">${L.market[m].up}</span>　跌 <span class="dn">${L.market[m].down}</span>　平 <span class="flat">${L.market[m].flat}</span> 家</div>
     </div>`;
   const bar = (g, color) => `<div class="bar-row" data-group="${esc(g.name)}">
       <span class="nm">${esc(g.name)}</span>
@@ -135,7 +140,7 @@ function renderToday() {
       <span class="val num ${cls(g[key])}">${yi(g[key])}</span></div>`;
   const rows = list => list.map(([c, s]) => `<tr data-code="${c}">
       <td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
-      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td><td class="num ${cls(s.p)}">${sgn(s.p)}%</td>
+      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num ${cls(s.n1)}">${yi(s.n1)}</td></tr>`).join('');
 
   $('#view').innerHTML = `
@@ -309,62 +314,63 @@ function drawBubble(groups, dates) {
   const limY = Math.max(...all.map(f => Math.abs(symlog(f[1])))) * 1.12;
   // 泡泡直徑：成交額開 0.4 次方後線性映射到 [minD, maxD]。各族群成交額可差上千倍，
   // 若面積直接正比成交額，小族群會縮成一個點；壓縮後仍保留大小順序。
+  // 最小直徑要放得下「名稱 + 金額」兩行字
   const P = 0.4, sz = t => Math.max(t, 0) ** P;
   const tMin = sz(Math.min(...all.map(f => f[3]))), tMax = sz(Math.max(...all.map(f => f[3])));
   const width = $('#bubble').clientWidth || 800;
-  const maxD = Math.min(64, Math.max(34, width / 14)), minD = Math.max(14, maxD * 0.28);
-  const diam = t => tMax > tMin ? minD + (maxD - minD) * (sz(t) - tMin) / (tMax - tMin) : maxD;
   const narrow = width < 600;
-  const FONT = narrow ? 9 : 11;
+  const maxD = Math.min(104, Math.max(48, width / 10)), minD = narrow ? 34 : 40;
+  const diam = t => tMax > tMin ? minD + (maxD - minD) * (sz(t) - tMin) / (tMax - tMin) : maxD;
   const M = { l: 56, r: 12, t: 12, b: narrow ? 112 : 96 };
   const sliderY = narrow ? -0.14 : -0.1;   // 窄螢幕的 X 軸標題離滑桿太近，往下移
   const plotW = width - M.l - M.r, plotH = ($('#bubble').clientHeight || 600) - M.t - M.b;
+  const amount = v => (v > 0 ? '+' : '') + (Math.abs(v) >= 10 ? Math.round(v) : v.toFixed(1)) + '億';
+  const textW = (s, f) => [...s].reduce((w, ch) => w + (ch.charCodeAt(0) > 255 ? f : f * 0.6), 0);
 
-  // 名稱避讓：大泡泡優先；放得進泡泡就寫在裡面，否則依序試上、下、右、左，
-  // 都會壓到別的名稱或泡泡就不寫（滑鼠移上去仍看得到）
-  const placeLabels = (gs, xs, ys, d) => {
+  // 泡泡內寫「名稱 + 近 5 日金額」，字級隨泡泡大小；名稱太長就截斷加「…」。
+  // 大泡泡優先，文字會和已寫的文字重疊時這顆就不寫（滑鼠移上去仍看得到）
+  const labels = (gs, xs, ys, d, k) => {
     const px = xs.map(x => M.l + (x + limX) / (2 * limX) * plotW);
     const py = ys.map(y => M.t + (limY - y) / (2 * limY) * plotH);
-    const boxes = d.map((v, i) => [px[i] - v / 2, py[i] - v / 2, px[i] + v / 2, py[i] + v / 2]);
     const hit = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
-    const placed = [];
-    const text = gs.map(() => ''), pos = gs.map(() => 'top center');
+    const placed = [], text = gs.map(() => ''), font = d.map(v => Math.max(8, Math.min(14, v * 0.2)));
     [...gs.keys()].sort((a, b) => d[b] - d[a]).forEach(i => {
-      const w = gs[i].name.length * FONT + 4, h = Math.ceil(FONT * 1.45), r = d[i] / 2;
-      if (w <= d[i] - 4) {
-        text[i] = gs[i].name; pos[i] = 'middle center';
-        return;
+      const f = font[i], room = d[i] - 6;
+      let name = gs[i].name;
+      if (textW(name, f) > room) {
+        while (name.length > 1 && textW(name + '…', f) > room) name = name.slice(0, -1);
+        name += '…';
       }
-      const tries = [
-        ['top center', [px[i] - w / 2, py[i] - r - h - 1, px[i] + w / 2, py[i] - r - 1]],
-        ['bottom center', [px[i] - w / 2, py[i] + r + 1, px[i] + w / 2, py[i] + r + h + 1]],
-        ['middle right', [px[i] + r + 2, py[i] - h / 2, px[i] + r + w + 2, py[i] + h / 2]],
-        ['middle left', [px[i] - r - w - 2, py[i] - h / 2, px[i] - r - 2, py[i] + h / 2]],
-      ];
-      const ok = tries.find(([, b]) => !placed.some(p => hit(p, b)) && !boxes.some((c, j) => j !== i && hit(c, b)));
-      if (ok) { text[i] = gs[i].name; pos[i] = ok[0]; placed.push(ok[1]); }
+      const amt = amount(gs[i].frames[k][0]);
+      const w = Math.max(textW(name, f), textW(amt, f)), h = f * 2.5;
+      const box = [px[i] - w / 2, py[i] - h / 2, px[i] + w / 2, py[i] + h / 2];
+      if (placed.some(b => hit(b, box))) return;
+      placed.push(box);
+      text[i] = `<b>${esc(name)}</b><br>${amt}`;
     });
-    return { text, pos };
+    return { text, font };
   };
 
   const trace = k => {
-    const gs = valid[k];
+    // 大泡泡先畫、小泡泡疊在上面，才點得到小的
+    const gs = [...valid[k]].sort((a, b) => b.frames[k][3] - a.frames[k][3]);
     const d = gs.map(g => diam(g.frames[k][3]));
     const xs = gs.map(g => symlog(g.frames[k][0])), ys = gs.map(g => symlog(g.frames[k][1]));
-    const lab = placeLabels(gs, xs, ys, d);
+    const lab = labels(gs, xs, ys, d, k);
     return {
       type: 'scatter', mode: 'markers+text',
       ids: gs.map(g => g.name),
       x: xs, y: ys,
-      text: lab.text, textposition: lab.pos,
+      text: lab.text, textposition: 'middle center',
       customdata: gs.map(g => [g.name, ...g.frames[k]]),
-      textfont: { size: FONT, color: text },
+      textfont: { size: lab.font, color: '#fff' },
       hovertemplate: '<b>%{customdata[0]}</b><br>近5日 %{customdata[1]:+.1f}億<br>加速度 %{customdata[2]:+.1f}億/天<br>漲跌 %{customdata[3]:+.2f}%<br>成交 %{customdata[4]:,.0f}億<extra></extra>',
       marker: {
         size: d, sizemode: 'diameter',
         color: gs.map(g => g.frames[k][2]), cmin: -4, cmax: 4,
-        colorscale: [[0, '#1f9d5a'], [0.5, '#9a9a9a'], [1, '#d64545']],
-        line: { width: 1, color: 'rgba(0,0,0,.35)' }, opacity: .85,
+        // 色彩壓深，白字才看得清楚
+        colorscale: [[0, '#17804a'], [0.5, '#5d636b'], [1, '#c23b3b']],
+        line: { width: 1, color: 'rgba(255,255,255,.45)' }, opacity: .82,
       },
     };
   };
@@ -422,7 +428,7 @@ function showGroup(g) {
   const rows = g.codes.filter(c => S[c]).sort((a, b) => (S[b].n5 ?? 0) - (S[a].n5 ?? 0));
   $('#gTable').innerHTML = `<thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>法人1日</th><th>法人5日</th></tr></thead><tbody>` +
     rows.map(c => { const s = S[c]; return `<tr data-code="${c}"><td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
-      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td><td class="num ${cls(s.p)}">${sgn(s.p)}%</td>
+      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num ${cls(s.n1)}">${yi(s.n1)}</td><td class="num ${cls(s.n5)}">${yi(s.n5)}</td></tr>`; }).join('') + '</tbody>';
 }
 
@@ -436,7 +442,7 @@ function stockTable(list) {
       <th>股票</th><th>收盤</th><th>漲跌</th><th>成交額</th><th>外資</th><th>投信</th><th>自營</th><th>法人1日</th><th>法人5日</th><th>連買賣</th></tr></thead><tbody>` +
     list.map(([c, s]) => `<tr data-code="${c}">
       <td class="nm"><b>${esc(s.n)}</b><span>${c} ${esc(s.i)}</span></td>
-      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td><td class="num ${cls(s.p)}">${sgn(s.p)}%</td>
+      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num">${fmt(s.tv, 1)}億</td>
       <td class="num ${cls(s.f1)}">${yi(s.f1)}</td><td class="num ${cls(s.t1)}">${yi(s.t1)}</td><td class="num ${cls(s.d1)}">${yi(s.d1)}</td>
       <td class="num ${cls(s.n1)}">${yi(s.n1)}</td><td class="num ${cls(s.n5)}">${yi(s.n5)}</td>

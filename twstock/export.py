@@ -162,11 +162,17 @@ def export_all():
                     "net": net, "turnover": (tv[i] or 0) / YI, "pct": _pct(c[i], ch[i])}
             net_value.append(net)
 
-        if d_[-1] != latest_date or c[-1] is None:
-            continue    # 今天沒有交易（停牌、下市）的股票不列入今日統計
-        pct = _pct(c[-1], ch[-1])
+        if d_[-1] != latest_date:
+            continue    # 今天沒有資料列（停牌、下市）的股票不列入
+        traded = [i for i, x in enumerate(c) if x is not None]
+        if not traded:
+            continue
+        j = traded[-1]                      # 最後一個有成交的日子
+        no_trade = j != len(d_) - 1         # 今天有資料列但沒有成交（開高低收為 --）
+        pct = None if no_trade else _pct(c[-1], ch[-1])
         m = market[info["market"]]
-        m["up" if (ch[-1] or 0) > 0 else "down" if (ch[-1] or 0) < 0 else "flat"] += 1
+        if not no_trade:                    # 無成交不計入漲跌家數
+            m["up" if (ch[-1] or 0) > 0 else "down" if (ch[-1] or 0) < 0 else "flat"] += 1
         m["turnover"] += (tv[-1] or 0) / YI
         # 法人指標以「有法人資料的最後一天」為準（法人資料比行情晚公布）
         k = max(i for i, day in enumerate(d_) if day <= dates[-1]) if d_[0] <= dates[-1] else None
@@ -178,7 +184,9 @@ def export_all():
                if d_[i] >= w52_start and h[i] is not None and l[i] is not None]
         snapshot[code] = {
             "n": info["name"], "m": info["market"], "i": info["industry"],
-            "c": _f(c[-1]), "ch": _f(ch[-1]), "p": _f(pct),
+            # 今天無成交時 c 是最後成交日的收盤，nt 記該日期
+            "c": _f(c[j]), "ch": None if no_trade else _f(ch[-1]), "p": _f(pct),
+            **({"nt": str(d_[j])} if no_trade else {}),
             "v": round((v[-1] or 0) / 1000), "tv": _f((tv[-1] or 0) / YI),
             "n1": _f(net_value[-1]) if net_value else None,
             "n5": _f(sum(net_value[-5:])), "n20": _f(sum(net_value[-20:])),

@@ -12,11 +12,16 @@ window.renderStock = async function (code) {
   try { data = await loadStock(code); }
   catch (e) { $('#view').innerHTML = `<div class="empty">找不到 ${esc(code)} 的資料</div>`; return; }
   const P = data.prices, n = P.d.length;
-  const last = n - 1, prev = P.c[last - 1];
+  const last = n - 1;
+  // 最新一天沒成交（開高低收為 --）時，改顯示最後成交日的收盤，不算漲跌
+  const traded = P.c.map((c, i) => c != null ? i : -1).filter(i => i >= 0);
+  const lt = traded.at(-1) ?? last, noTrade = lt !== last;
+  const close = P.c[lt];
+  const prevClose = P.c[traded.at(-2)] ?? null;
   // 優先用官方漲跌價差（除權息日「收盤 − 昨收」會失真）
-  const close = P.c[last];
-  const change = s?.ch ?? (prev != null ? close - prev : null);
-  const pct = s?.p ?? (change != null && prev ? change / prev * 100 : null);
+  const change = noTrade ? null : s?.ch ?? (prevClose != null ? close - prevClose : null);
+  const pct = noTrade ? null : s?.p ?? (change != null && prevClose ? change / prevClose * 100 : null);
+  const prev = noTrade ? close : change != null ? close - change : prevClose;   // 昨收（參考價）
   const mode = localStore('kmode', '日');
   const fund = data.fund || {};
   const watching = App.watch.has(code);
@@ -27,12 +32,13 @@ window.renderStock = async function (code) {
         <div>
           <div><span class="s-name">${esc(data.name)}</span><span class="s-code">${code}</span></div>
           <div><span class="s-price num ${cls(change)}">${pfmt(close)}</span>
-            <span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span></div>
+            ${noTrade ? '<span class="s-chg flat">無成交</span>'
+              : `<span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span>`}</div>
           <div class="tags">
             <span class="pill">${data.market === 'TWSE' ? '上市' : '上櫃'}</span><span class="pill">${esc(data.industry)}</span>
             ${(data.chains || []).map(([chain, seg, subs]) => `<span class="pill chain" title="${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}">${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}</span>`).join('')}
             ${data.concepts.map(c => `<span class="pill">${esc(c)}</span>`).join('')}
-            <span class="muted small">${P.d[last]} 收盤</span>
+            <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
           </div>
         </div>
         <button class="star ${watching ? 'on' : ''}" id="starBtn">${watching ? '★ 已加入自選' : '☆ 加入自選'}</button>
@@ -89,9 +95,18 @@ window.renderStock = async function (code) {
 // ─── 日線 → 週線 / 月線（法人買賣超加總）────────────────────
 function aggregate(data, mode) {
   const P = data.prices, I = data.insti;
-  const rows = P.d.map((d, i) => ({ d, o: P.o[i], h: P.h[i], l: P.l[i], c: P.c[i], v: P.v[i],
-    net: I.f[i] == null ? null : I.f[i] + I.t[i] + I.dl[i] }))
-    .filter(r => r.c != null && r.o != null);
+  // 無成交的日子（開高低收為 --）以前一個收盤價畫一字線，時間軸保持連續；上市前的空值略過
+  const rows = [];
+  let prevC = null;
+  P.d.forEach((d, i) => {
+    const net = I.f[i] == null ? null : I.f[i] + I.t[i] + I.dl[i];
+    if (P.c[i] != null && P.o[i] != null) {
+      rows.push({ d, o: P.o[i], h: P.h[i], l: P.l[i], c: P.c[i], v: P.v[i], net, nt: false });
+      prevC = P.c[i];
+    } else if (prevC != null) {
+      rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, net, nt: true });
+    }
+  });
   if (mode === '日') return rows;
   const out = new Map();
   for (const r of rows) {
@@ -105,6 +120,7 @@ function aggregate(data, mode) {
     if (!g) out.set(key, { ...r, d: key });
     else {
       g.h = Math.max(g.h, r.h); g.l = Math.min(g.l, r.l); g.c = r.c; g.v += r.v;
+      g.nt = g.nt && r.nt;   // 整週/整月都沒成交才算一字線
       g.net = r.net == null ? g.net : (g.net ?? 0) + r.net;
     }
   }
@@ -125,9 +141,9 @@ function buildCharts(raw, mode) {
   window.disposeStockCharts();
   if (!raw.length || !window.LightweightCharts) return;
   const LC = window.LightweightCharts;
-  const UP = css('--up'), DN = css('--dn'), text2 = css('--text2'), grid = css('--border');
+  const UP = css('--up'), DN = css('--dn'), FLAT = css('--flat'), text2 = css('--text2'), grid = css('--border');
   const T = raw.map(r => r.d), O = raw.map(r => r.o), H = raw.map(r => r.h), L = raw.map(r => r.l), C = raw.map(r => r.c), V = raw.map(r => r.v);
-  const N = raw.map(r => r.net);
+  const N = raw.map(r => r.net), NT = raw.map(r => r.nt);
   const ma5 = calcMA(C, 5), ma20 = calcMA(C, 20), ma60 = calcMA(C, 60);
   const { dif, dea, hist } = calcMACD(C);
 
@@ -158,12 +174,14 @@ function buildCharts(raw, mode) {
 
   const kc = mk('kC', false, true);   // 圖表庫授權要求的 TradingView 標示，主圖保留一個
   const kSer = kc.addCandlestickSeries({ upColor: UP, downColor: DN, borderUpColor: UP, borderDownColor: DN, wickUpColor: UP, wickDownColor: DN, priceFormat: priceFmt });
-  kSer.setData(raw.map((r, i) => ({ time: T[i], open: O[i], high: H[i], low: L[i], close: C[i] })));
+  // 無成交的一字線用灰色
+  kSer.setData(raw.map((r, i) => ({ time: T[i], open: O[i], high: H[i], low: L[i], close: C[i],
+    ...(NT[i] ? { color: FLAT, borderColor: FLAT, wickColor: FLAT } : {}) })));
   line(kc, ma5, '#888780'); line(kc, ma20, '#EF9F27'); line(kc, ma60, '#7F77DD');
 
   const vc = mk('vC', false);
   const vSer = vc.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
-  vSer.setData(raw.map((r, i) => ({ time: T[i], value: V[i], color: C[i] >= O[i] ? UP + '99' : DN + '99' })));
+  vSer.setData(raw.map((r, i) => ({ time: T[i], value: V[i], color: NT[i] ? FLAT + '99' : C[i] >= O[i] ? UP + '99' : DN + '99' })));
 
   const ic = mk('iC', false);
   const iSer = ic.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
@@ -193,7 +211,8 @@ function buildCharts(raw, mode) {
     const ma = (label, v, color) => v == null ? '' : `<span style="color:${color}">${label} <b style="color:${color}">${pfmt(v)}</b></span>`;
     legend.innerHTML = `<span><b>${T[i]}</b></span><span>開 <b>${pfmt(O[i])}</b></span><span>高 <b class="up">${pfmt(H[i])}</b></span>` +
       `<span>低 <b class="dn">${pfmt(L[i])}</b></span><span>收 <b class="${c}">${pfmt(C[i])}</b></span>` +
-      `<span class="${c}">${sgn(chg)} (${sgn(p)}%)</span><span>量 <b>${fmt(V[i])}</b> 張</span>` +
+      (NT[i] ? '<span class="flat">無成交</span>' : `<span class="${c}">${psgn(chg)} (${sgn(p)}%)</span>`) +
+      `<span>量 <b>${fmt(V[i])}</b> 張</span>` +
       (N[i] != null ? `<span>法人 <b class="${cls(N[i])}">${sgn(N[i], 0)}</b> 張</span>` : '') +
       ma('MA5', ma5[i], '#888780') + ma('MA20', ma20[i], '#EF9F27') + ma('MA60', ma60[i], '#7F77DD');
   };
