@@ -307,22 +307,61 @@ function drawBubble(groups, dates) {
   if (!window.Plotly) { $('#bubble').innerHTML = '<div class="empty">圖表元件載入失敗，請檢查網路後重新整理</div>'; return; }
   const limX = Math.max(...all.map(f => Math.abs(symlog(f[0])))) * 1.12;
   const limY = Math.max(...all.map(f => Math.abs(symlog(f[1])))) * 1.12;
-  const maxT = Math.max(...all.map(f => f[3]));
-  const labelN = App.group === 'concept' ? 99 : 14;   // 類股多，只在成交額前幾大的泡泡上寫字
+  // 泡泡直徑：成交額開 0.4 次方後線性映射到 [minD, maxD]。各族群成交額可差上千倍，
+  // 若面積直接正比成交額，小族群會縮成一個點；壓縮後仍保留大小順序。
+  const P = 0.4, sz = t => Math.max(t, 0) ** P;
+  const tMin = sz(Math.min(...all.map(f => f[3]))), tMax = sz(Math.max(...all.map(f => f[3])));
+  const width = $('#bubble').clientWidth || 800;
+  const maxD = Math.min(64, Math.max(34, width / 14)), minD = Math.max(14, maxD * 0.28);
+  const diam = t => tMax > tMin ? minD + (maxD - minD) * (sz(t) - tMin) / (tMax - tMin) : maxD;
+  const narrow = width < 600;
+  const FONT = narrow ? 9 : 11;
+  const M = { l: 56, r: 12, t: 12, b: narrow ? 112 : 96 };
+  const sliderY = narrow ? -0.14 : -0.1;   // 窄螢幕的 X 軸標題離滑桿太近，往下移
+  const plotW = width - M.l - M.r, plotH = ($('#bubble').clientHeight || 600) - M.t - M.b;
+
+  // 名稱避讓：大泡泡優先；放得進泡泡就寫在裡面，否則依序試上、下、右、左，
+  // 都會壓到別的名稱或泡泡就不寫（滑鼠移上去仍看得到）
+  const placeLabels = (gs, xs, ys, d) => {
+    const px = xs.map(x => M.l + (x + limX) / (2 * limX) * plotW);
+    const py = ys.map(y => M.t + (limY - y) / (2 * limY) * plotH);
+    const boxes = d.map((v, i) => [px[i] - v / 2, py[i] - v / 2, px[i] + v / 2, py[i] + v / 2]);
+    const hit = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+    const placed = [];
+    const text = gs.map(() => ''), pos = gs.map(() => 'top center');
+    [...gs.keys()].sort((a, b) => d[b] - d[a]).forEach(i => {
+      const w = gs[i].name.length * FONT + 4, h = Math.ceil(FONT * 1.45), r = d[i] / 2;
+      if (w <= d[i] - 4) {
+        text[i] = gs[i].name; pos[i] = 'middle center';
+        return;
+      }
+      const tries = [
+        ['top center', [px[i] - w / 2, py[i] - r - h - 1, px[i] + w / 2, py[i] - r - 1]],
+        ['bottom center', [px[i] - w / 2, py[i] + r + 1, px[i] + w / 2, py[i] + r + h + 1]],
+        ['middle right', [px[i] + r + 2, py[i] - h / 2, px[i] + r + w + 2, py[i] + h / 2]],
+        ['middle left', [px[i] - r - w - 2, py[i] - h / 2, px[i] - r - 2, py[i] + h / 2]],
+      ];
+      const ok = tries.find(([, b]) => !placed.some(p => hit(p, b)) && !boxes.some((c, j) => j !== i && hit(c, b)));
+      if (ok) { text[i] = gs[i].name; pos[i] = ok[0]; placed.push(ok[1]); }
+    });
+    return { text, pos };
+  };
 
   const trace = k => {
     const gs = valid[k];
-    const rank = [...gs].sort((a, b) => b.frames[k][3] - a.frames[k][3]).slice(0, labelN).map(g => g.name);
+    const d = gs.map(g => diam(g.frames[k][3]));
+    const xs = gs.map(g => symlog(g.frames[k][0])), ys = gs.map(g => symlog(g.frames[k][1]));
+    const lab = placeLabels(gs, xs, ys, d);
     return {
       type: 'scatter', mode: 'markers+text',
       ids: gs.map(g => g.name),
-      x: gs.map(g => symlog(g.frames[k][0])), y: gs.map(g => symlog(g.frames[k][1])),
-      text: gs.map(g => rank.includes(g.name) ? g.name : ''),
+      x: xs, y: ys,
+      text: lab.text, textposition: lab.pos,
       customdata: gs.map(g => [g.name, ...g.frames[k]]),
-      textfont: { size: 11, color: text },
+      textfont: { size: FONT, color: text },
       hovertemplate: '<b>%{customdata[0]}</b><br>近5日 %{customdata[1]:+.1f}億<br>加速度 %{customdata[2]:+.1f}億/天<br>漲跌 %{customdata[3]:+.2f}%<br>成交 %{customdata[4]:,.0f}億<extra></extra>',
       marker: {
-        size: gs.map(g => g.frames[k][3]), sizemode: 'area', sizeref: 2 * maxT / (64 ** 2), sizemin: 4,
+        size: d, sizemode: 'diameter',
         color: gs.map(g => g.frames[k][2]), cmin: -4, cmax: 4,
         colorscale: [[0, '#1f9d5a'], [0.5, '#9a9a9a'], [1, '#d64545']],
         line: { width: 1, color: 'rgba(0,0,0,.35)' }, opacity: .85,
@@ -330,17 +369,19 @@ function drawBubble(groups, dates) {
     };
   };
   const last = dates.length - 1;
-  const ticksX = [-500, -100, -20, -5, 0, 5, 20, 100, 500], ticksY = [-50, -20, -5, -1, 0, 1, 5, 20, 50];
+  // 窄螢幕刻度太密會被轉成斜的，壓到下方滑桿，所以減少刻度
+  const ticksX = narrow ? [-500, -20, 0, 20, 500] : [-500, -100, -20, -5, 0, 5, 20, 100, 500];
+  const ticksY = [-50, -20, -5, -1, 0, 1, 5, 20, 50];
   const axis = (ticks, lim, title, unit) => ({
     range: [-lim, lim], tickvals: ticks.map(symlog), ticktext: ticks.map(t => (t > 0 ? '+' : '') + t + unit),
     title: { text: title, font: { size: 11, color: text2 } }, zeroline: true, zerolinecolor: text2,
-    gridcolor: grid, tickfont: { size: 10, color: text2 }, fixedrange: true,
+    gridcolor: grid, tickfont: { size: 10, color: text2 }, tickangle: 0, fixedrange: true,
   });
   const quad = (x0, x1, y0, y1, color) => ({ type: 'rect', x0, x1, y0, y1, fillcolor: color, line: { width: 0 }, layer: 'below' });
   const qLabel = (x, y, t, c) => ({ x, y, text: t, showarrow: false, font: { size: 20, color: c }, opacity: .35 });
   const layout = {
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: text },
-    margin: { l: 56, r: 12, t: 12, b: 96 }, showlegend: false, hovermode: 'closest', dragmode: false,
+    margin: M, showlegend: false, hovermode: 'closest', dragmode: false,
     xaxis: axis(ticksX, limX, '← 流出　近 5 日法人累計（億）　流入 →', ''),
     yaxis: axis(ticksY, limY, '↓ 放緩　　加速 ↑', ''),
     shapes: [quad(0, limX, 0, limY, css('--q-rise')), quad(0, limX, -limY, 0, css('--q-rot')),
@@ -348,7 +389,7 @@ function drawBubble(groups, dates) {
     annotations: [qLabel(limX * .88, limY * .9, '漲潮', css('--up')), qLabel(limX * .88, -limY * .9, '輪動', css('--amber')),
                   qLabel(-limX * .88, limY * .9, '觀望', css('--blue')), qLabel(-limX * .88, -limY * .9, '退潮', css('--dn'))],
     updatemenus: [{
-      type: 'buttons', showactive: false, x: 0, y: -0.13, xanchor: 'left', yanchor: 'top', direction: 'left',
+      type: 'buttons', showactive: false, x: 0, y: sliderY - 0.03, xanchor: 'left', yanchor: 'top', direction: 'left',
       bgcolor: css('--card2'), bordercolor: grid, font: { color: text },
       buttons: [
         { label: '▶ 回放', method: 'animate', args: [null, { frame: { duration: 600, redraw: true }, transition: { duration: 450 }, fromcurrent: false, mode: 'immediate' }] },
@@ -356,7 +397,7 @@ function drawBubble(groups, dates) {
       ],
     }],
     sliders: [{
-      active: last, x: 0.16, len: 0.84, y: -0.1, yanchor: 'top', pad: { t: 0 },
+      active: last, x: 0.16, len: 0.84, y: sliderY, yanchor: 'top', pad: { t: 0 },
       currentvalue: { prefix: '資料日 ', font: { size: 12, color: text2 } }, font: { size: 9, color: text2 },
       bgcolor: css('--card2'), bordercolor: grid, tickcolor: grid,
       steps: dates.map(d => ({ label: d.slice(5).replace('-', '/'), method: 'animate',
