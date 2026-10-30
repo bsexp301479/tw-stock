@@ -6,7 +6,12 @@ const CHART_IDS = ['kC', 'vC', 'iC', 'mC'];
 // 法人買賣超堆疊柱：外資在最靠近零軸的一層，往外依序投信、自營
 const INVESTORS = [['f', '外資', '#4C6EF5'], ['t', '投信', '#F08C00'], ['dl', '自營', '#AE3EC9']];
 
-window.disposeStockCharts = () => { charts.forEach(c => c.remove()); charts = []; };
+const disposeKCharts = () => { charts.forEach(c => c.remove()); charts = []; };
+// 離開個股頁時一併釋放月營收圖；切換日／週／月只重建 K 線（buildCharts），不動月營收圖
+window.disposeStockCharts = () => {
+  disposeKCharts();
+  if (window.Plotly && $('#revC')) Plotly.purge('revC');
+};
 
 window.renderStock = async function (code) {
   const s = App.latest.stocks[code];
@@ -27,6 +32,9 @@ window.renderStock = async function (code) {
   const mode = localStore('kmode', '日');
   const fund = data.fund || {};
   const watching = App.watch.has(code);
+  const fd = md(App.latest.flow_date);
+  const hlFrom = s?.hf ?? App.latest.hl_from;          // null → 已滿 52 週
+  const hlSub = hlFrom ? '自 ' + hlFrom.replaceAll('-', '/') : '';
 
   $('#view').innerHTML = `
     <section class="sec card">
@@ -37,6 +45,9 @@ window.renderStock = async function (code) {
             ${noTrade ? '<span class="s-chg flat">無成交</span>'
               : `<span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span>`}</div>
           <div class="tags">
+            ${(data.alerts || []).map(a => a.t === 'disposal'
+              ? `<span class="pill al-d" title="${esc(`處置期間 ${md(a.s)}～${md(a.e)}（${md(a.a)} 公告）\n原因：${a.r || '--'}\n措施：${a.m || '--'}`)}">${a.s > App.latest.date ? `即將處置（${md(a.s)} 起）` : `處置中（至 ${md(a.e)}）`}</span>`
+              : `<span class="pill al-n" title="${esc(`${md(a.a)} 公布注意交易資訊\n${a.r || ''}`)}">注意</span>`).join('')}
             <span class="pill">${data.market === 'TWSE' ? '上市' : '上櫃'}</span><span class="pill">${esc(data.industry)}</span>
             ${(data.chains || []).map(([chain, seg, subs]) => `<span class="pill chain" title="${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}">${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}</span>`).join('')}
             ${data.concepts.map(c => `<span class="pill">${esc(c)}</span>`).join('')}
@@ -50,10 +61,10 @@ window.renderStock = async function (code) {
     <section class="sec metrics">
       ${[['開盤', pfmt(P.o[last])], ['最高', pfmt(P.h[last]), 'up'], ['最低', pfmt(P.l[last]), 'dn'], ['昨收', pfmt(prev)],
          ['成交量', fmt(P.v[last]) + ' 張'], ['本益比', fmt(fund.pe, 2)], ['股價淨值比', fmt(fund.pb, 2)], ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--'],
-         ['52週高', pfmt(s?.h52)], ['52週低', pfmt(s?.l52)],
-         ['法人1日', yi(s?.n1), cls(s?.n1)], ['法人5日', yi(s?.n5), cls(s?.n5)],
-         ['外資5日', yi(s?.f5), cls(s?.f5)], ['投信5日', yi(s?.t5), cls(s?.t5)]]
-        .map(([l, v, c]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div></div>`).join('')}
+         [hlFrom ? '區間高' : '52週高', pfmt(s?.h52), '', hlSub], [hlFrom ? '區間低' : '52週低', pfmt(s?.l52), '', hlSub],
+         ['法人1日', yi(s?.n1), cls(s?.n1), fd], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
+         ['外資5日', yi(s?.f5), cls(s?.f5), '至 ' + fd], ['投信5日', yi(s?.t5), cls(s?.t5), '至 ' + fd]]
+        .map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
     </section>
 
     <section class="sec card">
@@ -74,7 +85,7 @@ window.renderStock = async function (code) {
     </section>
 
     <section class="sec grid g2">
-      <div class="card"><div class="sec-h"><h2>月營收</h2><span class="muted small">億元，柱色 = 年增率正負</span></div><div id="revBox"></div></div>
+      <div class="card"><div class="sec-h"><h2>月營收</h2><span class="muted small">柱：營收（億），紅／綠 = 年增正／負；線：累計年增（%，右軸）</span></div><div id="revBox"></div></div>
       <div class="card"><div class="sec-h"><h2>技術面訊號</h2></div><div id="sigBox"></div></div>
     </section>`;
 
@@ -105,10 +116,10 @@ function aggregate(data, mode) {
     const inst = { f: has ? I.f[i] : null, t: has ? I.t[i] ?? 0 : null, dl: has ? I.dl[i] ?? 0 : null };
     inst.net = has ? inst.f + inst.t + inst.dl : null;
     if (P.c[i] != null && P.o[i] != null) {
-      rows.push({ d, o: P.o[i], h: P.h[i], l: P.l[i], c: P.c[i], v: P.v[i], ...inst, nt: false });
+      rows.push({ d, o: P.o[i], h: P.h[i], l: P.l[i], c: P.c[i], v: P.v[i], ch: P.ch?.[i] ?? null, ...inst, nt: false });
       prevC = P.c[i];
     } else if (prevC != null) {
-      rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, ...inst, nt: true });
+      rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, ch: null, ...inst, nt: true });
     }
   });
   if (mode === '日') return rows;
@@ -142,7 +153,7 @@ function calcMACD(closes) {
 }
 
 function buildCharts(raw, mode) {
-  window.disposeStockCharts();
+  disposeKCharts();
   if (!raw.length || !window.LightweightCharts) return;
   const LC = window.LightweightCharts;
   const UP = css('--up'), DN = css('--dn'), FLAT = css('--flat'), text2 = css('--text2'), grid = css('--border');
@@ -222,11 +233,17 @@ function buildCharts(raw, mode) {
   const anchors = [[kc, kSer, i => C[i]], [vc, vSer, i => V[i]], [ic, iSer, i => N[i]], [mc, difSer, i => dif[i]]];
   const legend = $('#kLegend');
   const showLegend = i => {
-    const chg = i ? C[i] - C[i - 1] : 0, p = i ? chg / C[i - 1] * 100 : 0, c = cls(chg);
+    // 日線用官方漲跌（除權息日「收盤 − 前收」會失真）；上市不比價日匯出為 null。週／月線仍用前一根收盤
+    const chg = mode === '日' ? raw[i].ch : i ? C[i] - C[i - 1] : 0;
+    const p = mode === '日' ? (chg != null && C[i] !== chg ? chg / (C[i] - chg) * 100 : null)
+                            : i ? chg / C[i - 1] * 100 : 0;
+    const c = cls(chg);
     const ma = (label, v, color) => v == null ? '' : `<span style="color:${color}">${label} <b style="color:${color}">${pfmt(v)}</b></span>`;
     legend.innerHTML = `<span><b>${T[i]}</b></span><span>開 <b>${pfmt(O[i])}</b></span><span>高 <b class="up">${pfmt(H[i])}</b></span>` +
       `<span>低 <b class="dn">${pfmt(L[i])}</b></span><span>收 <b class="${c}">${pfmt(C[i])}</b></span>` +
-      (NT[i] ? '<span class="flat">無成交</span>' : `<span class="${c}">${psgn(chg)} (${sgn(p)}%)</span>`) +
+      (NT[i] ? '<span class="flat">無成交</span>'
+        : chg == null ? '<span class="flat" title="除權息、減資等不比價日，官方未提供漲跌">不比價</span>'
+        : `<span class="${c}">${psgn(chg)} (${sgn(p)}%)</span>`) +
       `<span>量 <b>${fmt(V[i])}</b> 張</span>` +
       (N[i] != null ? `<span>法人 <b class="${cls(N[i])}">${sgn(N[i], 0)}</b> 張</span>` : '') +
       ma('MA5', ma5[i], '#888780') + ma('MA20', ma20[i], '#EF9F27') + ma('MA60', ma60[i], '#7F77DD');
@@ -281,13 +298,36 @@ function renderSignals(C, ma5, ma20, ma60, dif, dea, hist) {
 
 function renderRevenue(rows) {
   const box = $('#revBox');
-  const list = rows.slice(-12);
-  if (!list.length) { box.innerHTML = '<div class="empty">沒有月營收資料</div>'; return; }
-  const max = Math.max(...list.map(r => r[2]));
-  box.innerHTML = `<div class="rev">` + list.map(([y, m, rev, mom, yoy]) => `
-      <div class="col" title="${y}/${m} 營收 ${fmt(rev / 1e5, 2)} 億，月增 ${sgn(mom)}%，年增 ${sgn(yoy)}%">
-        <span class="num">${fmt(rev / 1e5, rev >= 1e7 ? 0 : 1)}</span>
-        <span class="b" style="height:${Math.max(2, rev / max * 100)}%;background:${yoy == null ? 'var(--flat)' : yoy >= 0 ? 'var(--up)' : 'var(--dn)'}"></span>
-        <span>${m}月</span><span class="num ${cls(yoy)}">${yoy == null ? '--' : sgn(yoy, 0) + '%'}</span>
-      </div>`).join('') + '</div>';
+  if (!rows.length) { box.innerHTML = '<div class="empty">沒有月營收資料</div>'; return; }
+  const ym = r => `${r[0]}/${String(r[1]).padStart(2, '0')}`;
+  const amt = v => fmt(v / 1e5, v >= 1e7 ? 0 : v >= 1e5 ? 1 : 2);        // 千元 → 億
+  const pc = v => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v) + '%'}</td>`;
+  box.innerHTML = `<div id="revC" style="height:220px"></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>年月</th><th>營收（億）</th><th>月增</th><th>年增</th><th>累計年增</th></tr></thead><tbody>` +
+    rows.slice(-12).reverse().map(r => `<tr><td>${ym(r)}</td>
+      <td class="num">${amt(r[2])}${r[6] ? `<span class="hi" title="近 ${r[6]} 年新高">★</span>` : ''}</td>${pc(r[3])}${pc(r[4])}${pc(r[5])}</tr>`).join('') +
+    `</tbody></table></div>
+    <div class="muted small" style="margin-top:6px">★ 近 N 年新高：營收高於之前所有月份（N 依資料涵蓋年數計算）。累計年增 = 當年 1 月至該月合計 ÷ 去年同期 − 1。</div>`;
+  drawRevenue(rows.slice(-36), ym);
+}
+
+function drawRevenue(rows, ym) {
+  if (!window.Plotly) { $('#revC').innerHTML = '<div class="empty">圖表元件載入失敗，請檢查網路後重新整理</div>'; return; }
+  const x = rows.map(ym), text2 = css('--text2'), grid = css('--border');
+  Plotly.newPlot('revC', [
+    { type: 'bar', x, y: rows.map(r => r[2] / 1e5), name: '營收',
+      marker: { color: rows.map(r => css(r[4] == null ? '--flat' : r[4] >= 0 ? '--up' : '--dn')) },
+      hovertemplate: '營收 %{y:,.2f} 億<extra></extra>' },
+    { type: 'scatter', mode: 'lines+markers', x, y: rows.map(r => r[5]), yaxis: 'y2', name: '累計年增',
+      line: { color: '#378ADD', width: 2 }, marker: { size: 4 }, connectgaps: false,
+      // Plotly 的 d3-format 不支援 +.2f，正負號改用 sgn() 先格式化
+      customdata: rows.map(r => r[5] == null ? '--' : sgn(r[5]) + '%'),
+      hovertemplate: '累計年增 %{customdata}<extra></extra>' },
+  ], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { size: 10, color: text2 },
+    margin: { l: 44, r: 48, t: 8, b: 28 }, showlegend: false, hovermode: 'x unified', dragmode: false,
+    xaxis: { type: 'category', tickvals: x.filter(s => /\/(01|07)$/.test(s)), fixedrange: true },
+    yaxis: { gridcolor: grid, fixedrange: true, rangemode: 'tozero' },
+    yaxis2: { overlaying: 'y', side: 'right', ticksuffix: '%', showgrid: false, zeroline: true, zerolinecolor: grid, fixedrange: true },
+  }, { responsive: true, displayModeBar: false });
 }

@@ -17,6 +17,8 @@ from .config import SITE_DATA_DIR
 REPLAY = 20                    # 泡泡圖回放天數
 FUTURES_DAYS = 500             # 首頁台指期日 K 匯出天數
 OI_DAYS = 120                  # 首頁法人未平倉走勢天數
+INDEX_DAYS = 60                # 首頁加權／櫃買指數走勢線天數
+REVENUE_MONTHS = 36            # 個股 JSON 匯出的月營收筆數（累計年增、新高以全部月份計算後再截取）
 WINDOW = REPLAY + LONG - 1     # 計算回放第一天的 20 日均線所需天數
 YI = 1e8                       # 億
 
@@ -35,6 +37,38 @@ def _pct(close, change):
     if close is None or change is None or close == change:
         return None
     return float(change) / (float(close) - float(change)) * 100
+
+
+def _revenue_rows(rows):
+    """
+    rows: 某股票 [[年, 月, 營收(千元), 月增%, 年增%], ...]（舊到新、資料庫全部月份）
+    回傳每列再加兩欄：
+      累計年增%：當年 1 月～該月合計 ÷ 前一年同期合計 − 1；兩段任一月份缺資料或去年合計 ≤ 0 → None
+      新高年數 N：該月營收 > 之前所有月份，且之前至少已有 24 個月資料時 = 資料涵蓋的整年數；否則 0
+    """
+    by_month = {(y, m): rev for y, m, rev, *_ in rows}
+    first = rows[0][0] * 12 + rows[0][1] if rows else 0
+    out, peak = [], None
+    for y, m, rev, mom, yoy in rows:
+        cur = [by_month.get((y, k)) for k in range(1, m + 1)]
+        prev = [by_month.get((y - 1, k)) for k in range(1, m + 1)]
+        cum = None
+        if None not in cur and None not in prev and sum(prev) > 0:
+            cum = round((sum(cur) / sum(prev) - 1) * 100, 2)
+        months = y * 12 + m - first + 1                  # 資料涵蓋月數（含當月）
+        hi = months // 12 if peak is not None and months > 24 and rev > peak else 0
+        peak = rev if peak is None else max(peak, rev)
+        out.append([y, m, rev, mom, yoy, cum, hi])
+    return out
+
+
+def _alert_status(kind, announce, start, end, today):
+    """處置：迄日 ≥ 資料日才有效，起日 > 資料日為「即將」；注意：公告日 = 資料日才有效。"""
+    if kind == "disposal":
+        if end is None or end < today:
+            return None
+        return "upcoming" if start and start > today else "active"
+    return "notice" if announce == today else None
 
 
 def _load_chains(cur):
@@ -147,6 +181,19 @@ def export_all():
         if futures else None
     if futures:
         futures.update({k: futures[k][-FUTURES_DAYS:] for k in ("d", "m", "o", "h", "l", "c", "ch", "v", "oi")})
+    index_rows = defaultdict(list)
+    for code, d, c, ch in cur.execute(
+            "SELECT index_code, trade_date, close_price, change FROM market_index ORDER BY index_code, trade_date"):
+        index_rows[code].append((d, c, ch))
+    alerts = defaultdict(list)
+    for code, kind, ann, start, end, reason, measure in cur.execute("""
+        SELECT s.stock_code, a.alert_type, a.announce_date, a.start_date, a.end_date, a.reason, a.measure
+        FROM stock_alerts a JOIN stocks s ON s.stock_id = a.stock_id
+        WHERE ISNULL(a.end_date, a.announce_date) >= ?
+        ORDER BY a.announce_date""", latest_date):
+        if _alert_status(kind, ann, start, end, latest_date):
+            alerts[code].append({"t": kind, "a": str(ann), "s": start and str(start), "e": end and str(end),
+                                 "r": reason, "m": measure})
     conn.close()
 
     concepts = load_concepts()
@@ -162,6 +209,7 @@ def export_all():
     market = {m: {"up": 0, "down": 0, "flat": 0, "turnover": 0.0} for m in ("TWSE", "TPEx")}
     insti_total = {"foreign": 0.0, "trust": 0.0, "dealer": 0.0}
     w52_start = latest_date - timedelta(days=365)
+    db_first = min(rows[0][0] for rows in prices.values())   # 全市場最早日線
 
     for code, rows in prices.items():
         info = stocks.get(code)
@@ -169,17 +217,28 @@ def export_all():
             continue
         d_, o, h, l, c, v, tv, ch, fn, tn, dn, total = zip(*rows)
 
+        # 官方漲跌；上市「不比價」日（除權息等，漲跌欄為 X）官方價差是 0.00 而非真實漲跌 → None
+        chs, prev = [], None
+        for close, chg in zip(c, ch):
+            x = _f(chg) if close is not None else None
+            if x == 0 and info["market"] == "TWSE" and prev is not None and close != prev:
+                x = None
+            chs.append(x)
+            if close is not None:
+                prev = close
+
         _write(SITE_DATA_DIR / "stocks" / f"{code}.json", {
             "code": code, **info, "concepts": concept_of.get(code, []), "chains": chain_of.get(code, []),
             "prices": {"d": [str(x) for x in d_], "o": [_f(x) for x in o], "h": [_f(x) for x in h],
                        "l": [_f(x) for x in l], "c": [_f(x) for x in c],
-                       "v": [round(x / 1000) if x else 0 for x in v]},           # 張
+                       "v": [round(x / 1000) if x else 0 for x in v], "ch": chs},   # 張
             "insti": {"f": [round(x / 1000) if x is not None else None for x in fn],   # 張
                       "t": [round(x / 1000) if x is not None else None for x in tn],
                       "dl": [round(x / 1000) if x is not None else None for x in dn]},
-            "revenue": revenue.get(code, [])[-24:],
+            "revenue": _revenue_rows(revenue.get(code, []))[-REVENUE_MONTHS:],
             "fund": dict(zip(("pe", "pb", "dy"), map(_f, fund[code][:3])), date=str(fund[code][3]))
                     if code in fund else None,
+            **({"alerts": alerts[code]} if code in alerts else {}),
         })
 
         # 板塊計算用的近 WINDOW 天
@@ -231,6 +290,12 @@ def export_all():
             "s": streak(net_value[-30:]),
             "h52": max(x[0] for x in w52) if w52 else None,
             "l52": min(x[1] for x in w52) if w52 else None,
+            # 個股第一筆日線晚於「全市場起點」與「52 週起點」兩者時，才另外標示高低點起算日
+            **({"hf": str(d_[0])} if d_[0] > max(db_first, w52_start) else {}),
+            # 有效的處置 [起日, 迄日]（多筆取起日最早者）與資料日當天的注意股
+            **({"dsp": min([a["s"], a["e"]] for a in alerts[code] if a["t"] == "disposal")}
+               if any(a["t"] == "disposal" for a in alerts.get(code, [])) else {}),
+            **({"ntc": 1} if any(a["t"] == "notice" for a in alerts.get(code, [])) else {}),
             **({"pe": _f(fund[code][0]), "pb": _f(fund[code][1]), "dy": _f(fund[code][2])}
                if code in fund else {}),
         }
@@ -247,6 +312,12 @@ def export_all():
         "dates": replay_dates,
         "market": {k: {**v, "turnover": round(v["turnover"], 1)} for k, v in market.items()},
         "insti": {k: round(v, 1) for k, v in insti_total.items()},
+        "index": {code: {"date": str(rows[-1][0]), "c": _f(rows[-1][1]), "ch": _f(rows[-1][2]),
+                         "p": _f(_pct(rows[-1][1], rows[-1][2])), "from": str(rows[-INDEX_DAYS:][0][0]),
+                         "s": [_f(r[1]) for r in rows[-INDEX_DAYS:]]}
+                  for code, rows in index_rows.items()},
+        # 全市場日線未滿 52 週時 = 最早日線日期（高低點標示「區間」）；滿 52 週為 null
+        "hl_from": str(db_first) if db_first > w52_start else None,
         "futures": futures,
         "futures_oi": futures_oi,
         "forecast": forecast,

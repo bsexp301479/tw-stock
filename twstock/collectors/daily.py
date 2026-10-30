@@ -11,18 +11,45 @@ from ..fetch import FetchError, clean_number, is_valid_stock_code, request
 
 TWSE = "https://www.twse.com.tw/rwd/zh"
 TPEX = "https://www.tpex.org.tw/www/zh-tw"
+TPEX_OPENAPI = "https://www.tpex.org.tw/openapi/v1"
 
-PRICES, INSTI = "prices", "insti"     # collect_for_date 的資料集名稱
+# collect_for_date 的資料集名稱；INDEX 只在補抓加權指數時單獨指定（抓 PRICES 時會一併寫入）
+PRICES, INSTI, INDEX = "prices", "insti", "index"
 ALL_DATASETS = (PRICES, INSTI)
 
 
 # ─── 上市 ─────────────────────────────────────────────────
-def fetch_twse_daily(d: date) -> list:
-    """上市每日收盤行情；休市回傳 []。"""
+def parse_taiex(data: dict, d: date):
+    """MI_INDEX 回應中的發行量加權股價指數；找不到或欄位格式不符回傳 None（不可影響個股寫入）。"""
+    need = ("指數", "收盤指數", "漲跌(+/-)", "漲跌點數")
+    for table in data.get("tables", []):
+        if "價格指數(臺灣證券交易所)" not in (table.get("title") or ""):
+            continue
+        idx = {f: i for i, f in enumerate(table.get("fields", []))}
+        if not set(need) <= idx.keys():
+            continue                                    # 欄位改名：視為找不到指數表
+        for row in table.get("data", []):
+            if len(row) <= max(idx[f] for f in need):
+                continue                                # 列太短：略過
+            if str(row[idx["指數"]]).strip() != "發行量加權股價指數":
+                continue
+            # 漲跌點數是絕對值，正負號在「漲跌(+/-)」欄（HTML 片段），與個股相同
+            change = clean_number(row[idx["漲跌點數"]])
+            if change is not None and "-" in str(row[idx["漲跌(+/-)"]]):
+                change = -change
+            close = clean_number(row[idx["收盤指數"]])
+            return {"index_code": "TAIEX", "trade_date": d.isoformat(),
+                    "close_price": close, "change": change} if close is not None else None
+    return None
+
+
+def fetch_twse_daily(d: date):
+    """上市每日收盤行情與加權指數；休市回傳 ([], None)。"""
     data = request("GET", f"{TWSE}/afterTrading/MI_INDEX",
                    params={"response": "json", "date": f"{d:%Y%m%d}", "type": "ALLBUT0999"})
     if data.get("stat") != "OK":
-        return []
+        return [], None
+    taiex = parse_taiex(data, d)
     for table in data.get("tables", []):
         fields = table.get("fields", [])
         if "證券代號" not in fields:
@@ -48,8 +75,8 @@ def fetch_twse_daily(d: date) -> list:
                 "trade_count": clean_number(row[idx["成交筆數"]], int),
                 "change":      change,
             })
-        return results
-    return []
+        return results, taiex
+    return [], taiex
 
 
 def fetch_twse_pe(d: date) -> dict:
@@ -112,6 +139,23 @@ def fetch_tpex_daily(d: date) -> list:
             "trade_count": clean_number(row[idx["成交筆數"]], int),
         } for row in table["data"] if is_valid_stock_code(str(row[idx["代號"]]))]
     return []
+
+
+def fetch_tpex_index() -> list:
+    """櫃買指數：OpenAPI 只提供本月每日開高低收（Date 為西元 YYYYMMDD）。"""
+    data = request("GET", f"{TPEX_OPENAPI}/tpex_index")
+    if not isinstance(data, list):
+        raise FetchError("櫃買指數回應格式不符")
+    rows = []
+    for r in data:
+        ds, close = str(r.get("Date") or ""), clean_number(r.get("Close"))
+        if close is None or not (ds.isdigit() and len(ds) == 8):
+            continue
+        rows.append({"index_code": "TPEX", "trade_date": f"{ds[:4]}-{ds[4:6]}-{ds[6:]}",
+                     "open_price": clean_number(r.get("Open")), "high_price": clean_number(r.get("High")),
+                     "low_price": clean_number(r.get("Low")), "close_price": close,
+                     "change": clean_number(r.get("Change"))})
+    return rows
 
 
 def fetch_tpex_pe(d: date) -> dict:
@@ -237,6 +281,39 @@ def merge_institutional(cursor, trade_date, rows: list):
     """, db.to_json(rows), trade_date, trade_date)
 
 
+def merge_market_index(cursor, rows: list):
+    cursor.execute("""
+        MERGE market_index AS t
+        USING OPENJSON(?) WITH (
+            index_code NVARCHAR(10), trade_date DATE,
+            open_price DECIMAL(10,2), high_price DECIMAL(10,2), low_price DECIMAL(10,2),
+            close_price DECIMAL(10,2), change DECIMAL(10,2)
+        ) AS s
+        ON t.index_code = s.index_code AND t.trade_date = s.trade_date
+        WHEN MATCHED THEN UPDATE SET
+            open_price = s.open_price, high_price = s.high_price, low_price = s.low_price,
+            close_price = s.close_price, change = s.change
+        WHEN NOT MATCHED THEN
+            INSERT (index_code, trade_date, open_price, high_price, low_price, close_price, change)
+            VALUES (s.index_code, s.trade_date, s.open_price, s.high_price, s.low_price,
+                    s.close_price, s.change);
+    """, db.to_json(rows))
+
+
+def collect_tpex_index() -> int:
+    """寫入本月全部日期（MERGE，可重複執行）。"""
+    rows = fetch_tpex_index()
+    if rows:
+        conn = db.connect()
+        try:
+            merge_market_index(conn.cursor(), rows)
+            conn.commit()
+        finally:
+            conn.close()
+    print(f"  📈 櫃買指數：{len(rows)} 天")
+    return len(rows)
+
+
 # ─── 單日收集 ─────────────────────────────────────────────
 def collect_for_date(d: date, datasets=ALL_DATASETS) -> bool:
     """
@@ -246,11 +323,16 @@ def collect_for_date(d: date, datasets=ALL_DATASETS) -> bool:
     print(f"\n📅 {d}  [{' + '.join(datasets)}]")
     stocks, prices, funds, insti = {}, {}, {}, {}
     counts = {}
+    taiex = None
 
     if PRICES in datasets:
         for market, fetch_q, fetch_pe in (("TWSE", fetch_twse_daily, fetch_twse_pe),
                                           ("TPEx", fetch_tpex_daily, fetch_tpex_pe)):
             rows = fetch_q(d)
+            if market == "TWSE":
+                rows, taiex = rows      # 上市行情與加權指數來自同一個 MI_INDEX 回應
+                if rows and taiex is None:
+                    print("  ⚠️  MI_INDEX 找不到加權指數表")
             if market == "TWSE" and not rows:
                 print("  ℹ️  上市無資料（休市或尚未公布），略過此日")
                 return False
@@ -262,6 +344,13 @@ def collect_for_date(d: date, datasets=ALL_DATASETS) -> bool:
                 if pe_map.get(code):
                     funds[code] = {"stock_code": code, **pe_map[code]}
             counts[market] = len(rows)
+    elif INDEX in datasets:
+        _, taiex = fetch_twse_daily(d)      # 只補指數：同一個請求，個股列不寫入
+        if taiex is None:
+            print("  ℹ️  無加權指數（休市或尚未公布），略過此日")
+            return False
+    if taiex:
+        counts["加權指數"] = 1
 
     if INSTI in datasets:
         for market, fetch in (("TWSE", fetch_twse_insti), ("TPEx", fetch_tpex_insti)):
@@ -282,6 +371,8 @@ def collect_for_date(d: date, datasets=ALL_DATASETS) -> bool:
             merge_fundamentals(cursor, d, list(funds.values()))
         if insti:
             merge_institutional(cursor, d, list(insti.values()))
+        if taiex:
+            merge_market_index(cursor, [taiex])
         conn.commit()
     finally:
         conn.close()

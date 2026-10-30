@@ -133,22 +133,25 @@ function renderToday() {
       <div class="l">${label}成交額</div>
       <div class="v num">${fmt(L.market[m].turnover)}<span class="small muted"> 億</span></div>
       <div class="s num">漲 <span class="up">${L.market[m].up}</span>　跌 <span class="dn">${L.market[m].down}</span>　平 <span class="flat">${L.market[m].flat}</span> 家</div>
+      <div class="s">一般股票，不含 ETF</div>
     </div>`;
   const bar = (g, color) => `<div class="bar-row" data-group="${esc(g.name)}">
       <span class="nm">${esc(g.name)}</span>
       <span class="bar-track"><span class="bar-fill" style="width:${Math.abs(g[key]) / maxAbs * 100}%;background:${color}"></span></span>
       <span class="val num ${cls(g[key])}">${yi(g[key])}</span></div>`;
   const rows = list => list.map(([c, s]) => `<tr data-code="${c}">
-      <td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
+      <td class="nm"><b>${esc(s.n)}</b>${alertBadge(s)}<span>${c}</span></td>
       <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num ${cls(s.n1)}">${yi(s.n1)}</td></tr>`).join('');
 
   $('#view').innerHTML = `
+    <section class="sec grid g-stats">${indexCard(L.index?.TAIEX, '加權指數')}${indexCard(L.index?.TPEX, '櫃買指數')}</section>
     <section class="sec grid g-stats">
       ${mk('TWSE', '上市')}${mk('TPEx', '上櫃')}
       <div class="card stat"><div class="l">三大法人（${L.flow_date.slice(5).replace('-', '/')}）</div>
         <div class="v num ${cls(L.insti.foreign + L.insti.trust + L.insti.dealer)}">${yi(L.insti.foreign + L.insti.trust + L.insti.dealer)}</div>
         <div class="s num">外資 <span class="${cls(L.insti.foreign)}">${yi(L.insti.foreign)}</span>　投信 <span class="${cls(L.insti.trust)}">${yi(L.insti.trust)}</span>　自營 <span class="${cls(L.insti.dealer)}">${yi(L.insti.dealer)}</span></div>
+        <div class="s">估算：買賣超張數 × 收盤價，不含 ETF</div>
       </div>
     </section>
 
@@ -173,10 +176,10 @@ function renderToday() {
       </div>
     </section>
 
-    <section class="sec grid g2">
-      <div class="card"><div class="sec-h"><h2>法人買超</h2><span class="muted small">當日，億</span></div>
+    ${flowNote()}<section class="sec grid g2">
+      <div class="card"><div class="sec-h"><h2>法人買超</h2><span class="muted small">${md(L.flow_date)}，億</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>買賣超</th></tr></thead><tbody>${rows(topBuy)}</tbody></table></div></div>
-      <div class="card"><div class="sec-h"><h2>法人賣超</h2><span class="muted small">當日，億</span></div>
+      <div class="card"><div class="sec-h"><h2>法人賣超</h2><span class="muted small">${md(L.flow_date)}，億</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>買賣超</th></tr></thead><tbody>${rows(topSell)}</tbody></table></div></div>
     </section>`;
 
@@ -192,6 +195,40 @@ let futChart = null, oiChart = null;
 function disposeFuturesChart() { futChart?.remove(); oiChart?.remove(); futChart = oiChart = null; }
 
 const md = d => d.slice(5).replace('-', '/');
+
+// 法人資料比行情晚公布時的提示；兩者同日回傳空字串
+function flowNote() {
+  const L = App.latest;
+  return L.flow_date === L.date ? ''
+    : `<div class="flow-note">法人資料尚未更新：收盤、漲跌為 ${md(L.date)}，法人欄位為 ${md(L.flow_date)}</div>`;
+}
+
+// 名稱旁的處置／注意小標記（latest.json 只放有效的警示）
+const alertBadge = s =>
+  (s.dsp ? `<i class="al al-d" title="${s.dsp[0] > App.latest.date ? `即將處置（${md(s.dsp[0])} 起）` : `處置中（至 ${md(s.dsp[1])}）`}">處</i>` : '') +
+  (s.ntc ? '<i class="al al-n" title="注意股（當日公布注意交易資訊）">注</i>' : '');
+
+// ─── 加權／櫃買指數卡（首頁） ───────────────────────────
+function spark(vals) {
+  // 迷你走勢線：不需互動，以 SVG 折線畫在 100×34 的座標內
+  if (!vals || vals.length < 2) return '';
+  const lo = Math.min(...vals), hi = Math.max(...vals), n = vals.length;
+  const pts = vals.map((v, i) => `${(i / (n - 1) * 100).toFixed(2)},${(hi > lo ? 2 + (hi - v) / (hi - lo) * 30 : 17).toFixed(2)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="${pts}" fill="none" stroke="var(--${vals.at(-1) >= vals[0] ? 'up' : 'dn'})" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function indexCard(x, name) {
+  if (!x) return `<div class="card stat idx"><div class="l">${name}</div><div class="v num">--</div><div class="s">暫無資料</div></div>`;
+  const stale = x.date < App.latest.date;
+  return `<div class="card stat idx">
+      <div class="l">${name}<span class="muted">　${md(x.date)}${stale ? '（尚未更新）' : ''}</span></div>
+      <div class="v num ${cls(x.ch)}">${fmt(x.c, 2)}</div>
+      <div class="s num ${cls(x.ch)}">${x.ch > 0 ? '▲' : x.ch < 0 ? '▼' : ''} ${fmt(Math.abs(x.ch ?? 0), 2)} (${sgn(x.p)}%)</div>
+      ${spark(x.s)}
+      <div class="s">${x.s.length >= 60 ? '近 60 個交易日收盤' : `資料自 ${md(x.from)} 起（${x.s.length} 個交易日）`}</div>
+    </div>`;
+}
 
 function futuresHTML(F) {
   if (!F || !F.d.length) return '';
@@ -278,24 +315,30 @@ function oiHTML(O, FC) {
   const rows = O.inv.map(r => `<tr><td><i class="dot" style="background:${OI_COLORS[r.k]}"></i>${r.n}</td>
       <td class="num">${fmt(r.long)}</td><td class="num">${fmt(r.short)}</td>${lots(r.net)}${lots(r.chg)}${lots(r.eq)}${lots(r.eq_chg)}</tr>`).join('');
   let fc = '<div class="empty">期貨法人資料不足，無法預測</div>';
+  // 模型未勝過「永遠猜多數方向」基準（acc <= baseline）時降級為「籌碼因子觀察」，機率與回測收進摺疊區
+  const beat = FC ? FC.backtest.acc > FC.backtest.baseline : true;
   if (FC) {
-    const B = FC.backtest, beat = B.acc > B.baseline;
+    const B = FC.backtest;
     const maxE = Math.max(0.05, ...FC.factors.map(f => Math.abs(f.effect)));
     const vcls = FC.view === '偏多' ? 'up' : FC.view === '偏空' ? 'dn' : 'flat';
-    fc = `<div class="fc-head"><span class="fc-view ${vcls}">${FC.view}</span>
+    const head = `<div class="fc-head"><span class="fc-view ${vcls}">${FC.view}</span>
         <span>下一交易日上漲機率 <b class="num ${vcls}">${pctTxt(FC.p_up)}</b></span>
-        <span class="muted small">依 ${md(FC.date)} 收盤後未平倉</span></div>
-      <div class="fc-factors">${FC.factors.map(f => `<div class="fc-f" title="z 分數 ${f.z}（相對近 60 日）">
+        <span class="muted small">依 ${md(FC.date)} 收盤後未平倉</span></div>`;
+    const factors = `<div class="fc-factors">${FC.factors.map(f => `<div class="fc-f" title="z 分數 ${f.z}（相對近 60 日）">
           <span class="nm">${f.name}</span><span class="num muted">${sgn(f.value, 0)} 口</span>
           <span class="fc-bar"><span style="${f.effect >= 0 ? 'left:50%' : 'right:50%'};width:${Math.abs(f.effect) / maxE * 50}%;background:var(--${f.effect >= 0 ? 'up' : 'dn'})"></span></span></div>`).join('')}
-        <div class="muted small">長條往右 = 推升上漲機率，往左 = 壓低</div></div>
-      <div class="fc-bt ${beat ? '' : 'warn'}">回測 ${B.from.slice(0, 7).replace('-', '/')}～${B.to.slice(0, 7).replace('-', '/')} 共 ${B.n} 天：
+        <div class="muted small">${beat ? '長條往右 = 推升上漲機率，往左 = 壓低' : '長條往右 = 對隔日上漲有利，往左 = 不利'}</div></div>`;
+    const bt = `<div class="fc-bt ${beat ? '' : 'warn'}">回測 ${B.from.slice(0, 7).replace('-', '/')}～${B.to.slice(0, 7).replace('-', '/')} 共 ${B.n} 天：
         命中率 <b>${pctTxt(B.acc)}</b>，「永遠猜多數方向」基準 <b>${pctTxt(B.baseline)}</b>
         ${B.conf_acc != null ? `；機率偏離 5% 以上的 ${B.conf_n} 天命中 <b>${pctTxt(B.conf_acc)}</b>` : ''}。
         ${beat ? '' : '<br>模型目前沒有勝過簡單基準，未平倉對隔日漲跌的預測力很弱，請只當作籌碼面參考。'}</div>
       <div class="fc-recent"><span class="muted small">最近 10 次</span>${FC.recent.map(([d, p, y]) =>
         `<span class="fc-dot ${(p >= 0.5) === !!y ? 'hit' : 'miss'}" title="${d} 預測上漲 ${pctTxt(p)}，實際${y ? '漲' : '跌'}">${(p >= 0.5) === !!y ? '✓' : '✗'}</span>`).join('')}</div>
       <div class="muted small">羅吉斯迴歸，特徵為約當大台淨未平倉水位與增減（相對近 60 日標準化），每 20 天以過去資料重新訓練。僅供研究，非投資建議。</div>`;
+    fc = beat ? head + factors + bt
+      : `<div class="muted small" style="margin-bottom:8px">依 ${md(FC.date)} 收盤後期貨法人未平倉，各因子相對近 60 日的方向與強弱</div>
+         ${factors}
+         <details class="fc-more"><summary>模型回測（實驗性，未勝過基準）</summary>${head}${bt}</details>`;
   }
   return `<section class="sec grid g2">
       <div class="card">
@@ -306,7 +349,7 @@ function oiHTML(O, FC) {
           ${O.inv.map(r => `<span class="lg"><i style="background:${OI_COLORS[r.k]}"></i>${r.n}</span>`).join('')}</div>
         <div id="oiC" class="chart-box" style="height:160px"></div>
       </div>
-      <div class="card"><div class="sec-h"><h2>大盤漲跌預測</h2><span class="muted small">台指期近月日盤</span></div>${fc}</div>
+      <div class="card"><div class="sec-h"><h2>${beat ? '大盤漲跌預測' : '籌碼因子觀察'}</h2><span class="muted small">台指期近月日盤</span></div>${fc}</div>
     </section>`;
 }
 
@@ -486,7 +529,7 @@ function showGroup(g) {
   if (!g) return;
   const S = App.latest.stocks;
   $('#gTitle').textContent = g.name;
-  $('#gMeta').innerHTML = `<span class="pill">${g.quadrant}</span>　5日 <span class="${cls(g.net_5d)}">${yi(g.net_5d)}</span>　連${g.streak >= 0 ? '買' : '賣'} ${Math.abs(g.streak)} 天`;
+  $('#gMeta').innerHTML = `<span class="pill">${g.quadrant}</span>　5日 <span class="${cls(g.net_5d)}">${yi(g.net_5d)}</span>　連${g.streak >= 0 ? '買' : '賣'} ${Math.abs(g.streak)} 天　法人 ${md(App.latest.flow_date)}`;
   const rows = g.codes.filter(c => S[c]).sort((a, b) => (S[b].n5 ?? 0) - (S[a].n5 ?? 0));
   $('#gTable').innerHTML = `<thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>法人1日</th><th>法人5日</th></tr></thead><tbody>` +
     rows.map(c => { const s = S[c]; return `<tr data-code="${c}"><td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
@@ -509,11 +552,13 @@ const streakTxt = v => v ? (v > 0 ? '買' : '賣') + Math.abs(v) : '--';
 function stockTable(list, span = '1') {
   const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
   const amt = v => `<td class="num ${cls(v)}">${yi(v)}</td>`;
-  return `<div class="tbl-wrap"><table class="tbl"><thead><tr>
+  const fd = md(App.latest.flow_date);
+  return `${flowNote()}<div class="muted small tbl-cap">${k === '5' ? `法人欄位為截至 ${fd} 的近 5 日累計（億）` : `法人欄位為 ${fd} 當日買賣超（億）`}</div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr>
       <th>股票</th><th>收盤</th><th>漲跌</th><th>成交額</th><th>外資${lbl}</th><th>投信${lbl}</th><th>自營${lbl}</th><th>法人${lbl}</th>
       <th>外資連</th><th>投信連</th><th>法人連</th></tr></thead><tbody>` +
     list.map(([c, s]) => `<tr data-code="${c}">
-      <td class="nm"><b>${esc(s.n)}</b><span>${c} ${esc(s.i)}</span></td>
+      <td class="nm"><b>${esc(s.n)}</b>${alertBadge(s)}<span>${c} ${esc(s.i)}</span></td>
       <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num">${fmt(s.tv, 1)}億</td>
       ${amt(s['f' + k])}${amt(s['t' + k])}${amt(s['d' + k])}${amt(s['n' + k])}
@@ -526,21 +571,25 @@ function spanSeg(span) { return segHTML('rspanSeg', [['1', '1日'], ['5', '5日'
 
 function renderRank() {
   const by = localStore('rank2', 'n+'), mkt = localStore('mkt', 'all'), span = localStore('rspan', '1');
+  const minTv = localStore('rtv', '0.5');   // 成交額門檻（億），套用到所有排行
   const [, , f, dir] = RANKS.find(r => r[0] === by) || RANKS[0];
   const field = f.replace('*', span);
   // 連買排行同天數再比較該法人的 5 日金額
   const tie = { fs: 'f5', ts: 't5', s: 'n5' }[field];
   const list = Object.entries(App.latest.stocks)
-    .filter(([, s]) => s[field] != null && (mkt === 'all' || s.m === mkt))
+    .filter(([, s]) => s[field] != null && (mkt === 'all' || s.m === mkt) && (s.tv ?? 0) >= Number(minTv))
     .sort((a, b) => dir * (a[1][field] - b[1][field]) || (tie ? (b[1][tie] ?? 0) - (a[1][tie] ?? 0) : 0)).slice(0, 50);
   $('#view').innerHTML = `<section class="sec">
       <div class="sec-h"><h2>排行</h2><span class="sp"></span>
         ${segHTML('mktSeg', [['all', '全部'], ['TWSE', '上市'], ['TPEx', '上櫃']], mkt)}
         ${spanSeg(span)}
+        <select id="tvSel" class="sel" aria-label="成交額門檻">${[['0', '成交額不限'], ['0.5', '成交額 ≥ 0.5 億'], ['1', '成交額 ≥ 1 億'], ['5', '成交額 ≥ 5 億']]
+          .map(([v, t]) => `<option value="${v}"${v === minTv ? ' selected' : ''}>${t}</option>`).join('')}</select>
         <select id="rankSel" class="sel">${RANKS.map(r => `<option value="${r[0]}"${r[0] === by ? ' selected' : ''}>${r[1]}</option>`).join('')}</select></div>
       <div class="card">${stockTable(list, span)}</div>
-      <div class="muted small" style="margin-top:6px">金額 = 買賣超張數 × 當日收盤；1日 / 5日切換會同時改變排序與表格欄位，連買為連續買超天數。</div></section>`;
+      <div class="muted small" style="margin-top:6px">金額 = 買賣超張數 × 當日收盤，不含 ETF。成交額門檻以資料日成交額篩選，套用到所有排行。「1日／5日」只切換法人、外資、投信、自營買賣超排行與表格法人欄位的天數；漲幅、跌幅、成交額與連買排行不受影響。連買為連續買超天數，天數相同時以近 5 日金額排序。</div></section>`;
   $('#rankSel').addEventListener('change', e => { localStore('rank2', null, e.target.value); renderRank(); });
+  $('#tvSel').addEventListener('change', e => { localStore('rtv', null, e.target.value); renderRank(); });
   onSeg('rspanSeg', v => { localStore('rspan', null, v); renderRank(); });
   onSeg('mktSeg', v => { localStore('mkt', null, v); renderRank(); });
   $('#view').addEventListener('click', onRowClick);

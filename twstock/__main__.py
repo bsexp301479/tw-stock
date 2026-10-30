@@ -2,8 +2,9 @@
 台股資料收集與網站產生工具（Mac / Windows 通用）
 
   python -m twstock setup-db                         建立資料庫與資料表
-  python -m twstock collect [--date 2026-10-28]      收集單日（行情、本益比、法人、月營收）並匯出網站資料
+  python -m twstock collect [--date 2026-10-28]      收集單日（行情、本益比、法人、月營收、指數、台指期、處置／注意股）並匯出網站資料
   python -m twstock history --start 2026-01-01       補抓歷史（已有的日期自動跳過）
+  python -m twstock history --start 2026-02-23 --only index   只補加權指數歷史
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
   python -m twstock export                           從資料庫匯出網站 JSON（site/data）
   python -m twstock serve                            本機預覽網站 http://localhost:8000
@@ -39,7 +40,8 @@ CHAINS_REFRESH_DAYS = 30
 
 def cmd_collect(args):
     from .collectors.chains import chains_age_days, update_chains
-    from .collectors.daily import collect_for_date
+    from .collectors.alerts import collect_alerts
+    from .collectors.daily import collect_for_date, collect_tpex_index
     from .collectors.futures import collect_futures, collect_futures_institutional
     from .collectors.industry import update_industry
     from .collectors.revenue import collect_monthly_revenue, revenue_month_for
@@ -63,6 +65,14 @@ def cmd_collect(args):
                 collect_futures_institutional(d)
             except FetchError as e:
                 print(f"  ⚠️  台指期抓取失敗：{e}")
+            try:
+                collect_tpex_index()
+            except FetchError as e:
+                print(f"  ⚠️  櫃買指數抓取失敗：{e}")
+            try:
+                collect_alerts()
+            except FetchError as e:
+                print(f"  ⚠️  處置／注意股抓取失敗：{e}")
             age = chains_age_days()
             if age is None or age >= CHAINS_REFRESH_DAYS:
                 try:
@@ -165,7 +175,8 @@ def main(argv=None):
     s = sub.add_parser("history", help="補抓歷史資料")
     s.add_argument("--start", type=_date, required=True)
     s.add_argument("--end", type=_date, help="預設今天")
-    s.add_argument("--only", nargs="+", choices=["prices", "insti"], help="只抓指定資料集")
+    s.add_argument("--only", nargs="+", choices=["prices", "insti", "index"],
+                   help="只抓指定資料集（index = 只補加權指數）")
     s.add_argument("--force", action="store_true", help="已存在的日期也重抓覆寫")
     s.add_argument("--no-revenue", action="store_true")
     s.add_argument("--delay", type=float, default=0.0, help="每日之間額外暫停秒數")

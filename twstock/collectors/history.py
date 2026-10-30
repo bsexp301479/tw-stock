@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 from .. import db
 from ..fetch import FetchError
-from .daily import ALL_DATASETS, INSTI, PRICES, collect_for_date
+from .daily import ALL_DATASETS, INDEX, INSTI, PRICES, collect_for_date
 from .revenue import collect_monthly_revenue, revenue_month_for
 
 # ─── 台股休市日（來源：證交所公告；不在表內的休市日會被判定為「無資料」）────
@@ -31,8 +31,10 @@ HOLIDAYS = {
     date(2026, 7, 10), date(2026, 10, 23),   # 證交所當日無交易資料（臨時休市）
 }
 
-_TABLE = {PRICES: "daily_prices", INSTI: "institutional_trades"}
-SECONDS_PER_DAY = {PRICES: 8, INSTI: 4}   # 依網站節流間隔 + 回應時間的實測值
+_TABLE = {PRICES: "daily_prices", INSTI: "institutional_trades", INDEX: "market_index"}
+# market_index 同時存加權與櫃買，只看加權；否則櫃買已有的日期會被誤判為加權已有
+_FILTER = {INDEX: "AND index_code = 'TAIEX'"}
+SECONDS_PER_DAY = {PRICES: 8, INSTI: 4, INDEX: 4}   # 依網站節流間隔 + 回應時間的實測值
 
 
 def is_trading_day(d: date) -> bool:
@@ -48,7 +50,8 @@ def dates_in_db(dataset: str, start: date, end: date) -> set:
     conn = db.connect()
     try:
         rows = conn.cursor().execute(
-            f"SELECT DISTINCT trade_date FROM {_TABLE[dataset]} WHERE trade_date BETWEEN ? AND ?",
+            f"SELECT DISTINCT trade_date FROM {_TABLE[dataset]} WHERE trade_date BETWEEN ? AND ? "
+            f"{_FILTER.get(dataset, '')}",
             start, end).fetchall()
         return {r[0] for r in rows}
     finally:

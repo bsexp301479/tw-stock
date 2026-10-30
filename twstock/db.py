@@ -164,6 +164,38 @@ DDL = [
         CONSTRAINT UQ_industry_chains UNIQUE (chain_id, segment_id, sub_id, stock_code)
     )
     """,
+    # 大盤指數每日收盤（TAIEX 取自 MI_INDEX，沒有開高低；TPEX 取自櫃買 OpenAPI）
+    """
+    IF OBJECT_ID('market_index') IS NULL
+    CREATE TABLE market_index (
+        id          INT IDENTITY(1,1) PRIMARY KEY,
+        index_code  NVARCHAR(10)  NOT NULL,   -- TAIEX 加權指數 / TPEX 櫃買指數
+        trade_date  DATE          NOT NULL,
+        open_price  DECIMAL(10,2) NULL,
+        high_price  DECIMAL(10,2) NULL,
+        low_price   DECIMAL(10,2) NULL,
+        close_price DECIMAL(10,2) NOT NULL,
+        change      DECIMAL(10,2) NULL,
+        created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_market_index UNIQUE (index_code, trade_date)
+    )
+    """,
+    # 處置／注意股公告（保留歷史；注意股沒有起訖日）
+    """
+    IF OBJECT_ID('stock_alerts') IS NULL
+    CREATE TABLE stock_alerts (
+        id            INT IDENTITY(1,1) PRIMARY KEY,
+        stock_id      INT            NOT NULL REFERENCES stocks(stock_id),
+        alert_type    NVARCHAR(10)   NOT NULL CHECK (alert_type IN ('disposal','notice')),  -- 處置 / 注意
+        announce_date DATE           NOT NULL,
+        start_date    DATE           NULL,
+        end_date      DATE           NULL,
+        reason        NVARCHAR(1000) NULL,
+        measure       NVARCHAR(200)  NULL,
+        created_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_stock_alerts UNIQUE (stock_id, alert_type, announce_date)
+    )
+    """,
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -193,4 +225,5 @@ def setup_database():
     conn.commit()
     conn.close()
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
-          "institutional_trades、futures_daily_prices、futures_institutional、industry_chains")
+          "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
+          "market_index、stock_alerts")
