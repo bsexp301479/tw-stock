@@ -7,13 +7,16 @@
 """
 import json
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from . import db
 from .analysis.flow import LONG, group_flows, load_concepts, streak
+from .analysis.forecast import build_forecast, load_oi
 from .config import SITE_DATA_DIR
 
 REPLAY = 20                    # 泡泡圖回放天數
+FUTURES_DAYS = 500             # 首頁台指期日 K 匯出天數
+OI_DAYS = 120                  # 首頁法人未平倉走勢天數
 WINDOW = REPLAY + LONG - 1     # 計算回放第一天的 20 日均線所需天數
 YI = 1e8                       # 億
 
@@ -75,6 +78,27 @@ def _load_futures(cur, commodity="TX"):
     }
 
 
+def _load_futures_oi(cur, oi: dict):
+    """最新一天大台的法人多空未平倉、約當大台淨額與增減，及近 OI_DAYS 天的約當大台淨額走勢。"""
+    days = sorted(oi)
+    if len(days) < 2:
+        return None
+    d, p = days[-1], days[-2]
+    txf = {(r[0], r[1]): r[2:] for r in cur.execute("""
+        SELECT trade_date, investor, long_oi, short_oi, net_oi FROM futures_institutional
+        WHERE commodity_id = 'TXF' AND trade_date IN (?, ?)""", d, p)}
+    inv = []
+    for key, name in (("foreign", "外資"), ("trust", "投信"), ("dealer", "自營商")):
+        lo, so, net = txf.get((d, key), (None, None, None))
+        prev = txf.get((p, key), (None, None, None))[2]
+        inv.append({"k": key, "n": name, "long": lo, "short": so, "net": net,
+                    "chg": net - prev if net is not None and prev is not None else None,
+                    "eq": round(oi[d][key]), "eq_chg": round(oi[d][key] - oi[p][key])})
+    recent = days[-OI_DAYS:]
+    return {"date": str(d), "prev": str(p), "inv": inv, "d": [str(x) for x in recent],
+            **{k: [round(oi[x][k]) for x in recent] for k in ("foreign", "trust", "dealer")}}
+
+
 def export_all():
     conn = db.connect()
     cur = conn.cursor()
@@ -117,6 +141,12 @@ def export_all():
         revenue[r[0]].append([r[1], r[2], r[3], _f(r[4]), _f(r[5])])
     chains, chain_of = _load_chains(cur)
     futures = _load_futures(cur)
+    oi = load_oi(cur)
+    futures_oi = _load_futures_oi(cur, oi)
+    forecast = build_forecast(oi, [date.fromisoformat(x) for x in futures["d"]], futures["ch"]) \
+        if futures else None
+    if futures:
+        futures.update({k: futures[k][-FUTURES_DAYS:] for k in ("d", "m", "o", "h", "l", "c", "ch", "v", "oi")})
     conn.close()
 
     concepts = load_concepts()
@@ -153,7 +183,7 @@ def export_all():
         })
 
         # 板塊計算用的近 WINDOW 天
-        net_value = []
+        net_value, f_value, t_value, d_value = [], [], [], []
         for i, day in enumerate(d_):
             close = float(c[i]) if c[i] is not None else None
             net = (total[i] or 0) * close / YI if close else 0.0
@@ -161,6 +191,8 @@ def export_all():
                 daily.setdefault(code, {})[day] = {
                     "net": net, "turnover": (tv[i] or 0) / YI, "pct": _pct(c[i], ch[i])}
             net_value.append(net)
+            for arr, src in ((f_value, fn), (t_value, tn), (d_value, dn)):
+                arr.append((src[i] or 0) * close / YI if close else 0.0)
 
         if d_[-1] != latest_date:
             continue    # 今天沒有資料列（停牌、下市）的股票不列入
@@ -176,10 +208,12 @@ def export_all():
         m["turnover"] += (tv[-1] or 0) / YI
         # 法人指標以「有法人資料的最後一天」為準（法人資料比行情晚公布）
         k = max(i for i, day in enumerate(d_) if day <= dates[-1]) if d_[0] <= dates[-1] else None
-        close = float(c[k]) if k is not None and c[k] is not None else 0.0
-        net_value = net_value[:k + 1] if k is not None else []
-        for key, arr in (("foreign", fn), ("trust", tn), ("dealer", dn)):
-            insti_total[key] += ((arr[k] or 0) * close / YI) if k is not None else 0
+        n = k + 1 if k is not None else 0
+        net_value, f_value, t_value, d_value = net_value[:n], f_value[:n], t_value[:n], d_value[:n]
+        if n:
+            insti_total["foreign"] += f_value[-1]
+            insti_total["trust"] += t_value[-1]
+            insti_total["dealer"] += d_value[-1]
         w52 = [(float(h[i]), float(l[i])) for i in range(len(d_))
                if d_[i] >= w52_start and h[i] is not None and l[i] is not None]
         snapshot[code] = {
@@ -190,8 +224,10 @@ def export_all():
             "v": round((v[-1] or 0) / 1000), "tv": _f((tv[-1] or 0) / YI),
             "n1": _f(net_value[-1]) if net_value else None,
             "n5": _f(sum(net_value[-5:])), "n20": _f(sum(net_value[-20:])),
-            **({"f1": _f((fn[k] or 0) * close / YI), "t1": _f((tn[k] or 0) * close / YI),
-                "d1": _f((dn[k] or 0) * close / YI)} if k is not None else {}),
+            # 外資 f、投信 t、自營 d 的 1 日 / 5 日買賣超（億）
+            **({"f1": _f(f_value[-1]), "t1": _f(t_value[-1]), "d1": _f(d_value[-1]),
+                "f5": _f(sum(f_value[-5:])), "t5": _f(sum(t_value[-5:])), "d5": _f(sum(d_value[-5:])),
+                "fs": streak(f_value[-30:]), "ts": streak(t_value[-30:])} if n else {}),
             "s": streak(net_value[-30:]),
             "h52": max(x[0] for x in w52) if w52 else None,
             "l52": min(x[1] for x in w52) if w52 else None,
@@ -212,6 +248,8 @@ def export_all():
         "market": {k: {**v, "turnover": round(v["turnover"], 1)} for k, v in market.items()},
         "insti": {k: round(v, 1) for k, v in insti_total.items()},
         "futures": futures,
+        "futures_oi": futures_oi,
+        "forecast": forecast,
         "groups": {
             "industry": group_flows(industries, daily, dates, REPLAY),
             "chain": group_flows(chains, daily, dates, REPLAY),

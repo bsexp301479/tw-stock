@@ -3,6 +3,8 @@
 
 let charts = [], syncLeader = null;
 const CHART_IDS = ['kC', 'vC', 'iC', 'mC'];
+// 法人買賣超堆疊柱：外資在最靠近零軸的一層，往外依序投信、自營
+const INVESTORS = [['f', '外資', '#4C6EF5'], ['t', '投信', '#F08C00'], ['dl', '自營', '#AE3EC9']];
 
 window.disposeStockCharts = () => { charts.forEach(c => c.remove()); charts = []; };
 
@@ -49,7 +51,8 @@ window.renderStock = async function (code) {
       ${[['開盤', pfmt(P.o[last])], ['最高', pfmt(P.h[last]), 'up'], ['最低', pfmt(P.l[last]), 'dn'], ['昨收', pfmt(prev)],
          ['成交量', fmt(P.v[last]) + ' 張'], ['本益比', fmt(fund.pe, 2)], ['股價淨值比', fmt(fund.pb, 2)], ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--'],
          ['52週高', pfmt(s?.h52)], ['52週低', pfmt(s?.l52)],
-         ['法人1日', yi(s?.n1), cls(s?.n1)], ['法人5日', yi(s?.n5), cls(s?.n5)]]
+         ['法人1日', yi(s?.n1), cls(s?.n1)], ['法人5日', yi(s?.n5), cls(s?.n5)],
+         ['外資5日', yi(s?.f5), cls(s?.f5)], ['投信5日', yi(s?.t5), cls(s?.t5)]]
         .map(([l, v, c]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div></div>`).join('')}
     </section>
 
@@ -63,8 +66,7 @@ window.renderStock = async function (code) {
       <div id="kC" class="chart-box" style="height:320px"></div>
       <div class="ch-label">成交量（張）</div>
       <div id="vC" class="chart-box" style="height:80px"></div>
-      <div class="ch-label">三大法人買賣超（張）
-        <span class="lg"><i style="background:var(--up)"></i>買超</span><span class="lg"><i style="background:var(--dn)"></i>賣超</span></div>
+      <div class="ch-label">三大法人買賣超（張）<span id="iLegend" style="display:contents"></span></div>
       <div id="iC" class="chart-box" style="height:90px"></div>
       <div class="ch-label">MACD (12, 26, 9)
         <span class="lg"><i style="background:#378ADD"></i>DIF</span><span class="lg"><i style="background:#EF9F27"></i>DEA</span></div>
@@ -99,12 +101,14 @@ function aggregate(data, mode) {
   const rows = [];
   let prevC = null;
   P.d.forEach((d, i) => {
-    const net = I.f[i] == null ? null : I.f[i] + I.t[i] + I.dl[i];
+    const has = I.f[i] != null;
+    const inst = { f: has ? I.f[i] : null, t: has ? I.t[i] ?? 0 : null, dl: has ? I.dl[i] ?? 0 : null };
+    inst.net = has ? inst.f + inst.t + inst.dl : null;
     if (P.c[i] != null && P.o[i] != null) {
-      rows.push({ d, o: P.o[i], h: P.h[i], l: P.l[i], c: P.c[i], v: P.v[i], net, nt: false });
+      rows.push({ d, o: P.o[i], h: P.h[i], l: P.l[i], c: P.c[i], v: P.v[i], ...inst, nt: false });
       prevC = P.c[i];
     } else if (prevC != null) {
-      rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, net, nt: true });
+      rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, ...inst, nt: true });
     }
   });
   if (mode === '日') return rows;
@@ -121,7 +125,7 @@ function aggregate(data, mode) {
     else {
       g.h = Math.max(g.h, r.h); g.l = Math.min(g.l, r.l); g.c = r.c; g.v += r.v;
       g.nt = g.nt && r.nt;   // 整週/整月都沒成交才算一字線
-      g.net = r.net == null ? g.net : (g.net ?? 0) + r.net;
+      for (const k of ['f', 't', 'dl', 'net']) if (r[k] != null) g[k] = (g[k] ?? 0) + r[k];
     }
   }
   return [...out.values()];
@@ -183,9 +187,20 @@ function buildCharts(raw, mode) {
   const vSer = vc.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
   vSer.setData(raw.map((r, i) => ({ time: T[i], value: V[i], color: NT[i] ? FLAT + '99' : C[i] >= O[i] ? UP + '99' : DN + '99' })));
 
+  // 堆疊：買超與賣超各自累加，先畫最外層（合計），再畫內層蓋上去
   const ic = mk('iC', false);
-  const iSer = ic.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
-  iSer.setData(N.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v, color: v >= 0 ? UP : DN }));
+  let iSer = null;
+  for (const sign of [1, -1]) {
+    for (let k = INVESTORS.length; k >= 1; k--) {
+      const ser = ic.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
+      ser.setData(raw.map((r, i) => {
+        if (r.net == null) return { time: T[i] };
+        const v = INVESTORS.slice(0, k).reduce((a, [key]) => a + (sign * r[key] > 0 ? r[key] : 0), 0);
+        return { time: T[i], value: v, color: INVESTORS[k - 1][2] };
+      }));
+      iSer = iSer || ser;
+    }
+  }
 
   const mc = mk('mC', true);
   const macdFmt = { type: 'price', precision: 2, minMove: 0.01 };
@@ -215,6 +230,14 @@ function buildCharts(raw, mode) {
       `<span>量 <b>${fmt(V[i])}</b> 張</span>` +
       (N[i] != null ? `<span>法人 <b class="${cls(N[i])}">${sgn(N[i], 0)}</b> 張</span>` : '') +
       ma('MA5', ma5[i], '#888780') + ma('MA20', ma20[i], '#EF9F27') + ma('MA60', ma60[i], '#7F77DD');
+    // 法人資料比行情晚公布：最新一根還沒有時，改顯示最近有資料的那天
+    let j = i;
+    if (N[j] == null && i === raw.length - 1) while (j > 0 && N[j] == null) j--;
+    const r = raw[j], v = x => x == null ? '--' : sgn(x, 0);
+    $('#iLegend').innerHTML = (j !== i && N[j] != null ? `<span class="muted">${T[j]}</span>` : '') +
+      INVESTORS.map(([key, name, color]) =>
+        `<span class="lg"><i style="background:${color}"></i>${name} <b class="num ${cls(r[key])}">${v(r[key])}</b></span>`).join('') +
+      `<span class="lg">合計 <b class="num ${cls(N[j])}">${v(N[j])}</b></span>`;
   };
   let crossSyncing = false;
   anchors.forEach(([src]) => src.subscribeCrosshairMove(p => {

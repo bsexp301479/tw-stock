@@ -153,6 +153,7 @@ function renderToday() {
     </section>
 
     ${futuresHTML(L.futures)}
+    ${oiHTML(L.futures_oi, L.forecast)}
 
     <section class="sec">
       <div class="sec-h"><h2>資金象限</h2><span class="sp"></span>${groupSeg()}</div>
@@ -183,11 +184,12 @@ function renderToday() {
   onSeg('spanSeg', v => { localStore('span', null, v); renderToday(); });
   $('#view').addEventListener('click', onRowClick);
   drawFutures(L.futures);
+  drawOI(L.futures_oi);
 }
 
 // ─── 台指期日 K（首頁） ─────────────────────────────────
-let futChart = null;
-function disposeFuturesChart() { futChart?.remove(); futChart = null; }
+let futChart = null, oiChart = null;
+function disposeFuturesChart() { futChart?.remove(); oiChart?.remove(); futChart = oiChart = null; }
 
 const md = d => d.slice(5).replace('-', '/');
 
@@ -264,6 +266,66 @@ function drawFutures(F) {
     const i = p.time ? T.indexOf(typeof p.time === 'string' ? p.time : ymd(p.time).map(pad).join('-')) : -1;
     show(i >= 0 ? i : n - 1);
   });
+}
+
+// ─── 期貨三大法人未平倉 + 大盤漲跌預測（首頁） ────────────────
+const OI_COLORS = { foreign: '#4C6EF5', trust: '#F08C00', dealer: '#AE3EC9' };
+const pctTxt = v => v == null ? '--' : (v * 100).toFixed(1) + '%';
+
+function oiHTML(O, FC) {
+  if (!O) return '';
+  const lots = v => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v, 0)}</td>`;
+  const rows = O.inv.map(r => `<tr><td><i class="dot" style="background:${OI_COLORS[r.k]}"></i>${r.n}</td>
+      <td class="num">${fmt(r.long)}</td><td class="num">${fmt(r.short)}</td>${lots(r.net)}${lots(r.chg)}${lots(r.eq)}${lots(r.eq_chg)}</tr>`).join('');
+  let fc = '<div class="empty">期貨法人資料不足，無法預測</div>';
+  if (FC) {
+    const B = FC.backtest, beat = B.acc > B.baseline;
+    const maxE = Math.max(0.05, ...FC.factors.map(f => Math.abs(f.effect)));
+    const vcls = FC.view === '偏多' ? 'up' : FC.view === '偏空' ? 'dn' : 'flat';
+    fc = `<div class="fc-head"><span class="fc-view ${vcls}">${FC.view}</span>
+        <span>下一交易日上漲機率 <b class="num ${vcls}">${pctTxt(FC.p_up)}</b></span>
+        <span class="muted small">依 ${md(FC.date)} 收盤後未平倉</span></div>
+      <div class="fc-factors">${FC.factors.map(f => `<div class="fc-f" title="z 分數 ${f.z}（相對近 60 日）">
+          <span class="nm">${f.name}</span><span class="num muted">${sgn(f.value, 0)} 口</span>
+          <span class="fc-bar"><span style="${f.effect >= 0 ? 'left:50%' : 'right:50%'};width:${Math.abs(f.effect) / maxE * 50}%;background:var(--${f.effect >= 0 ? 'up' : 'dn'})"></span></span></div>`).join('')}
+        <div class="muted small">長條往右 = 推升上漲機率，往左 = 壓低</div></div>
+      <div class="fc-bt ${beat ? '' : 'warn'}">回測 ${B.from.slice(0, 7).replace('-', '/')}～${B.to.slice(0, 7).replace('-', '/')} 共 ${B.n} 天：
+        命中率 <b>${pctTxt(B.acc)}</b>，「永遠猜多數方向」基準 <b>${pctTxt(B.baseline)}</b>
+        ${B.conf_acc != null ? `；機率偏離 5% 以上的 ${B.conf_n} 天命中 <b>${pctTxt(B.conf_acc)}</b>` : ''}。
+        ${beat ? '' : '<br>模型目前沒有勝過簡單基準，未平倉對隔日漲跌的預測力很弱，請只當作籌碼面參考。'}</div>
+      <div class="fc-recent"><span class="muted small">最近 10 次</span>${FC.recent.map(([d, p, y]) =>
+        `<span class="fc-dot ${(p >= 0.5) === !!y ? 'hit' : 'miss'}" title="${d} 預測上漲 ${pctTxt(p)}，實際${y ? '漲' : '跌'}">${(p >= 0.5) === !!y ? '✓' : '✗'}</span>`).join('')}</div>
+      <div class="muted small">羅吉斯迴歸，特徵為約當大台淨未平倉水位與增減（相對近 60 日標準化），每 20 天以過去資料重新訓練。僅供研究，非投資建議。</div>`;
+  }
+  return `<section class="sec grid g2">
+      <div class="card">
+        <div class="sec-h"><h2>期貨法人未平倉</h2><span class="muted small">${md(O.date)}，口</span></div>
+        <div class="tbl-wrap"><table class="tbl oi-tbl"><thead><tr><th></th><th>大台多單</th><th>大台空單</th><th>淨額</th><th>增減</th><th>約當大台</th><th>增減</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>
+        <div class="ch-label">約當大台淨未平倉（大台 + 小台/4 + 微台/20）
+          ${O.inv.map(r => `<span class="lg"><i style="background:${OI_COLORS[r.k]}"></i>${r.n}</span>`).join('')}</div>
+        <div id="oiC" class="chart-box" style="height:160px"></div>
+      </div>
+      <div class="card"><div class="sec-h"><h2>大盤漲跌預測</h2><span class="muted small">台指期近月日盤</span></div>${fc}</div>
+    </section>`;
+}
+
+function drawOI(O) {
+  if (!O || !$('#oiC') || !window.LightweightCharts) return;
+  const LC = window.LightweightCharts, grid = css('--border');
+  oiChart = LC.createChart($('#oiC'), {
+    autoSize: true,
+    layout: { background: { type: 'solid', color: 'transparent' }, textColor: css('--text2'), fontSize: 10, attributionLogo: false },
+    grid: { vertLines: { visible: false }, horzLines: { color: grid } },
+    rightPriceScale: { borderVisible: false },
+    timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true },
+    handleScroll: false, handleScale: false,
+    localization: { locale: 'zh-TW', priceFormatter: v => fmt(v) },
+  });
+  for (const k of ['foreign', 'trust', 'dealer'])
+    oiChart.addLineSeries({ color: OI_COLORS[k], lineWidth: k === 'foreign' ? 2 : 1, priceLineVisible: false, lastValueVisible: k === 'foreign' })
+      .setData(O.d.map((t, i) => ({ time: t, value: O[k][i] })));
+  oiChart.timeScale().fitContent();
 }
 
 function onRowClick(e) {
@@ -433,47 +495,65 @@ function showGroup(g) {
 }
 
 // ─── 排行 / 自選 ────────────────────────────────────────
+// [代號, 名稱, 欄位, 排序方向]；欄位 '*' 會換成 1 或 5（依「1日 / 5日」切換）
 const RANKS = [
-  ['n1', '法人買超', -1], ['n1a', '法人賣超', 1], ['n5', '5日買超', -1], ['p', '漲幅', -1], ['pa', '跌幅', 1], ['tv', '成交額', -1],
+  ['n+', '法人買超', 'n*', -1], ['n-', '法人賣超', 'n*', 1],
+  ['f+', '外資買超', 'f*', -1], ['f-', '外資賣超', 'f*', 1],
+  ['t+', '投信買超', 't*', -1], ['t-', '投信賣超', 't*', 1],
+  ['d+', '自營買超', 'd*', -1], ['d-', '自營賣超', 'd*', 1],
+  ['fs', '外資連買', 'fs', -1], ['ts', '投信連買', 'ts', -1], ['s', '法人連買', 's', -1],
+  ['p+', '漲幅', 'p', -1], ['p-', '跌幅', 'p', 1], ['tv', '成交額', 'tv', -1],
 ];
+const streakTxt = v => v ? (v > 0 ? '買' : '賣') + Math.abs(v) : '--';
 
-function stockTable(list) {
+function stockTable(list, span = '1') {
+  const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
+  const amt = v => `<td class="num ${cls(v)}">${yi(v)}</td>`;
   return `<div class="tbl-wrap"><table class="tbl"><thead><tr>
-      <th>股票</th><th>收盤</th><th>漲跌</th><th>成交額</th><th>外資</th><th>投信</th><th>自營</th><th>法人1日</th><th>法人5日</th><th>連買賣</th></tr></thead><tbody>` +
+      <th>股票</th><th>收盤</th><th>漲跌</th><th>成交額</th><th>外資${lbl}</th><th>投信${lbl}</th><th>自營${lbl}</th><th>法人${lbl}</th>
+      <th>外資連</th><th>投信連</th><th>法人連</th></tr></thead><tbody>` +
     list.map(([c, s]) => `<tr data-code="${c}">
       <td class="nm"><b>${esc(s.n)}</b><span>${c} ${esc(s.i)}</span></td>
       <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num">${fmt(s.tv, 1)}億</td>
-      <td class="num ${cls(s.f1)}">${yi(s.f1)}</td><td class="num ${cls(s.t1)}">${yi(s.t1)}</td><td class="num ${cls(s.d1)}">${yi(s.d1)}</td>
-      <td class="num ${cls(s.n1)}">${yi(s.n1)}</td><td class="num ${cls(s.n5)}">${yi(s.n5)}</td>
-      <td class="num ${cls(s.s)}">${s.s ? (s.s > 0 ? '買' : '賣') + Math.abs(s.s) : '--'}</td></tr>`).join('') +
+      ${amt(s['f' + k])}${amt(s['t' + k])}${amt(s['d' + k])}${amt(s['n' + k])}
+      <td class="num ${cls(s.fs)}">${streakTxt(s.fs)}</td><td class="num ${cls(s.ts)}">${streakTxt(s.ts)}</td>
+      <td class="num ${cls(s.s)}">${streakTxt(s.s)}</td></tr>`).join('') +
     '</tbody></table></div>';
 }
 
+function spanSeg(span) { return segHTML('rspanSeg', [['1', '1日'], ['5', '5日']], span); }
+
 function renderRank() {
-  const by = localStore('rank', 'n1'), mkt = localStore('mkt', 'all');
-  const [, , dir] = RANKS.find(r => r[0] === by) || RANKS[0];
-  const field = by.replace(/a$/, '');
+  const by = localStore('rank2', 'n+'), mkt = localStore('mkt', 'all'), span = localStore('rspan', '1');
+  const [, , f, dir] = RANKS.find(r => r[0] === by) || RANKS[0];
+  const field = f.replace('*', span);
+  // 連買排行同天數再比較該法人的 5 日金額
+  const tie = { fs: 'f5', ts: 't5', s: 'n5' }[field];
   const list = Object.entries(App.latest.stocks)
     .filter(([, s]) => s[field] != null && (mkt === 'all' || s.m === mkt))
-    .sort((a, b) => dir * (a[1][field] - b[1][field])).slice(0, 50);
+    .sort((a, b) => dir * (a[1][field] - b[1][field]) || (tie ? (b[1][tie] ?? 0) - (a[1][tie] ?? 0) : 0)).slice(0, 50);
   $('#view').innerHTML = `<section class="sec">
       <div class="sec-h"><h2>排行</h2><span class="sp"></span>
         ${segHTML('mktSeg', [['all', '全部'], ['TWSE', '上市'], ['TPEx', '上櫃']], mkt)}
-        ${segHTML('rankSeg', RANKS.map(r => [r[0], r[1]]), by)}</div>
-      <div class="card">${stockTable(list)}</div></section>`;
-  onSeg('rankSeg', v => { localStore('rank', null, v); renderRank(); });
+        ${spanSeg(span)}
+        <select id="rankSel" class="sel">${RANKS.map(r => `<option value="${r[0]}"${r[0] === by ? ' selected' : ''}>${r[1]}</option>`).join('')}</select></div>
+      <div class="card">${stockTable(list, span)}</div>
+      <div class="muted small" style="margin-top:6px">金額 = 買賣超張數 × 當日收盤；1日 / 5日切換會同時改變排序與表格欄位，連買為連續買超天數。</div></section>`;
+  $('#rankSel').addEventListener('change', e => { localStore('rank2', null, e.target.value); renderRank(); });
+  onSeg('rspanSeg', v => { localStore('rspan', null, v); renderRank(); });
   onSeg('mktSeg', v => { localStore('mkt', null, v); renderRank(); });
   $('#view').addEventListener('click', onRowClick);
 }
 
 function renderWatch() {
-  const S = App.latest.stocks;
+  const S = App.latest.stocks, span = localStore('rspan', '1');
   const list = [...App.watch].filter(c => S[c]).map(c => [c, S[c]]);
   $('#view').innerHTML = `<section class="sec">
-      <div class="sec-h"><h2>自選股</h2><span class="muted small">存在這個瀏覽器裡，換裝置不會同步</span></div>
-      <div class="card">${list.length ? stockTable(list)
+      <div class="sec-h"><h2>自選股</h2><span class="muted small">存在這個瀏覽器裡，換裝置不會同步</span><span class="sp"></span>${spanSeg(span)}</div>
+      <div class="card">${list.length ? stockTable(list, span)
         : '<div class="empty">還沒有自選股。打開任一檔個股，按右上角「☆ 加入自選」。</div>'}</div></section>`;
+  onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
   $('#view').addEventListener('click', onRowClick);
 }
 

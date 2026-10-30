@@ -7,7 +7,7 @@
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
   python -m twstock export                           從資料庫匯出網站 JSON（site/data）
   python -m twstock serve                            本機預覽網站 http://localhost:8000
-  python -m twstock futures --start 2025-01-01       台指期日 K（期交所每日行情）
+  python -m twstock futures --start 2025-01-01       台指期日 K 與期貨三大法人未平倉
   python -m twstock chains                           更新產業鏈族群（櫃買產業價值鏈平台）
   python -m twstock chanlun 2330                     纏論結構圖（output/chanlun_2330.svg）
 """
@@ -40,7 +40,7 @@ CHAINS_REFRESH_DAYS = 30
 def cmd_collect(args):
     from .collectors.chains import chains_age_days, update_chains
     from .collectors.daily import collect_for_date
-    from .collectors.futures import collect_futures
+    from .collectors.futures import collect_futures, collect_futures_institutional
     from .collectors.industry import update_industry
     from .collectors.revenue import collect_monthly_revenue, revenue_month_for
     from .fetch import FetchError
@@ -60,6 +60,7 @@ def cmd_collect(args):
             # 期貨與產業鏈失敗不影響當日股票資料，下次執行會再補
             try:
                 collect_futures(d)
+                collect_futures_institutional(d)
             except FetchError as e:
                 print(f"  ⚠️  台指期抓取失敗：{e}")
             age = chains_age_days()
@@ -130,10 +131,11 @@ def cmd_serve(args):
 
 
 def cmd_futures(args):
-    from .collectors.futures import collect_futures
+    from .collectors.futures import collect_futures, collect_futures_institutional
     start = args.date or args.start or date.today()
     end = (args.end or date.today()) if args.start and not args.date else start
     collect_futures(start, end, args.commodity)
+    collect_futures_institutional(start, end)
 
 
 def cmd_chains(args):
@@ -182,7 +184,7 @@ def main(argv=None):
     s.add_argument("--no-browser", action="store_true", help="不自動開瀏覽器")
     s.set_defaults(fn=cmd_serve)
 
-    s = sub.add_parser("futures", help="期貨日 K（預設台指期 TX）")
+    s = sub.add_parser("futures", help="期貨日 K（預設台指期 TX）與三大法人未平倉")
     s.add_argument("--date", type=_date, help="單日，預設今天")
     s.add_argument("--start", type=_date, help="補抓起日")
     s.add_argument("--end", type=_date, help="補抓迄日，預設今天")

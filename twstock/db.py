@@ -129,6 +129,25 @@ DDL = [
         CONSTRAINT UQ_futures_daily UNIQUE (commodity_id, contract_month, session, trade_date)
     )
     """,
+    # 期貨三大法人交易與未平倉（口數；金額單位千元）
+    """
+    IF OBJECT_ID('futures_institutional') IS NULL
+    CREATE TABLE futures_institutional (
+        id             BIGINT IDENTITY(1,1) PRIMARY KEY,
+        trade_date     DATE          NOT NULL,
+        commodity_id   NVARCHAR(10)  NOT NULL,   -- TXF 大台、MXF 小台、TMF 微台
+        investor       NVARCHAR(10)  NOT NULL,   -- foreign 外資及陸資 / trust 投信 / dealer 自營商
+        long_trade     INT           NULL,
+        short_trade    INT           NULL,
+        net_trade      INT           NULL,
+        long_oi        INT           NULL,       -- 多方未平倉口數
+        short_oi       INT           NULL,       -- 空方未平倉口數
+        net_oi         INT           NULL,       -- 多空未平倉淨額
+        net_oi_amount  BIGINT        NULL,       -- 多空未平倉契約金額淨額（千元）
+        created_at     DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_futures_institutional UNIQUE (commodity_id, investor, trade_date)
+    )
+    """,
     # 產業鏈族群（櫃買中心產業價值鏈平台）；含興櫃，所以存代號而非 stocks 外鍵
     """
     IF OBJECT_ID('industry_chains') IS NULL
@@ -174,4 +193,4 @@ def setup_database():
     conn.commit()
     conn.close()
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
-          "institutional_trades、futures_daily_prices、industry_chains")
+          "institutional_trades、futures_daily_prices、futures_institutional、industry_chains")
