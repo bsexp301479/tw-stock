@@ -25,8 +25,9 @@ const pfmt = n => n == null || isNaN(n) ? '--' : Number(n).toLocaleString('zh-TW
 const psgn = n => n == null ? '--' : (n > 0 ? '+' : '') + pfmt(n);                 // 價差：+1.2、-10
 const sgn = (n, d = 2) => n == null ? '--' : (n > 0 ? '+' : '') + fmt(n, d);
 const cls = n => n > 0 ? 'up' : n < 0 ? 'dn' : 'flat';
-// 表格的漲跌欄；今天無成交的股票顯示「無成交」（收盤價為最後成交日）
-const pctCell = s => s.nt ? `<td class="flat small" title="最後成交 ${s.nt}">無成交</td>` : `<td class="num ${cls(s.p)}">${sgn(s.p)}%</td>`;
+// 表格的漲跌欄；今天無成交的股票顯示「無成交」（收盤價為最後成交日）；前一交易日無成交時 tooltip 註明相對日期
+const pctCell = s => s.nt ? `<td class="flat small" title="最後成交 ${s.nt}">無成交</td>`
+  : `<td class="num ${cls(s.p)}${s.rel ? ' rel' : ''}"${s.rel ? ` title="相對 ${md(s.rel)} 收盤（前一交易日無成交）"` : ''}>${sgn(s.p)}%</td>`;
 // 不到 0.05 億四捨五入後是 0，避免顯示「-0.0億」
 const yi = n => n == null ? '--' : Math.abs(n) < 0.05 ? '0億' : sgn(n, Math.abs(n) >= 100 ? 0 : 1) + '億';
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -148,11 +149,7 @@ function renderToday() {
     <section class="sec grid g-stats">${indexCard(L.index?.TAIEX, '加權指數')}${indexCard(L.index?.TPEX, '櫃買指數')}</section>
     <section class="sec grid g-stats">
       ${mk('TWSE', '上市')}${mk('TPEx', '上櫃')}
-      <div class="card stat"><div class="l">三大法人（${L.flow_date.slice(5).replace('-', '/')}）</div>
-        <div class="v num ${cls(L.insti.foreign + L.insti.trust + L.insti.dealer)}">${yi(L.insti.foreign + L.insti.trust + L.insti.dealer)}</div>
-        <div class="s num">外資 <span class="${cls(L.insti.foreign)}">${yi(L.insti.foreign)}</span>　投信 <span class="${cls(L.insti.trust)}">${yi(L.insti.trust)}</span>　自營 <span class="${cls(L.insti.dealer)}">${yi(L.insti.dealer)}</span></div>
-        <div class="s">估算：買賣超張數 × 收盤價，不含 ETF</div>
-      </div>
+      ${instiCard(L)}
     </section>
 
     ${futuresHTML(L.futures)}
@@ -226,7 +223,38 @@ function indexCard(x, name) {
       <div class="v num ${cls(x.ch)}">${fmt(x.c, 2)}</div>
       <div class="s num ${cls(x.ch)}">${x.ch > 0 ? '▲' : x.ch < 0 ? '▼' : ''} ${fmt(Math.abs(x.ch ?? 0), 2)} (${sgn(x.p)}%)</div>
       ${spark(x.s)}
-      <div class="s">${x.s.length >= 60 ? '近 60 個交易日收盤' : `資料自 ${md(x.from)} 起（${x.s.length} 個交易日）`}</div>
+      ${x.s.length >= 2 ? `<div class="s"><span class="${x.s.at(-1) >= x.s[0] ? 'up' : 'dn'}">${x.s.length >= 60 ? '近 60 個交易日' : `自 ${md(x.from)} 起`} ${sgn((x.s.at(-1) / x.s[0] - 1) * 100, 1)}%</span>${x.s.length < 60 ? `（${x.s.length} 個交易日）` : ''}</div>` : ''}
+    </div>`;
+}
+
+// 迷你柱狀圖：正值紅（買超）、負值綠（賣超），零軸置中
+function minibars(vals) {
+  if (!vals?.length) return '';
+  const m = Math.max(...vals.map(Math.abs)) || 1, w = 100 / vals.length;
+  return `<svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="0" x2="100" y1="17" y2="17" stroke="var(--border2)" stroke-width="1" vector-effect="non-scaling-stroke"/>` +
+    vals.map((v, i) => { const h = Math.abs(v) / m * 16;
+      return `<rect x="${(i * w + w * 0.15).toFixed(2)}" y="${(v >= 0 ? 17 - h : 17).toFixed(2)}" width="${(w * 0.7).toFixed(2)}" height="${h.toFixed(2)}" fill="var(--${v >= 0 ? 'up' : 'dn'})"/>`; }).join('') +
+    '</svg>';
+}
+
+// 三大法人卡：上市用證交所官方金額（A2），上櫃另列估算值；尚無官方資料時維持第 1 輪估算卡
+function instiCard(L) {
+  const O = L.insti_official, X = L.insti_otc, I = L.insti;
+  const yi1 = v => v == null ? '--' : sgn(v, 1) + '億';
+  if (!O) return `<div class="card stat"><div class="l">三大法人（${md(L.flow_date)}）</div>
+      <div class="v num ${cls(I.foreign + I.trust + I.dealer)}">${yi(I.foreign + I.trust + I.dealer)}</div>
+      <div class="s num">外資 <span class="${cls(I.foreign)}">${yi(I.foreign)}</span>　投信 <span class="${cls(I.trust)}">${yi(I.trust)}</span>　自營 <span class="${cls(I.dealer)}">${yi(I.dealer)}</span></div>
+      <div class="s">估算：買賣超張數 × 收盤價，不含 ETF</div></div>`;
+  const stale = O.date < L.date, fs = O.fs;
+  return `<div class="card stat idx insti">
+      <div class="l">三大法人　上市，官方，含 ETF<span class="muted">　${md(O.date)}${stale ? '（尚未更新）' : ''}</span></div>
+      <div class="v num ${cls(O.total)}">${yi1(O.total)}</div>
+      <div class="s num">外資 <span class="${cls(O.foreign)}">${yi1(O.foreign)}</span>　投信 <span class="${cls(O.trust)}">${yi1(O.trust)}</span>　自營 <span class="${cls(O.dealer)}">${yi1(O.dealer)}</span></div>
+      ${minibars(O.f)}
+      <div class="s">外資近 ${O.f.length} 日（${md(O.d[0])}～${md(O.d.at(-1))}）<b class="${cls(fs)}">${fs > 0 ? `連買 ${fs} 日` : fs < 0 ? `連賣 ${-fs} 日` : '當日持平'}</b></div>
+      ${X ? `<div class="s num">上櫃估算（${md(L.flow_date)}）：外資 <span class="${cls(X.foreign)}">${yi(X.foreign)}</span>　投信 <span class="${cls(X.trust)}">${yi(X.trust)}</span>　自營 <span class="${cls(X.dealer)}">${yi(X.dealer)}</span></div>
+      <div class="s">上櫃為張數 × 收盤估算、不含 ETF，不可與上市官方值相加</div>` : ''}
     </div>`;
 }
 

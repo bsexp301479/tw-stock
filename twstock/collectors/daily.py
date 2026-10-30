@@ -13,8 +13,9 @@ TWSE = "https://www.twse.com.tw/rwd/zh"
 TPEX = "https://www.tpex.org.tw/www/zh-tw"
 TPEX_OPENAPI = "https://www.tpex.org.tw/openapi/v1"
 
-# collect_for_date 的資料集名稱；INDEX 只在補抓加權指數時單獨指定（抓 PRICES 時會一併寫入）
-PRICES, INSTI, INDEX = "prices", "insti", "index"
+# collect_for_date 的資料集名稱；INDEX 只在補抓加權指數時單獨指定（抓 PRICES 時會一併寫入）；
+# AMOUNT 只在補抓或 collect 單獨呼叫時指定
+PRICES, INSTI, INDEX, AMOUNT = "prices", "insti", "index", "amount"
 ALL_DATASETS = (PRICES, INSTI)
 
 
@@ -300,6 +301,63 @@ def merge_market_index(cursor, rows: list):
     """, db.to_json(rows))
 
 
+def _amount_unit(name: str):
+    """BFI82U 單位名稱 → 代碼。「外資及陸資(不含外資自營商)」也含「外資自營商」字樣，判斷順序不可對調。"""
+    if name.startswith("外資及陸資"):
+        return "foreign"
+    if name.startswith("外資自營商"):
+        return "foreign_dealer"
+    if name.startswith("自營商"):
+        return "dealer_hedge" if "避險" in name else "dealer_self"
+    if name.startswith("投信"):
+        return "trust"
+    if name.startswith("合計"):
+        return "total"
+    return None
+
+
+def parse_insti_amount(data: dict, d: date) -> list:
+    """BFI82U 回應 → [{trade_date, unit, buy_amount, sell_amount, net_amount}]（元）；休市或欄位不符回傳 []。"""
+    if data.get("stat") != "OK":
+        return []
+    idx = {f: i for i, f in enumerate(data.get("fields", []))}
+    need = ("單位名稱", "買進金額", "賣出金額", "買賣差額")
+    if not set(need) <= idx.keys():
+        return []
+    rows = {}
+    for row in data.get("data", []):
+        if len(row) <= max(idx[f] for f in need):
+            continue
+        unit = _amount_unit(str(row[idx["單位名稱"]]).strip())
+        if unit:
+            rows[unit] = {"trade_date": d.isoformat(), "unit": unit,
+                          "buy_amount": clean_number(row[idx["買進金額"]], int),
+                          "sell_amount": clean_number(row[idx["賣出金額"]], int),
+                          "net_amount": clean_number(row[idx["買賣差額"]], int)}
+    return list(rows.values())
+
+
+def fetch_twse_insti_amount(d: date) -> list:
+    data = request("GET", f"{TWSE}/fund/BFI82U",
+                   params={"response": "json", "type": "day", "dayDate": f"{d:%Y%m%d}"})
+    return parse_insti_amount(data, d)
+
+
+def merge_insti_amount(cursor, rows: list):
+    cursor.execute("""
+        MERGE insti_amount AS t
+        USING OPENJSON(?) WITH (
+            trade_date DATE, unit NVARCHAR(20), buy_amount BIGINT, sell_amount BIGINT, net_amount BIGINT
+        ) AS s
+        ON t.trade_date = s.trade_date AND t.unit = s.unit
+        WHEN MATCHED THEN UPDATE SET
+            buy_amount = s.buy_amount, sell_amount = s.sell_amount, net_amount = s.net_amount
+        WHEN NOT MATCHED THEN
+            INSERT (trade_date, unit, buy_amount, sell_amount, net_amount)
+            VALUES (s.trade_date, s.unit, s.buy_amount, s.sell_amount, s.net_amount);
+    """, db.to_json(rows))
+
+
 def collect_tpex_index() -> int:
     """寫入本月全部日期（MERGE，可重複執行）。"""
     rows = fetch_tpex_index()
@@ -362,6 +420,15 @@ def collect_for_date(d: date, datasets=ALL_DATASETS) -> bool:
                 insti[code] = {"stock_code": code, **r}
             counts[f"法人{market}"] = len(rows)
 
+    amount = []
+    if AMOUNT in datasets:
+        amount = fetch_twse_insti_amount(d)
+        if amount:
+            counts["法人金額"] = len(amount)
+        elif not (prices or insti or taiex):
+            print("  ℹ️  無三大法人買賣金額（休市或尚未公布），略過此日")
+            return False
+
     conn = db.connect()
     try:
         cursor = conn.cursor()
@@ -373,6 +440,8 @@ def collect_for_date(d: date, datasets=ALL_DATASETS) -> bool:
             merge_institutional(cursor, d, list(insti.values()))
         if taiex:
             merge_market_index(cursor, [taiex])
+        if amount:
+            merge_insti_amount(cursor, amount)
         conn.commit()
     finally:
         conn.close()

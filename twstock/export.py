@@ -6,6 +6,7 @@
   stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈
 """
 import json
+from bisect import bisect_left
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -21,6 +22,11 @@ INDEX_DAYS = 60                # 首頁加權／櫃買指數走勢線天數
 REVENUE_MONTHS = 36            # 個股 JSON 匯出的月營收筆數（累計年增、新高以全部月份計算後再截取）
 WINDOW = REPLAY + LONG - 1     # 計算回放第一天的 20 日均線所需天數
 YI = 1e8                       # 億
+INSTI_DAYS = 20                # 首頁官方三大法人走勢天數
+ADJ_MIN, ADJ_MAX = 0.02, 20     # 還原係數合理範圍；超出視為資料錯誤，不採用
+_SRC_RANK = {"TWTAUU": 0, "TWTB8U": 0}   # 同一列有多筆官方事件時優先（恢復買賣參考價已含同日除權）
+CAP_TYPES = ("權", "權息", "減", "面", "調")
+CAP_DAYS = 90
 
 
 def _f(v, nd=2):
@@ -69,6 +75,104 @@ def _alert_status(kind, announce, start, end, today):
             return None
         return "upcoming" if start and start > today else "active"
     return "notice" if announce == today else None
+
+
+def _price_events(d_, c, ch, market, official):
+    """
+    個股的價格調整事件（舊到新）：[{i, d, t, p, r}]。i = 生效的資料列索引（事件日當天或之後第一列），
+    d = 該列日期字串，t = 類型，p = 事件前收盤，r = 參考價。另回傳因係數不合理而略過的 [(日期, 係數)]。
+    官方事件在第一筆資料之前或最後一筆之後的略過；上櫃另以「收盤 − 官方漲跌」反推（類型「調」），
+    只在前一列有成交、漲跌有數值時計算，與官方事件同一列時以官方為準。
+    """
+    at, bad = {}, []
+
+    def add(i, t, p, r):
+        f = r / p
+        if ADJ_MIN <= f <= ADJ_MAX:
+            at[i] = {"i": i, "d": str(d_[i]), "t": t, "p": p, "r": r}
+        else:
+            bad.append((str(d_[i]), round(f, 4)))
+
+    for e in sorted(official, key=lambda e: (e["d"], _SRC_RANK.get(e["src"], 1))):
+        i = bisect_left(d_, e["d"])
+        if 0 < i < len(d_) and i not in at:
+            add(i, e["t"], e["p"], e["r"])
+    if market == "TPEx":
+        for i in range(1, len(d_)):
+            if i in at or c[i] is None or c[i - 1] is None or ch[i] is None:
+                continue
+            p, r = float(c[i - 1]), round(float(c[i]) - float(ch[i]), 2)
+            if abs(r - p) >= 0.005:
+                add(i, "調", p, r)
+    return [at[i] for i in sorted(at)], bad
+
+
+def _adj_factors(n, ev):
+    """每個資料列的還原係數 = 該列之後所有事件（參考價 ÷ 前收）的乘積；事件當天與之後為 1。"""
+    af, k, j = [1.0] * n, 1.0, len(ev) - 1
+    for i in range(n - 1, -1, -1):
+        while j >= 0 and ev[j]["i"] > i:
+            k *= ev[j]["r"] / ev[j]["p"]
+            j -= 1
+        af[i] = k
+    return af
+
+
+def _changes(d_, c, ch, market, ev):
+    """
+    每日漲跌（P14）。回傳 (chs, rel, miss)：
+      chs[i] 漲跌（元），無成交或無法判定為 None；rel[i] 分支 2 所相對的最後成交日（date），其他 None；
+      miss   上市「官方漲跌 0、收盤 ≠ 前一個成交收盤」但找不到事件的日期（維持不比價）。
+    判斷順序：1. 前一個成交列（不含）到今天（含）之間有事件 → 收盤 − 參考價
+              2. 上市且前一個資料列無成交 → 收盤 − 最後成交日收盤
+              3. 官方漲跌（上市官方 0 且收盤 ≠ 前收 → None）
+    """
+    at = {e["i"]: e for e in ev}
+    chs, rel, miss, j = [], [], [], None
+    for i in range(len(d_)):
+        x = r = None
+        if c[i] is not None:
+            e = next((at[k] for k in range(i, -1 if j is None else j, -1) if k in at), None)
+            if e is not None:
+                x = round(float(c[i]) - e["r"], 2)
+            elif market == "TWSE" and j is not None and j != i - 1:
+                x, r = round(float(c[i]) - float(c[j]), 2), d_[j]
+            else:
+                x = _f(ch[i])
+                if x == 0 and market == "TWSE" and j is not None and c[i] != c[j]:
+                    x = None
+                    miss.append(d_[i])
+            j = i
+        chs.append(x)
+        rel.append(r)
+    return chs, rel, miss
+
+
+def _side(x):
+    """漲跌家數歸類；None（不比價、官方未提供）沿用既有做法算平盤。"""
+    return "up" if (x or 0) > 0 else "down" if (x or 0) < 0 else "flat"
+
+
+def _cap_event(ev, today):
+    """P16：最近一次股本變動事件（參考價變動 ≥ 10%）在 CAP_DAYS 天內 → {"d", "t"}；否則 None。"""
+    for e in reversed(ev):
+        if e["t"] in CAP_TYPES and abs(e["r"] / e["p"] - 1) >= 0.1:
+            return {"d": e["d"], "t": e["t"]} if (today - date.fromisoformat(e["d"])).days <= CAP_DAYS else None
+    return None
+
+
+def _insti_official(amount):
+    """A2：amount = {日期: {單位: 買賣差額(元)}}；有「合計」的最後一天為資料日。外資 = 外資及陸資（外資自營商已含在自營商）。"""
+    days = [d for d in sorted(amount) if amount[d].get("total") is not None]
+    if not days:
+        return None
+    yi = lambda v: round((v or 0) / YI, 1)
+    a, recent = amount[days[-1]], days[-INSTI_DAYS:]
+    foreign = [amount[d].get("foreign") or 0 for d in days]
+    return {"date": str(days[-1]), "foreign": yi(a.get("foreign")), "trust": yi(a.get("trust")),
+            "dealer": yi((a.get("dealer_self") or 0) + (a.get("dealer_hedge") or 0)), "total": yi(a["total"]),
+            "d": [str(d) for d in recent], "f": [yi(v) for v in foreign[-INSTI_DAYS:]],
+            "t": [yi(amount[d]["total"]) for d in recent], "fs": streak(foreign)}
 
 
 def _load_chains(cur):
@@ -185,6 +289,9 @@ def export_all():
     for code, d, c, ch in cur.execute(
             "SELECT index_code, trade_date, close_price, change FROM market_index ORDER BY index_code, trade_date"):
         index_rows[code].append((d, c, ch))
+    amount = defaultdict(dict)
+    for d, unit, net in cur.execute("SELECT trade_date, unit, net_amount FROM insti_amount"):
+        amount[d][unit] = net
     alerts = defaultdict(list)
     for code, kind, ann, start, end, reason, measure in cur.execute("""
         SELECT s.stock_code, a.alert_type, a.announce_date, a.start_date, a.end_date, a.reason, a.measure
@@ -194,6 +301,12 @@ def export_all():
         if _alert_status(kind, ann, start, end, latest_date):
             alerts[code].append({"t": kind, "a": str(ann), "s": start and str(start), "e": end and str(end),
                                  "r": reason, "m": measure})
+    events = defaultdict(list)
+    for code, d, t, p, r, src in cur.execute("""
+        SELECT s.stock_code, e.event_date, e.event_type, e.prev_close, e.ref_price, e.source
+        FROM price_events e JOIN stocks s ON s.stock_id = e.stock_id
+        ORDER BY s.stock_code, e.event_date"""):
+        events[code].append({"d": d, "t": t, "p": float(p), "r": float(r), "src": src})
     conn.close()
 
     concepts = load_concepts()
@@ -208,6 +321,8 @@ def export_all():
     snapshot = {}
     market = {m: {"up": 0, "down": 0, "flat": 0, "turnover": 0.0} for m in ("TWSE", "TPEx")}
     insti_total = {"foreign": 0.0, "trust": 0.0, "dealer": 0.0}
+    insti_otc = {"foreign": 0.0, "trust": 0.0, "dealer": 0.0}     # 上櫃估算（張數 × 收盤）
+    bad_all, miss_all, n_ev, n_inferred = [], [], 0, 0
     w52_start = latest_date - timedelta(days=365)
     db_first = min(rows[0][0] for rows in prices.values())   # 全市場最早日線
 
@@ -217,27 +332,28 @@ def export_all():
             continue
         d_, o, h, l, c, v, tv, ch, fn, tn, dn, total = zip(*rows)
 
-        # 官方漲跌；上市「不比價」日（除權息等，漲跌欄為 X）官方價差是 0.00 而非真實漲跌 → None
-        chs, prev = [], None
-        for close, chg in zip(c, ch):
-            x = _f(chg) if close is not None else None
-            if x == 0 and info["market"] == "TWSE" and prev is not None and close != prev:
-                x = None
-            chs.append(x)
-            if close is not None:
-                prev = close
+        # 還原事件與係數（B1）；漲跌三分支（P14）
+        ev, bad = _price_events(d_, c, ch, info["market"], events.get(code, []))
+        af = _adj_factors(len(d_), ev)
+        chs, rel, miss = _changes(d_, c, ch, info["market"], ev)
+        bad_all += [(code, *x) for x in bad]
+        miss_all += [(code, x) for x in miss]
+        n_ev += len(ev)
+        n_inferred += sum(e["t"] == "調" for e in ev)
 
         _write(SITE_DATA_DIR / "stocks" / f"{code}.json", {
             "code": code, **info, "concepts": concept_of.get(code, []), "chains": chain_of.get(code, []),
             "prices": {"d": [str(x) for x in d_], "o": [_f(x) for x in o], "h": [_f(x) for x in h],
                        "l": [_f(x) for x in l], "c": [_f(x) for x in c],
                        "v": [round(x / 1000) if x else 0 for x in v], "ch": chs},   # 張
+            "ev": [{k: e[k] for k in ("d", "t", "p", "r")} for e in ev],
             "insti": {"f": [round(x / 1000) if x is not None else None for x in fn],   # 張
                       "t": [round(x / 1000) if x is not None else None for x in tn],
                       "dl": [round(x / 1000) if x is not None else None for x in dn]},
             "revenue": _revenue_rows(revenue.get(code, []))[-REVENUE_MONTHS:],
             "fund": dict(zip(("pe", "pb", "dy"), map(_f, fund[code][:3])), date=str(fund[code][3]))
                     if code in fund else None,
+            **({"capchg": cap} if (cap := _cap_event(ev, latest_date)) else {}),
             **({"alerts": alerts[code]} if code in alerts else {}),
         })
 
@@ -260,10 +376,10 @@ def export_all():
             continue
         j = traded[-1]                      # 最後一個有成交的日子
         no_trade = j != len(d_) - 1         # 今天有資料列但沒有成交（開高低收為 --）
-        pct = None if no_trade else _pct(c[-1], ch[-1])
+        pct = None if no_trade else _pct(c[-1], chs[-1])
         m = market[info["market"]]
         if not no_trade:                    # 無成交不計入漲跌家數
-            m["up" if (ch[-1] or 0) > 0 else "down" if (ch[-1] or 0) < 0 else "flat"] += 1
+            m[_side(chs[-1])] += 1
         m["turnover"] += (tv[-1] or 0) / YI
         # 法人指標以「有法人資料的最後一天」為準（法人資料比行情晚公布）
         k = max(i for i, day in enumerate(d_) if day <= dates[-1]) if d_[0] <= dates[-1] else None
@@ -273,13 +389,19 @@ def export_all():
             insti_total["foreign"] += f_value[-1]
             insti_total["trust"] += t_value[-1]
             insti_total["dealer"] += d_value[-1]
-        w52 = [(float(h[i]), float(l[i])) for i in range(len(d_))
+        if n and info["market"] == "TPEx":
+            insti_otc["foreign"] += f_value[-1]
+            insti_otc["trust"] += t_value[-1]
+            insti_otc["dealer"] += d_value[-1]
+        # 52 週高低用還原價（B1）
+        w52 = [(float(h[i]) * af[i], float(l[i]) * af[i]) for i in range(len(d_))
                if d_[i] >= w52_start and h[i] is not None and l[i] is not None]
         snapshot[code] = {
             "n": info["name"], "m": info["market"], "i": info["industry"],
             # 今天無成交時 c 是最後成交日的收盤，nt 記該日期
-            "c": _f(c[j]), "ch": None if no_trade else _f(ch[-1]), "p": _f(pct),
+            "c": _f(c[j]), "ch": None if no_trade else chs[-1], "p": _f(pct),
             **({"nt": str(d_[j])} if no_trade else {}),
+            **({"rel": str(rel[-1])} if not no_trade and rel[-1] else {}),
             "v": round((v[-1] or 0) / 1000), "tv": _f((tv[-1] or 0) / YI),
             "n1": _f(net_value[-1]) if net_value else None,
             "n5": _f(sum(net_value[-5:])), "n20": _f(sum(net_value[-20:])),
@@ -288,8 +410,8 @@ def export_all():
                 "f5": _f(sum(f_value[-5:])), "t5": _f(sum(t_value[-5:])), "d5": _f(sum(d_value[-5:])),
                 "fs": streak(f_value[-30:]), "ts": streak(t_value[-30:])} if n else {}),
             "s": streak(net_value[-30:]),
-            "h52": max(x[0] for x in w52) if w52 else None,
-            "l52": min(x[1] for x in w52) if w52 else None,
+            "h52": _f(max(x[0] for x in w52)) if w52 else None,
+            "l52": _f(min(x[1] for x in w52)) if w52 else None,
             # 個股第一筆日線晚於「全市場起點」與「52 週起點」兩者時，才另外標示高低點起算日
             **({"hf": str(d_[0])} if d_[0] > max(db_first, w52_start) else {}),
             # 有效的處置 [起日, 迄日]（多筆取起日最早者）與資料日當天的注意股
@@ -312,6 +434,8 @@ def export_all():
         "dates": replay_dates,
         "market": {k: {**v, "turnover": round(v["turnover"], 1)} for k, v in market.items()},
         "insti": {k: round(v, 1) for k, v in insti_total.items()},
+        "insti_official": _insti_official(amount),
+        "insti_otc": {k: round(v, 1) for k, v in insti_otc.items()},
         "index": {code: {"date": str(rows[-1][0]), "c": _f(rows[-1][1]), "ch": _f(rows[-1][2]),
                          "p": _f(_pct(rows[-1][1], rows[-1][2])), "from": str(rows[-INDEX_DAYS:][0][0]),
                          "s": [_f(r[1]) for r in rows[-INDEX_DAYS:]]}
@@ -330,6 +454,13 @@ def export_all():
     }
     _write(SITE_DATA_DIR / "latest.json", latest)
     size = (SITE_DATA_DIR / "latest.json").stat().st_size / 1024
+    print(f"  📌 還原事件 {n_ev} 筆（上櫃反推 {n_inferred} 筆）")
+    if bad_all:
+        print(f"⚠️  還原係數超出 {ADJ_MIN}～{ADJ_MAX}，未採用 {len(bad_all)} 筆：" +
+              "、".join(f"{c} {d}（{f}）" for c, d, f in bad_all[:10]))
+    if miss_all:
+        print(f"⚠️  上市官方漲跌 0、收盤 ≠ 前收，但找不到除權息／減資事件 {len(miss_all)} 筆（維持「不比價」）：" +
+              "、".join(f"{c} {d}" for c, d in miss_all[:10]))
     print(f"✅ 匯出完成：資料日 {latest_date}，個股 {len(prices)} 檔，"
           f"類股 {len(latest['groups']['industry'])}、產業鏈 {len(latest['groups']['chain'])}、"
           f"概念 {len(latest['groups']['concept'])}，台指期 {len(futures['d']) if futures else 0} 天，"

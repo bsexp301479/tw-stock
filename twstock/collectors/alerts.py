@@ -23,8 +23,8 @@ _MATCHING = re.compile(r"約每[^，。；;()（）]{1,5}分鐘撮合一次")
 
 
 def roc_date(s):
-    """民國日期 1151029 或 115/10/29 → date；空白或格式不符回傳 None。"""
-    s = str(s or "").strip()
+    """民國日期 1151029、115/10/29 或 115年10月29日 → date；空白或格式不符回傳 None。"""
+    s = str(s or "").strip().replace("年", "/").replace("月", "/").replace("日", "")
     if "/" in s:
         parts = s.split("/")
     elif s.isdigit() and len(s) == 7:

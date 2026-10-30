@@ -2,10 +2,12 @@
 台股資料收集與網站產生工具（Mac / Windows 通用）
 
   python -m twstock setup-db                         建立資料庫與資料表
-  python -m twstock collect [--date 2026-10-28]      收集單日（行情、本益比、法人、月營收、指數、台指期、處置／注意股）並匯出網站資料
+  python -m twstock collect [--date 2026-10-28]      收集單日（行情、本益比、法人、月營收、指數、台指期、處置／注意股、除權息事件、三大法人金額）並匯出網站資料
   python -m twstock history --start 2026-01-01       補抓歷史（已有的日期自動跳過）
   python -m twstock history --start 2026-02-23 --only index   只補加權指數歷史
+  python -m twstock history --start 2026-07-31 --only amount  只補上市三大法人買賣金額
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
+  python -m twstock events --start 2025-10-30        補抓除權息／減資／面額變更事件（還原價格用）
   python -m twstock export                           從資料庫匯出網站 JSON（site/data）
   python -m twstock serve                            本機預覽網站 http://localhost:8000
   python -m twstock futures --start 2025-01-01       台指期日 K 與期貨三大法人未平倉
@@ -14,7 +16,7 @@
 """
 import argparse
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 
 def _utf8_console():
@@ -41,7 +43,8 @@ CHAINS_REFRESH_DAYS = 30
 def cmd_collect(args):
     from .collectors.chains import chains_age_days, update_chains
     from .collectors.alerts import collect_alerts
-    from .collectors.daily import collect_for_date, collect_tpex_index
+    from .collectors.daily import AMOUNT, collect_for_date, collect_tpex_index
+    from .collectors.events import LOOKBACK_DAYS, collect_events
     from .collectors.futures import collect_futures, collect_futures_institutional
     from .collectors.industry import update_industry
     from .collectors.revenue import collect_monthly_revenue, revenue_month_for
@@ -73,6 +76,14 @@ def cmd_collect(args):
                 collect_alerts()
             except FetchError as e:
                 print(f"  ⚠️  處置／注意股抓取失敗：{e}")
+            try:
+                collect_for_date(d, (AMOUNT,))
+            except FetchError as e:
+                print(f"  ⚠️  三大法人金額抓取失敗：{e}")
+            try:
+                collect_events(d - timedelta(days=LOOKBACK_DAYS), d)
+            except FetchError as e:
+                print(f"  ⚠️  除權息／減資事件抓取失敗，下次執行會再補：{e}")
             age = chains_age_days()
             if age is None or age >= CHAINS_REFRESH_DAYS:
                 try:
@@ -100,6 +111,17 @@ def cmd_history(args):
 def cmd_revenue(args):
     from .collectors.revenue import collect_monthly_revenue
     collect_monthly_revenue(args.year, args.month, force=args.force)
+
+
+def cmd_events(args):
+    from .collectors.events import collect_events
+    from .fetch import FetchError
+    try:
+        collect_events(args.start, args.end or date.today())
+    except FetchError as e:
+        print(f"\n❌ {e}\n   稍後用同樣的指令重跑即可（MERGE 覆寫，不會重複）")
+        return 1
+    return 0
 
 
 def cmd_export(args):
@@ -175,8 +197,8 @@ def main(argv=None):
     s = sub.add_parser("history", help="補抓歷史資料")
     s.add_argument("--start", type=_date, required=True)
     s.add_argument("--end", type=_date, help="預設今天")
-    s.add_argument("--only", nargs="+", choices=["prices", "insti", "index"],
-                   help="只抓指定資料集（index = 只補加權指數）")
+    s.add_argument("--only", nargs="+", choices=["prices", "insti", "index", "amount"],
+                   help="只抓指定資料集（index = 只補加權指數，amount = 只補上市三大法人買賣金額）")
     s.add_argument("--force", action="store_true", help="已存在的日期也重抓覆寫")
     s.add_argument("--no-revenue", action="store_true")
     s.add_argument("--delay", type=float, default=0.0, help="每日之間額外暫停秒數")
@@ -187,6 +209,11 @@ def main(argv=None):
     s.add_argument("--month", type=int, required=True)
     s.add_argument("--force", action="store_true", help="已有的資料也覆寫")
     s.set_defaults(fn=cmd_revenue)
+
+    s = sub.add_parser("events", help="補抓除權息／減資／面額變更事件（還原價格用）")
+    s.add_argument("--start", type=_date, required=True)
+    s.add_argument("--end", type=_date, help="預設今天")
+    s.set_defaults(fn=cmd_events)
 
     sub.add_parser("export", help="匯出網站 JSON 到 site/data").set_defaults(fn=cmd_export)
 

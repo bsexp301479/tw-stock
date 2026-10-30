@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 from .. import db
 from ..fetch import FetchError
-from .daily import ALL_DATASETS, INDEX, INSTI, PRICES, collect_for_date
+from .daily import ALL_DATASETS, AMOUNT, INDEX, INSTI, PRICES, collect_for_date
 from .revenue import collect_monthly_revenue, revenue_month_for
 
 # ─── 台股休市日（來源：證交所公告；不在表內的休市日會被判定為「無資料」）────
@@ -31,10 +31,10 @@ HOLIDAYS = {
     date(2026, 7, 10), date(2026, 10, 23),   # 證交所當日無交易資料（臨時休市）
 }
 
-_TABLE = {PRICES: "daily_prices", INSTI: "institutional_trades", INDEX: "market_index"}
+_TABLE = {PRICES: "daily_prices", INSTI: "institutional_trades", INDEX: "market_index", AMOUNT: "insti_amount"}
 # market_index 同時存加權與櫃買，只看加權；否則櫃買已有的日期會被誤判為加權已有
 _FILTER = {INDEX: "AND index_code = 'TAIEX'"}
-SECONDS_PER_DAY = {PRICES: 8, INSTI: 4, INDEX: 4}   # 依網站節流間隔 + 回應時間的實測值
+SECONDS_PER_DAY = {PRICES: 8, INSTI: 4, INDEX: 4, AMOUNT: 4}   # 依網站節流間隔 + 回應時間的實測值
 
 
 def is_trading_day(d: date) -> bool:

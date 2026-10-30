@@ -196,6 +196,36 @@ DDL = [
         CONSTRAINT UQ_stock_alerts UNIQUE (stock_id, alert_type, announce_date)
     )
     """,
+    # 價格調整事件（官方）：除權息、減資、面額變更。上櫃的減資類事件在匯出時由日線反推，不存表
+    """
+    IF OBJECT_ID('price_events') IS NULL
+    CREATE TABLE price_events (
+        id          INT IDENTITY(1,1) PRIMARY KEY,
+        stock_id    INT           NOT NULL REFERENCES stocks(stock_id),
+        event_date  DATE          NOT NULL,   -- 官方日期（除權息日／恢復買賣日），可能是休市日
+        event_type  NVARCHAR(4)   NOT NULL CHECK (event_type IN (N'息', N'權', N'權息', N'減', N'面')),
+        prev_close  DECIMAL(10,2) NOT NULL,   -- 除權息前收盤價／停止買賣前收盤價格
+        ref_price   DECIMAL(10,2) NOT NULL,   -- 除權息參考價／恢復買賣參考價
+        source      NVARCHAR(10)  NOT NULL,   -- TWT49U / TWTAUU / TWTB8U / TPEX_EX
+        created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_price_events UNIQUE (stock_id, event_date, source)
+    )
+    """,
+    # 上市三大法人買賣金額（證交所 BFI82U，單位：元；含 ETF 等全部證券）
+    """
+    IF OBJECT_ID('insti_amount') IS NULL
+    CREATE TABLE insti_amount (
+        id          INT IDENTITY(1,1) PRIMARY KEY,
+        trade_date  DATE          NOT NULL,
+        unit        NVARCHAR(20)  NOT NULL,   -- foreign 外資及陸資(不含外資自營商) / foreign_dealer 外資自營商 /
+                                              -- dealer_self 自營商(自行買賣) / dealer_hedge 自營商(避險) / trust 投信 / total 合計
+        buy_amount  BIGINT        NULL,
+        sell_amount BIGINT        NULL,
+        net_amount  BIGINT        NULL,
+        created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_insti_amount UNIQUE (trade_date, unit)
+    )
+    """,
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -226,4 +256,4 @@ def setup_database():
     conn.close()
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
-          "market_index、stock_alerts")
+          "market_index、stock_alerts、price_events、insti_amount")
