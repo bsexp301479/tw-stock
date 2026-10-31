@@ -123,11 +123,11 @@ def test_changes():
     # 事件生效日當天無成交 → 下一個成交日相對參考價（不是相對最後成交）
     chs, rel, _ = _changes((D(7, 1), D(7, 2), D(7, 3)), N(248, None, 239), N(1, 0, 0), "TWSE",
                            [{"i": 1, "d": "2026-07-02", "t": "息", "p": 248.0, "r": 240.82}])
-    assert chs == [1.0, None, -1.82] and rel == [None] * 3
+    assert chs == [1.0, None, -2.0] and rel == [None] * 3
     # 上櫃：除權息日官方漲跌是文字（None）→ 收盤 − 參考價；一般日照官方
     chs, rel, miss = _changes((D(7, 15), D(7, 16), D(7, 17), D(7, 20)), N(677, 623, None, 630),
                               N(2, None, None, 1.5), "TPEx", [{"i": 1, "d": "2026-07-16", "t": "息", "p": 677.0, "r": 651.5}])
-    assert chs == [2.0, -28.5, None, 1.5] and rel == [None] * 4 and miss == []
+    assert chs == [2.0, -29.0, None, 1.5] and rel == [None] * 4 and miss == []
     # 漲跌家數歸類：不比價（None）算平盤
     assert [_side(x) for x in (-0.07, 0.1, 0.0, None)] == ["down", "up", "flat", "flat"]
 

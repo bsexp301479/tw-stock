@@ -3,6 +3,7 @@
 所有路徑都以專案根目錄為基準，Mac / Windows 通用。
 """
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -11,6 +12,11 @@ SITE_DIR = ROOT / "site"             # 靜態網站（部署到雲端的就是�
 SITE_DATA_DIR = SITE_DIR / "data"    # export 產生的 JSON
 OUTPUT_DIR = ROOT / "output"         # 其他產出（纏論 SVG 等）
 LOG_DIR = ROOT / "logs"
+TW_TZ = timezone(timedelta(hours=8))   # 台灣沒有日光節約時間；固定位移不需要 tzdata（Windows 沒有內建）
+
+
+def tw_now() -> datetime:
+    return datetime.now(TW_TZ)
 
 
 def _load_env(path: Path):

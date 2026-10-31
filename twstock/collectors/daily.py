@@ -7,16 +7,19 @@
 from datetime import date
 
 from .. import db
-from ..fetch import FetchError, clean_number, is_valid_stock_code, request
+from ..fetch import FetchError, SchemaError, clean_number, is_valid_stock_code, request
 
 TWSE = "https://www.twse.com.tw/rwd/zh"
 TPEX = "https://www.tpex.org.tw/www/zh-tw"
-TPEX_OPENAPI = "https://www.tpex.org.tw/openapi/v1"
 
-# collect_for_date 的資料集名稱；INDEX 只在補抓加權指數時單獨指定（抓 PRICES 時會一併寫入）；
-# AMOUNT 只在補抓或 collect 單獨呼叫時指定
-PRICES, INSTI, INDEX, AMOUNT = "prices", "insti", "index", "amount"
-ALL_DATASETS = (PRICES, INSTI)
+# history --only 的資料集名稱；INDEX = 加權指數（抓行情時會一併寫入），TPEX_INDEX = 櫃買指數（月查詢）
+PRICES, PE, INSTI, INDEX, AMOUNT, TPEX_INDEX = "prices", "pe", "insti", "index", "amount", "tpex_index"
+ALL_DATASETS = (PRICES, PE, INSTI)
+# 每個資料集對應的細項（分市場），也是 collect_for_date 與 health.SPECS 共用的鍵；順序：行情先於本益比、法人
+DATASET_KEYS = {PRICES: ("prices.TWSE", "prices.TPEx"), PE: ("pe.TWSE", "pe.TPEx"),
+                INSTI: ("insti.TWSE", "insti.TPEx"), INDEX: ("index.TAIEX",), AMOUNT: ("amount",)}
+DAY_KEYS = ("prices.TWSE", "prices.TPEx", "index.TAIEX", "pe.TWSE", "pe.TPEx", "insti.TWSE", "insti.TPEx", "amount")
+PARSE_ERRORS = (SchemaError, KeyError, IndexError, TypeError, ValueError, AttributeError)
 
 
 # ─── 上市 ─────────────────────────────────────────────────
@@ -77,7 +80,7 @@ def fetch_twse_daily(d: date):
                 "change":      change,
             })
         return results, taiex
-    return [], taiex
+    raise SchemaError("MI_INDEX 找不到含「證券代號」的個股表")
 
 
 def fetch_twse_pe(d: date) -> dict:
@@ -124,7 +127,8 @@ def _tpex_tables(path: str, d: date) -> list:
 
 
 def fetch_tpex_daily(d: date) -> list:
-    for table in _tpex_tables("afterTrading/dailyQuotes", d):
+    tables = _tpex_tables("afterTrading/dailyQuotes", d)
+    for table in tables:
         idx = {f: i for i, f in enumerate(table["fields"])}
         if "代號" not in idx:
             continue
@@ -139,40 +143,59 @@ def fetch_tpex_daily(d: date) -> list:
             "trade_value": clean_number(row[idx["成交金額(元)"]], int),
             "trade_count": clean_number(row[idx["成交筆數"]], int),
         } for row in table["data"] if is_valid_stock_code(str(row[idx["代號"]]))]
+    if tables:
+        raise SchemaError("dailyQuotes 找不到含「代號」的行情表")
     return []
 
 
-def fetch_tpex_index() -> list:
-    """櫃買指數：OpenAPI 只提供本月每日開高低收（Date 為西元 YYYYMMDD）。"""
-    data = request("GET", f"{TPEX_OPENAPI}/tpex_index")
-    if not isinstance(data, list):
-        raise FetchError("櫃買指數回應格式不符")
-    rows = []
-    for r in data:
-        ds, close = str(r.get("Date") or ""), clean_number(r.get("Close"))
-        if close is None or not (ds.isdigit() and len(ds) == 8):
+def parse_tpex_index(tables: list) -> list:
+    """櫃買指數月查詢（日期為西元 2026/10/30，漲跌本身帶正負號）→ 寫入用 dict。"""
+    need = ("日期", "開市", "最高", "最低", "收市", "漲/跌")
+    for table in tables:
+        idx = {f: i for i, f in enumerate(table["fields"])}
+        if not set(need) <= idx.keys():
             continue
-        rows.append({"index_code": "TPEX", "trade_date": f"{ds[:4]}-{ds[4:6]}-{ds[6:]}",
-                     "open_price": clean_number(r.get("Open")), "high_price": clean_number(r.get("High")),
-                     "low_price": clean_number(r.get("Low")), "close_price": close,
-                     "change": clean_number(r.get("Change"))})
-    return rows
+        rows = []
+        for r in table["data"]:
+            close = clean_number(r[idx["收市"]])
+            if close is not None:
+                rows.append({"index_code": "TPEX", "trade_date": str(r[idx["日期"]]).strip().replace("/", "-"),
+                             "open_price": clean_number(r[idx["開市"]]), "high_price": clean_number(r[idx["最高"]]),
+                             "low_price": clean_number(r[idx["最低"]]), "close_price": close,
+                             "change": clean_number(r[idx["漲/跌"]])})
+        return rows
+    if tables:
+        raise SchemaError("indexInfo/inx 欄位不符：" + "、".join(map(str, tables[0]["fields"])))
+    return []
+
+
+def fetch_tpex_index(year: int, month: int) -> list:
+    """櫃買指數：可查歷史，一次一個月（尚未有資料的月份回傳 []）。"""
+    return parse_tpex_index(_tpex_tables("indexInfo/inx", date(year, month, 1)))
+
+
+def parse_tpex_pe(tables: list) -> dict:
+    """櫃買本益比表 → {代號: {pe_ratio, pb_ratio, dividend_yield}}。有資料但欄位不符丟 SchemaError；空表回傳 {}。"""
+    need = ("股票代號", "本益比", "殖利率(%)", "股價淨值比")
+    for table in tables:
+        idx = {f: i for i, f in enumerate(table["fields"])}
+        if not set(need) <= idx.keys():
+            continue
+        return {
+            str(row[idx["股票代號"]]).strip(): {
+                "pe_ratio":       clean_number(row[idx["本益比"]]),
+                "dividend_yield": clean_number(row[idx["殖利率(%)"]]),
+                "pb_ratio":       clean_number(row[idx["股價淨值比"]]),
+            }
+            for row in table["data"] if is_valid_stock_code(str(row[idx["股票代號"]]))
+        }
+    if tables:
+        raise SchemaError("peQryDate 欄位不符：" + "、".join(map(str, tables[0]["fields"])))
+    return {}
 
 
 def fetch_tpex_pe(d: date) -> dict:
-    for table in _tpex_tables("afterTrading/peQryDate", d):
-        idx = {f: i for i, f in enumerate(table["fields"])}
-        if "本益比" not in idx or "代號" not in idx:
-            continue
-        return {
-            str(row[idx["代號"]]).strip(): {
-                "pe_ratio":       clean_number(row[idx["本益比"]]),
-                "dividend_yield": clean_number(row[idx["殖利率"]]),
-                "pb_ratio":       clean_number(row[idx["股價淨值比"]]),
-            }
-            for row in table["data"] if is_valid_stock_code(str(row[idx["代號"]]))
-        }
-    return {}
+    return parse_tpex_pe(_tpex_tables("afterTrading/peQryDate", d))
 
 
 def fetch_tpex_insti(d: date) -> dict:
@@ -195,20 +218,24 @@ def fetch_tpex_insti(d: date) -> dict:
 
 
 # ─── 批次寫入 ─────────────────────────────────────────────
-def merge_stocks(cursor, rows: list):
-    """rows: [{stock_code, stock_name, market_type}]。新股票新增，既有股票更新名稱與市場別。"""
+def merge_stocks(cursor, rows: list, trade_date: date):
+    """
+    rows: [{stock_code, stock_name, market_type}]。新股票新增；既有股票的名稱與市場別
+    只在 trade_date ≥ 資料庫最新日線日期時更新（補抓舊日期不可蓋掉最新值）。
+    """
+    latest = cursor.execute("SELECT MAX(trade_date) FROM daily_prices").fetchone()[0]
     cursor.execute("""
         MERGE stocks AS t
         USING OPENJSON(?) WITH (
             stock_code NVARCHAR(10), stock_name NVARCHAR(50), market_type NVARCHAR(10)
         ) AS s
         ON t.stock_code = s.stock_code
-        WHEN MATCHED THEN
+        WHEN MATCHED AND ? = 1 THEN
             UPDATE SET stock_name = s.stock_name, market_type = s.market_type, updated_at = GETDATE()
         WHEN NOT MATCHED THEN
             INSERT (stock_code, stock_name, market_type)
             VALUES (s.stock_code, s.stock_name, s.market_type);
-    """, db.to_json(rows))
+    """, db.to_json(rows), 1 if latest is None or trade_date >= latest else 0)
 
 
 def merge_daily_prices(cursor, trade_date, rows: list):
@@ -240,6 +267,7 @@ def merge_daily_prices(cursor, trade_date, rows: list):
 
 
 def merge_fundamentals(cursor, trade_date, rows: list):
+    """只寫入當天有行情列的股票（與拆分前相同），所以要先寫行情。"""
     cursor.execute("""
         MERGE stock_fundamentals AS t
         USING (
@@ -250,6 +278,7 @@ def merge_fundamentals(cursor, trade_date, rows: list):
                 pb_ratio   DECIMAL(10,2), dividend_yield DECIMAL(10,4)
             ) AS j
             JOIN stocks st ON st.stock_code = j.stock_code
+            JOIN daily_prices dp ON dp.stock_id = st.stock_id AND dp.trade_date = ?
         ) AS s
         ON t.stock_id = s.stock_id AND t.trade_date = ?
         WHEN MATCHED THEN UPDATE SET
@@ -257,7 +286,7 @@ def merge_fundamentals(cursor, trade_date, rows: list):
         WHEN NOT MATCHED THEN
             INSERT (stock_id, trade_date, eps, pe_ratio, pb_ratio, dividend_yield)
             VALUES (s.stock_id, ?, s.eps, s.pe_ratio, s.pb_ratio, s.dividend_yield);
-    """, db.to_json(rows), trade_date, trade_date)
+    """, db.to_json(rows), trade_date, trade_date, trade_date)
 
 
 def merge_institutional(cursor, trade_date, rows: list):
@@ -358,95 +387,87 @@ def merge_insti_amount(cursor, rows: list):
     """, db.to_json(rows))
 
 
-def collect_tpex_index() -> int:
-    """寫入本月全部日期（MERGE，可重複執行）。"""
-    rows = fetch_tpex_index()
+def _save(fn, *args):
+    conn = db.connect()
+    try:
+        fn(conn.cursor(), *args)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def collect_tpex_index(year: int, month: int) -> int:
+    """寫入該月全部日期（MERGE，可重複執行）。"""
+    rows = fetch_tpex_index(year, month)
     if rows:
-        conn = db.connect()
-        try:
-            merge_market_index(conn.cursor(), rows)
-            conn.commit()
-        finally:
-            conn.close()
-    print(f"  📈 櫃買指數：{len(rows)} 天")
+        _save(merge_market_index, rows)
+    print(f"  📈 櫃買指數 {year}/{month:02d}：{len(rows)} 天")
     return len(rows)
 
 
 # ─── 單日收集 ─────────────────────────────────────────────
-def collect_for_date(d: date, datasets=ALL_DATASETS) -> bool:
-    """
-    收集單日資料。回傳 True = 已寫入；False = 休市或尚未公布。
-    抓取失敗丟 FetchError，且不寫入任何該日資料（全部抓完才連資料庫，一次 commit）。
-    """
-    print(f"\n📅 {d}  [{' + '.join(datasets)}]")
-    stocks, prices, funds, insti = {}, {}, {}, {}
-    counts = {}
-    taiex = None
-
-    if PRICES in datasets:
-        for market, fetch_q, fetch_pe in (("TWSE", fetch_twse_daily, fetch_twse_pe),
-                                          ("TPEx", fetch_tpex_daily, fetch_tpex_pe)):
-            rows = fetch_q(d)
-            if market == "TWSE":
-                rows, taiex = rows      # 上市行情與加權指數來自同一個 MI_INDEX 回應
-                if rows and taiex is None:
-                    print("  ⚠️  MI_INDEX 找不到加權指數表")
-            if market == "TWSE" and not rows:
-                print("  ℹ️  上市無資料（休市或尚未公布），略過此日")
-                return False
-            pe_map = fetch_pe(d)
-            for item in rows:
-                code = item["stock_code"]
-                stocks[code] = {"stock_code": code, "stock_name": item["stock_name"], "market_type": market}
-                prices[code] = item
-                if pe_map.get(code):
-                    funds[code] = {"stock_code": code, **pe_map[code]}
-            counts[market] = len(rows)
-    elif INDEX in datasets:
-        _, taiex = fetch_twse_daily(d)      # 只補指數：同一個請求，個股列不寫入
-        if taiex is None:
-            print("  ℹ️  無加權指數（休市或尚未公布），略過此日")
-            return False
-    if taiex:
-        counts["加權指數"] = 1
-
-    if INSTI in datasets:
-        for market, fetch in (("TWSE", fetch_twse_insti), ("TPEx", fetch_tpex_insti)):
-            rows = fetch(d)
-            if market == "TWSE" and not rows:
-                print("  ℹ️  上市法人無資料（休市或尚未公布），略過此日")
-                return False
-            for code, r in rows.items():
-                insti[code] = {"stock_code": code, **r}
-            counts[f"法人{market}"] = len(rows)
-
-    amount = []
-    if AMOUNT in datasets:
-        amount = fetch_twse_insti_amount(d)
-        if amount:
-            counts["法人金額"] = len(amount)
-        elif not (prices or insti or taiex):
-            print("  ℹ️  無三大法人買賣金額（休市或尚未公布），略過此日")
-            return False
-
-    conn = db.connect()
-    try:
-        cursor = conn.cursor()
-        if prices:
-            merge_stocks(cursor, list(stocks.values()))
-            merge_daily_prices(cursor, d, list(prices.values()))
-            merge_fundamentals(cursor, d, list(funds.values()))
-        if insti:
-            merge_institutional(cursor, d, list(insti.values()))
+def _collect_key(key: str, d: date, cache: dict) -> int:
+    """抓取並寫入一個資料集，回傳筆數（0 = 官方尚無資料）。"""
+    dataset, _, market = key.partition(".")
+    if key == "prices.TWSE" or key == "index.TAIEX":
+        if "mi" not in cache:                       # 上市行情與加權指數來自同一個 MI_INDEX 回應
+            cache["mi"] = fetch_twse_daily(d)
+        rows, taiex = cache["mi"]
         if taiex:
-            merge_market_index(cursor, [taiex])
-        if amount:
-            merge_insti_amount(cursor, amount)
-        conn.commit()
-    finally:
-        conn.close()
-    print("  ✅ 寫入：" + "、".join(f"{k} {v} 筆" for k, v in counts.items()))
-    return True
+            _save(merge_market_index, [taiex])
+        elif rows:
+            print("  ⚠️  MI_INDEX 找不到加權指數表")
+        if key == "index.TAIEX":
+            return 1 if taiex else 0
+    elif key == "prices.TPEx":
+        rows = fetch_tpex_daily(d)
+    if dataset == "prices":
+        if rows:
+            stocks = [{"stock_code": r["stock_code"], "stock_name": r["stock_name"], "market_type": market} for r in rows]
+            _save(lambda cur: (merge_stocks(cur, stocks, d), merge_daily_prices(cur, d, rows)))
+        return len(rows)
+    if dataset == "pe":
+        pe = (fetch_twse_pe if market == "TWSE" else fetch_tpex_pe)(d)
+        if pe:
+            _save(merge_fundamentals, d, [{"stock_code": c, **r} for c, r in pe.items()])
+        return len(pe)
+    if dataset == "insti":
+        insti = (fetch_twse_insti if market == "TWSE" else fetch_tpex_insti)(d)
+        if insti:
+            _save(merge_institutional, d, [{"stock_code": c, **r} for c, r in insti.items()])
+        return len(insti)
+    amount = fetch_twse_insti_amount(d)
+    if amount:
+        _save(merge_insti_amount, amount)
+    return len(amount)
 
 
-__all__ = ["collect_for_date", "FetchError", "PRICES", "INSTI", "ALL_DATASETS"]
+def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
+    """
+    收集單日，各資料集獨立抓取、寫入：一個失敗或未公布不影響其他。
+    回傳 (written, errors)：written = {鍵: 筆數}（0 = 官方尚無資料）；errors = {鍵: 例外}。
+    資料庫錯誤（pyodbc.Error）不攔截，由呼叫端處理。
+    """
+    print(f"\n📅 {d}  [{' + '.join(keys)}]")
+    written, errors, cache = {}, {}, {}
+    for key in keys:
+        dataset, _, market = key.partition(".")
+        if dataset in ("pe", "insti") and written.get(f"prices.{market}") == 0:
+            continue                # 同市場行情還沒有：本益比、法人不可能先有，不發請求
+        if dataset == "pe" and f"prices.{market}" in errors:
+            continue                # 本益比只寫入有行情列的股票
+        try:
+            written[key] = _collect_key(key, d, cache)
+        except (FetchError, *PARSE_ERRORS) as e:
+            errors[key] = e
+            print(f"  ⚠️  {key} 失敗：{e}")
+    done = "、".join(f"{k} {v} 筆" for k, v in written.items() if v)
+    none = "、".join(k for k, v in written.items() if not v)
+    if done:
+        print(f"  ✅ 寫入：{done}")
+    if none:
+        print(f"  ℹ️  官方尚無資料：{none}")
+    return written, errors
+
+
+__all__ = ["collect_for_date", "FetchError", "PRICES", "PE", "INSTI", "ALL_DATASETS"]

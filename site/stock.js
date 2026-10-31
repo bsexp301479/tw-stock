@@ -34,6 +34,8 @@ window.renderStock = async function (code) {
   const fund = data.fund || {};
   // P16：股本變動事件 90 天內，本益比與殖利率加註
   const cap = data.capchg, capSub = cap ? `${md(cap.d)} ${EV_LABEL[cap.t]}，官方值可能尚未調整` : '';
+  // P9：本益比、殖利率卡的資料日（與 P16 註記並列）；值為空時說明是官方未提供
+  const fundSub = v => [v == null && fund.date ? '官方未提供' : '', fund.date ? '資料 ' + md(fund.date) : '', capSub].filter(Boolean).join('；');
   const watching = App.watch.has(code);
   const fd = md(App.latest.flow_date);
   const hlFrom = s?.hf ?? App.latest.hl_from;          // null → 已滿 52 週
@@ -64,8 +66,8 @@ window.renderStock = async function (code) {
 
     <section class="sec metrics">
       ${[['開盤', pfmt(P.o[last])], ['最高', pfmt(P.h[last]), 'up'], ['最低', pfmt(P.l[last]), 'dn'], ['昨收', pfmt(prev)],
-         ['成交量', fmt(P.v[last]) + ' 張'], ['本益比', fmt(fund.pe, 2), '', capSub], ['股價淨值比', fmt(fund.pb, 2)],
-         ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', capSub],
+         ['成交量', fmt(P.v[last]) + ' 張'], ['本益比', fmt(fund.pe, 2), '', fundSub(fund.pe)], ['股價淨值比', fmt(fund.pb, 2)],
+         ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', fundSub(fund.dy)],
          [hlFrom ? '區間高' : '52週高', pfmt(s?.h52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
          [hlFrom ? '區間低' : '52週低', pfmt(s?.l52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
          ['法人1日', yi(s?.n1), cls(s?.n1), fd], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
@@ -339,15 +341,15 @@ function renderSignals(rows, mode) {
     chk(dif[i] > dea[i], 'DIF > DEA', 'DIF < DEA');
     chk(hist[i] > hist[i - 1], 'MACD 柱放大', 'MACD 柱縮小');
   }
-  const total = bull.length + bear.length, isBull = bull.length >= bear.length;
+  const total = bull.length + bear.length, lean = bull.length > bear.length ? 'bull' : bull.length < bear.length ? 'bear' : '';
   const tags = `<div>${bull.map(t => `<span class="tag up">${t}</span>`).join('')}${bear.map(t => `<span class="tag dn">${t}</span>`).join('')}</div>`;
   const note = (n < rows.length && n ? `最後一根（${md(rows.at(-1).d)}）無成交，以 ${md(rows[i].d)} 判讀。` : '') +
     '依均線與 MACD 機械判讀（還原價格），僅供參考。';
   $('#sigBox').innerHTML = total < SIG_MIN
     ? `<div class="signal"><div style="font-weight:600;margin-bottom:6px">資料不足，無法判讀</div>${tags}
         <div class="muted small" style="margin-top:8px">${period}只有 ${n} 根 K 棒，有效訊號 ${total} 項（至少需 ${SIG_MIN} 項；MACD 需 ${MACD_MIN} 根以上）。${note}</div></div>`
-    : `<div class="signal ${isBull ? 'bull' : 'bear'}">
-        <div style="font-weight:600;margin-bottom:6px">${isBull ? '偏多' : '偏空'}：${bull.length} 多 ${bear.length} 空</div>
+    : `<div class="signal ${lean}">
+        <div style="font-weight:600;margin-bottom:6px">${{ bull: '偏多', bear: '偏空', '': '中性' }[lean]}：${bull.length} 多 ${bear.length} 空</div>
         ${tags}<div class="muted small" style="margin-top:8px">${note}</div></div>`;
 }
 

@@ -105,6 +105,8 @@ def fetch_futures_institutional(start: date, end: date, commodity: str = "TXF") 
         "queryStartDate": f"{start:%Y/%m/%d}", "queryEndDate": f"{end:%Y/%m/%d}", "commodityId": commodity,
     })
     text = resp.content.decode("cp950", errors="replace")
+    if "futContractsDateView" in text:      # 查無資料（休市、尚未公布）：200 ＋ alert 後導回查詢頁，不是封鎖
+        return []
     if not text.lstrip().startswith(INSTI_HEADER):
         raise FetchError("期交所回傳的不是三大法人 CSV（可能被限流或查詢區間錯誤）")
     rows = []

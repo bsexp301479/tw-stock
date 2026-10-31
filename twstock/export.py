@@ -6,14 +6,18 @@
   stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈
 """
 import json
+import os
+import time
 from bisect import bisect_left
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
 from . import db
 from .analysis.flow import LONG, group_flows, load_concepts, streak
 from .analysis.forecast import build_forecast, load_oi
-from .config import SITE_DATA_DIR
+from .config import SITE_DATA_DIR, tw_now
+from .health import build_status
 
 REPLAY = 20                    # 泡泡圖回放天數
 FUTURES_DAYS = 500             # 首頁台指期日 K 匯出天數
@@ -27,6 +31,9 @@ ADJ_MIN, ADJ_MAX = 0.02, 20     # 還原係數合理範圍；超出視為資料�
 _SRC_RANK = {"TWTAUU": 0, "TWTB8U": 0}   # 同一列有多筆官方事件時優先（恢復買賣參考價已含同日除權）
 CAP_TYPES = ("權", "權息", "減", "面", "調")
 CAP_DAYS = 90
+# 升降單位（一般股票）：(價格上限, 單位)
+_TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
+          (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
 
 
 def _f(v, nd=2):
@@ -35,8 +42,15 @@ def _f(v, nd=2):
 
 def _write(path, obj):
     path.parent.mkdir(parents=True, exist_ok=True)
-    # separators 去掉空白，檔案小約 15%
-    path.write_text(json.dumps(obj, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    # 先寫暫存檔再取代：匯出途中開網頁、或寫到一半失敗，都不會讀到不完整的 JSON
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        # separators 去掉空白，檔案小約 15%
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _pct(close, change):
@@ -118,6 +132,13 @@ def _adj_factors(n, ev):
     return af
 
 
+def _tick_round(price: float) -> float:
+    """參考價依升降單位四捨五入（half-up）：官方漲跌相對取整後的開盤參考價。升降單位由取整前的價格決定。"""
+    p = Decimal(str(price))
+    tick = next(t for limit, t in _TICKS if p < limit)
+    return float((p / tick).quantize(Decimal(1), rounding=ROUND_HALF_UP) * tick)
+
+
 def _changes(d_, c, ch, market, ev):
     """
     每日漲跌（P14）。回傳 (chs, rel, miss)：
@@ -134,7 +155,7 @@ def _changes(d_, c, ch, market, ev):
         if c[i] is not None:
             e = next((at[k] for k in range(i, -1 if j is None else j, -1) if k in at), None)
             if e is not None:
-                x = round(float(c[i]) - e["r"], 2)
+                x = round(float(c[i]) - _tick_round(e["r"]), 2)
             elif market == "TWSE" and j is not None and j != i - 1:
                 x, r = round(float(c[i]) - float(c[j]), 2), d_[j]
             else:
@@ -237,7 +258,10 @@ def _load_futures_oi(cur, oi: dict):
             **{k: [round(oi[x][k]) for x in recent] for k in ("foreign", "trust", "dealer")}}
 
 
-def export_all():
+def export_all() -> float:
+    """回傳完整匯出耗時（秒）。"""
+    t0 = time.monotonic()
+    now = tw_now()
     conn = db.connect()
     cur = conn.cursor()
 
@@ -307,6 +331,7 @@ def export_all():
         FROM price_events e JOIN stocks s ON s.stock_id = e.stock_id
         ORDER BY s.stock_code, e.event_date"""):
         events[code].append({"d": d, "t": t, "p": float(p), "r": float(r), "src": src})
+    status = build_status(cur, latest_date, now)
     conn.close()
 
     concepts = load_concepts()
@@ -364,7 +389,7 @@ def export_all():
             net = (total[i] or 0) * close / YI if close else 0.0
             if day in window:
                 daily.setdefault(code, {})[day] = {
-                    "net": net, "turnover": (tv[i] or 0) / YI, "pct": _pct(c[i], ch[i])}
+                    "net": net, "turnover": (tv[i] or 0) / YI, "pct": _pct(c[i], chs[i])}
             net_value.append(net)
             for arr, src in ((f_value, fn), (t_value, tn), (d_value, dn)):
                 arr.append((src[i] or 0) * close / YI if close else 0.0)
@@ -428,7 +453,8 @@ def export_all():
 
     replay_dates = [str(d) for d in dates[-REPLAY:]]
     latest = {
-        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "updated_at": status["collected_at"],     # 最後成功收集時間，不是匯出時間
+        "status": status,
         "date": str(latest_date),
         "flow_date": str(dates[-1]),
         "dates": replay_dates,
@@ -467,3 +493,6 @@ def export_all():
           f"latest.json {size:.0f} KB")
     if str(dates[-1]) != str(latest_date):
         print(f"⚠️  法人資料只到 {dates[-1]}，資金流以該日為準")
+    seconds = time.monotonic() - t0
+    print(f"⏱️  匯出耗時 {seconds:.1f} 秒")
+    return seconds

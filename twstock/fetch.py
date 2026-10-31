@@ -22,6 +22,10 @@ class FetchError(Exception):
     """抓取失敗（被封鎖、網路錯誤）；與「休市沒資料」區分。"""
 
 
+class SchemaError(Exception):
+    """官方回應有資料，但欄位與預期不符（改版）；只影響該資料集，主機本身沒問題。"""
+
+
 # ─── SSL：證交所/櫃買憑證不符合 Python 3.13 的嚴格檢查 ─────────
 def _build_ssl_context() -> ssl.SSLContext:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -68,16 +72,28 @@ MIN_INTERVAL = {
 DEFAULT_INTERVAL = 3.0
 RETRY_BACKOFF = (30, 60, 120)   # 失敗後依序等待秒數，用完仍失敗就放棄
 _last_request: dict = {}
+_requests = 0                   # 本次執行的請求次數（寫入執行紀錄）
+_dead_hosts: set = set()        # 本次執行已重試用盡的主機，不再請求（避免延長封鎖、每個資料集都等 3.5 分鐘）
 
 
-def request(method: str, url: str, expect_json: bool = True, **kwargs):
+def request_count() -> int:
+    return _requests
+
+
+def request(method: str, url: str, expect_json: bool = True, isolated: bool = False, **kwargs):
+    """isolated=True：附屬查詢（例如休市表），失敗不重試、不標記主機，不可拖累同主機的行情收集。"""
+    global _requests
     host = urlparse(url).hostname
+    if host in _dead_hosts:
+        raise FetchError(f"{host} 本次執行已連續失敗，不再請求")
     last_err = None
-    for attempt in range(len(RETRY_BACKOFF) + 1):
+    backoff = () if isolated else RETRY_BACKOFF
+    for attempt in range(len(backoff) + 1):
         wait = MIN_INTERVAL.get(host, DEFAULT_INTERVAL) - (time.monotonic() - _last_request.get(host, 0))
         if wait > 0:
             time.sleep(wait)
         _last_request[host] = time.monotonic()
+        _requests += 1
         try:
             resp = _SESSION.request(method, url, timeout=30, **kwargs)
             if resp.status_code in (403, 429) or resp.status_code >= 500:
@@ -86,10 +102,12 @@ def request(method: str, url: str, expect_json: bool = True, **kwargs):
             return resp.json() if expect_json else resp   # 封鎖頁是 HTML → json() 會丟 ValueError
         except (requests.RequestException, ValueError, FetchError) as e:
             last_err = e
-            if attempt < len(RETRY_BACKOFF):
-                pause = RETRY_BACKOFF[attempt]
-                print(f"  ⏳ {host} 請求失敗（{e}），{pause} 秒後重試 [{attempt + 1}/{len(RETRY_BACKOFF)}]")
+            if attempt < len(backoff):
+                pause = backoff[attempt]
+                print(f"  ⏳ {host} 請求失敗（{e}），{pause} 秒後重試 [{attempt + 1}/{len(backoff)}]")
                 time.sleep(pause)
+    if not isolated:
+        _dead_hosts.add(host)
     raise FetchError(f"{host} 連續失敗，可能已被封鎖，請稍後再跑：{last_err}")
 
 

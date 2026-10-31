@@ -31,6 +31,27 @@ def to_json(rows: list) -> str:
     return json.dumps([{k: clean(v) for k, v in r.items()} for r in rows], ensure_ascii=False)
 
 
+def acquire_lock():
+    """
+    防重疊：SQL Server 應用程式鎖（跨平台，程序結束會自動釋放）。
+    取得回傳持有鎖的連線，已被其他程序持有回傳 None。用完要呼叫 release_lock。
+    """
+    conn = connect(autocommit=True)
+    got = conn.cursor().execute(
+        "SET NOCOUNT ON; DECLARE @r INT; EXEC @r = sp_getapplock @Resource=N'twstock_collect', "
+        "@LockMode=N'Exclusive', @LockOwner=N'Session', @LockTimeout=0; SELECT @r").fetchone()[0]
+    if got < 0:
+        conn.close()
+        return None
+    return conn
+
+
+def release_lock(conn):
+    # pyodbc 有連線池，close() 不會真的斷線，鎖要明確釋放
+    conn.cursor().execute("EXEC sp_releaseapplock @Resource=N'twstock_collect', @LockOwner=N'Session'")
+    conn.close()
+
+
 # ─── 資料表 ───────────────────────────────────────────────
 DDL = [
     """
@@ -226,6 +247,31 @@ DDL = [
         CONSTRAINT UQ_insti_amount UNIQUE (trade_date, unit)
     )
     """,
+    # 收集執行紀錄（時間為台灣時間，由 Python 傳入；容器的 GETDATE() 是 UTC，不可使用）
+    """
+    IF OBJECT_ID('collect_runs') IS NULL
+    CREATE TABLE collect_runs (
+        run_id         INT IDENTITY(1,1) PRIMARY KEY,
+        command        NVARCHAR(20)  NOT NULL,   -- catch-up / date
+        started_at     DATETIME2(0)  NOT NULL,
+        finished_at    DATETIME2(0)  NOT NULL,
+        outcome        NVARCHAR(10)  NOT NULL CHECK (outcome IN ('ok','pending','abnormal')),
+        new_data       BIT           NOT NULL,   -- 這次有新資料寫入（「更新於」的依據）
+        requests       INT           NULL,       -- 這次對外請求次數
+        export_seconds DECIMAL(7,1)  NULL,       -- 這次完整匯出耗時；沒有匯出為 NULL
+        detail         NVARCHAR(MAX) NOT NULL    -- JSON：written / items / errors / undated
+    )
+    """,
+    # 休市日：official 官方休市表（每年整批更新）；adhoc 收集時判定的臨時休市（颱風假）
+    """
+    IF OBJECT_ID('market_holidays') IS NULL
+    CREATE TABLE market_holidays (
+        holiday_date DATE          NOT NULL PRIMARY KEY,
+        name         NVARCHAR(100) NOT NULL,
+        source       NVARCHAR(10)  NOT NULL CHECK (source IN ('official','adhoc')),
+        fetched_at   DATETIME2(0)  NOT NULL      -- 台灣時間
+    )
+    """,
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -256,4 +302,4 @@ def setup_database():
     conn.close()
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
-          "market_index、stock_alerts、price_events、insti_amount")
+          "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays")

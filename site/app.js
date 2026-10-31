@@ -634,6 +634,59 @@ function renderWatch() {
   $('#view').addEventListener('click', onRowClick);
 }
 
+// ─── 資料新鮮度（S4）────────────────────────────────────
+const FRESH_HOUR = 18;              // 交易日 18:00 後才要求有當天資料
+App.now = () => new Date();         // 測試可替換：App.now = () => new Date('2026-11-02T18:30:00+08:00')
+App.checkedAt = 0;
+App.newDate = null;
+
+function twParts(t) {               // 一律換算成台灣時間，不依賴瀏覽器時區
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(t).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
+}
+// 依交易日曆，現在應該有哪一天的資料；closed = 平日休市日（YYYY-MM-DD）
+function expectedDate(t, closed) {
+  const open = d => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return w > 0 && w < 6 && !closed.has(d); };
+  const prev = d => new Date(Date.parse(d + 'T00:00:00Z') - 864e5).toISOString().slice(0, 10);
+  const { date, hour } = twParts(t);
+  let d = open(date) && hour >= FRESH_HOUR ? date : prev(date);
+  while (!open(d)) d = prev(d);
+  return d;
+}
+function freshLines(L, t) {
+  const st = L.status;
+  if (!st) return [];               // 舊版 latest.json：維持原本的日期列
+  const lines = [], exp = expectedDate(t, new Set(st.closed || []));
+  if (L.date < exp) lines.push(`資料停在 ${md(L.date)}，最新交易日為 ${md(exp)}，可能尚未收集`);
+  const bad = (st.datasets || []).filter(x => x.s === 'abnormal' && x.m).map(x => x.m);
+  if (bad.length) lines.push(`部分資料異常：${bad.slice(0, 3).join('、')}${bad.length > 3 ? ` 等 ${bad.length} 項` : ''}`);
+  return lines;
+}
+function renderStatus() {
+  const L = App.latest, when = (L.updated_at || '').slice(0, 16).replace('T', ' ');
+  $('#dateBar').textContent = `資料日 ${L.date}　法人資料 ${L.flow_date}　更新於 ${when}` +
+    (L.status?.collected_src === 'db' ? '（依資料寫入時間）' : '');
+  const lines = freshLines(L, App.now()).map(x => `<div>${esc(x)}</div>`);
+  if (App.newDate) lines.push(`<div>網站資料已更新（資料日 ${md(App.newDate)}）<button id="reloadBtn">重新整理</button></div>`);
+  const bar = $('#freshBar');
+  bar.innerHTML = lines.join('');
+  bar.hidden = !lines.length;
+  $('#reloadBtn')?.addEventListener('click', () => location.reload());
+}
+// 分頁回到前景：重新判斷新鮮度；latest.json 有變就提示重新整理，不自動跳轉
+async function recheckLatest() {
+  renderStatus();
+  if (Date.now() - App.checkedAt < 60000) return;
+  App.checkedAt = Date.now();
+  let fresh;
+  try { fresh = await getJSON('data/latest.json'); } catch (e) { return; }     // 匯出中或離線：下次再檢查
+  const key = x => [x.date, x.flow_date, x.updated_at].join('|');
+  if (key(fresh) !== key(App.latest)) App.newDate = fresh.date;
+  if (fresh.status) App.latest.status = fresh.status;     // 只影響橫幅：登記臨時休市後不用重新整理就會消失
+  renderStatus();
+}
+
 // ─── 啟動 ───────────────────────────────────────────────
 async function init() {
   setupSearch();
@@ -643,8 +696,8 @@ async function init() {
     $('#view').innerHTML = '<div class="empty">找不到 data/latest.json，請先執行 <code>python -m twstock export</code></div>';
     return;
   }
-  const L = App.latest;
-  $('#dateBar').innerHTML = `資料日 ${L.date}　法人資料 ${L.flow_date}　更新於 ${L.updated_at.slice(0, 16).replace('T', ' ')}`;
+  renderStatus();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') recheckLatest(); });
   window.addEventListener('hashchange', route);
   route();
 }

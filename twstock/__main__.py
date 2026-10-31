@@ -2,9 +2,13 @@
 台股資料收集與網站產生工具（Mac / Windows 通用）
 
   python -m twstock setup-db                         建立資料庫與資料表
-  python -m twstock collect [--date 2026-10-28]      收集單日（行情、本益比、法人、月營收、指數、台指期、處置／注意股、除權息事件、三大法人金額）並匯出網站資料
-  python -m twstock history --start 2026-01-01       補抓歷史（已有的日期自動跳過）
+  python -m twstock collect [--date 2026-10-28]      收集單日（全部重抓覆寫：行情、本益比、法人、月營收、指數、台指期、處置／注意股、除權息事件、三大法人金額）並匯出網站資料
+  python -m twstock collect --catch-up [--days 10]   補齊最近 N 個交易日缺的資料（各資料集獨立判斷，可重複執行），有新資料才匯出；排程用這個
+  python -m twstock check [--days 20]                檢查各資料集的完整性（唯讀、不連外）；有異常回傳 1
+  python -m twstock history --start 2026-01-01       補抓歷史（只補缺的，可中斷重跑）
+  python -m twstock history --start 2025-10-30 --only pe      只補本益比／淨值比／殖利率
   python -m twstock history --start 2026-02-23 --only index   只補加權指數歷史
+  python -m twstock history --start 2025-10-30 --only tpex_index  只補櫃買指數（一個月一個請求）
   python -m twstock history --start 2026-07-31 --only amount  只補上市三大法人買賣金額
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
   python -m twstock events --start 2025-10-30        補抓除權息／減資／面額變更事件（還原價格用）
@@ -16,7 +20,9 @@
 """
 import argparse
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
+
+from .config import tw_now
 
 
 def _utf8_console():
@@ -37,74 +43,44 @@ def cmd_setup_db(args):
     setup_database()
 
 
-CHAINS_REFRESH_DAYS = 30
-
-
 def cmd_collect(args):
-    from .collectors.chains import chains_age_days, update_chains
-    from .collectors.alerts import collect_alerts
-    from .collectors.daily import AMOUNT, collect_for_date, collect_tpex_index
-    from .collectors.events import LOOKBACK_DAYS, collect_events
-    from .collectors.futures import collect_futures, collect_futures_institutional
-    from .collectors.industry import update_industry
-    from .collectors.revenue import collect_monthly_revenue, revenue_month_for
-    from .fetch import FetchError
-
-    d = args.date or date.today()
-    try:
-        traded = collect_for_date(d)
-        if traded:
-            update_industry()
-            month = revenue_month_for(d)
-            if month and not args.no_revenue:
-                print(f"  💰 月營收 {month[0]}/{month[1]:02d}")
-                try:
-                    collect_monthly_revenue(*month)
-                except FetchError as e:
-                    print(f"  ⚠️  月營收抓取失敗，下次執行會再補：{e}")
-            # 期貨與產業鏈失敗不影響當日股票資料，下次執行會再補
-            try:
-                collect_futures(d)
-                collect_futures_institutional(d)
-            except FetchError as e:
-                print(f"  ⚠️  台指期抓取失敗：{e}")
-            try:
-                collect_tpex_index()
-            except FetchError as e:
-                print(f"  ⚠️  櫃買指數抓取失敗：{e}")
-            try:
-                collect_alerts()
-            except FetchError as e:
-                print(f"  ⚠️  處置／注意股抓取失敗：{e}")
-            try:
-                collect_for_date(d, (AMOUNT,))
-            except FetchError as e:
-                print(f"  ⚠️  三大法人金額抓取失敗：{e}")
-            try:
-                collect_events(d - timedelta(days=LOOKBACK_DAYS), d)
-            except FetchError as e:
-                print(f"  ⚠️  除權息／減資事件抓取失敗，下次執行會再補：{e}")
-            age = chains_age_days()
-            if age is None or age >= CHAINS_REFRESH_DAYS:
-                try:
-                    update_chains()
-                except (FetchError, RuntimeError) as e:
-                    print(f"  ⚠️  產業鏈更新失敗：{e}")
-    except FetchError as e:
-        print(f"\n❌ {e}")
+    from .collectors.catchup import DEFAULT_DAYS, MAX_DAYS, run
+    if args.days is not None and not args.catch_up:
+        print("❌ --days 只能和 --catch-up 一起用")
         return 1
-    if not args.no_export:
-        from .export import export_all
-        export_all()
-    return 0
+    days = DEFAULT_DAYS if args.days is None else args.days
+    if not 1 <= days <= MAX_DAYS:
+        print(f"❌ --days 上限 {MAX_DAYS}（更早的缺口請用 python -m twstock history）")
+        return 1
+    # 不帶參數 = 今天（台灣時間）
+    date_ = None if args.catch_up else args.date or tw_now().date()
+    return run(days=days, date_=date_, no_revenue=args.no_revenue, no_export=args.no_export, notify=args.notify)
+
+
+def cmd_check(args):
+    from .health import run_check
+    import pyodbc
+    try:
+        return run_check(args.days, tw_now())
+    except pyodbc.Error as e:
+        print(f"❌ 連不上資料庫或資料表不存在（請確認 Docker 與容器已啟動，並執行過 setup-db）：{str(e).splitlines()[0][:200]}")
+        return 2
 
 
 def cmd_history(args):
     from .collectors.daily import ALL_DATASETS
     from .collectors.history import run_history
+    from .db import acquire_lock, release_lock
     datasets = tuple(args.only) if args.only else ALL_DATASETS
-    ok = run_history(args.start, args.end or date.today(), datasets=datasets,
-                     force=args.force, revenue=not args.no_revenue, delay=args.delay)
+    lock = acquire_lock()
+    if lock is None:
+        print("⏭️  另一個收集程序正在執行，請稍後再跑（同時跑會超過網站節流）")
+        return 1
+    try:
+        ok = run_history(args.start, args.end or tw_now().date(), datasets=datasets,
+                         force=args.force, revenue=not args.no_revenue, delay=args.delay)
+    finally:
+        release_lock(lock)
     return 0 if ok else 1
 
 
@@ -188,8 +164,12 @@ def main(argv=None):
 
     sub.add_parser("setup-db", help="建立資料庫與資料表").set_defaults(fn=cmd_setup_db)
 
-    s = sub.add_parser("collect", help="收集單日資料並匯出網站 JSON")
-    s.add_argument("--date", type=_date, help="YYYY-MM-DD，預設今天")
+    s = sub.add_parser("collect", help="收集資料並匯出網站 JSON（單日，或 --catch-up 補齊最近的缺口）")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--date", type=_date, help="YYYY-MM-DD，預設今天；該日全部重抓覆寫")
+    g.add_argument("--catch-up", action="store_true", help="找出最近 N 個交易日各資料集的缺口，只補缺的；有新資料才匯出")
+    s.add_argument("--days", type=int, help="--catch-up 回溯的交易日數，預設 10，上限 30")
+    s.add_argument("--notify", action="store_true", help="有異常時發 Mac 本機通知（排程用；同一天同一問題只通知一次）")
     s.add_argument("--no-revenue", action="store_true", help="略過月營收")
     s.add_argument("--no-export", action="store_true", help="收集後不匯出網站資料")
     s.set_defaults(fn=cmd_collect)
@@ -197,8 +177,9 @@ def main(argv=None):
     s = sub.add_parser("history", help="補抓歷史資料")
     s.add_argument("--start", type=_date, required=True)
     s.add_argument("--end", type=_date, help="預設今天")
-    s.add_argument("--only", nargs="+", choices=["prices", "insti", "index", "amount"],
-                   help="只抓指定資料集（index = 只補加權指數，amount = 只補上市三大法人買賣金額）")
+    s.add_argument("--only", nargs="+", choices=["prices", "pe", "insti", "index", "amount", "tpex_index"],
+                   help="只抓指定資料集（pe = 本益比／淨值比／殖利率，index = 加權指數，tpex_index = 櫃買指數，"
+                        "amount = 上市三大法人買賣金額）")
     s.add_argument("--force", action="store_true", help="已存在的日期也重抓覆寫")
     s.add_argument("--no-revenue", action="store_true")
     s.add_argument("--delay", type=float, default=0.0, help="每日之間額外暫停秒數")
@@ -214,6 +195,10 @@ def main(argv=None):
     s.add_argument("--start", type=_date, required=True)
     s.add_argument("--end", type=_date, help="預設今天")
     s.set_defaults(fn=cmd_events)
+
+    s = sub.add_parser("check", help="檢查近 N 個交易日各資料集的完整性（唯讀、不連外）；有異常回傳 1")
+    s.add_argument("--days", type=int, default=20, help="預設 20")
+    s.set_defaults(fn=cmd_check)
 
     sub.add_parser("export", help="匯出網站 JSON 到 site/data").set_defaults(fn=cmd_export)
 
