@@ -62,7 +62,7 @@ const routes = {
   bubble: renderBubble,
   rank: renderRank,
   watch: renderWatch,
-  etf: renderEtf,
+  etf: code => code ? renderHoldings(code) : renderEtf(),
   stock: code => window.renderStock(code),
 };
 
@@ -131,12 +131,16 @@ function renderToday() {
   const topBuy = [...stocks].sort((a, b) => b[1].n1 - a[1].n1).slice(0, 10);
   const topSell = [...stocks].sort((a, b) => a[1].n1 - b[1].n1).slice(0, 10);
 
-  const mk = (m, label) => `<div class="card stat">
+  // A3：有官方家數時頭條改用官方（含漲停、跌停）；沒有時沿用網站自算
+  const mk = (m, label) => { const o = L.breadth?.[m]?.o, x = L.market[m];
+    return `<div class="card stat">
       <div class="l">${label}成交額</div>
-      <div class="v num">${fmt(L.market[m].turnover)}<span class="small muted"> 億</span></div>
-      <div class="s num">漲 <span class="up">${L.market[m].up}</span>　跌 <span class="dn">${L.market[m].down}</span>　平 <span class="flat">${L.market[m].flat}</span> 家</div>
-      <div class="s">一般股票，不含 ETF</div>
-    </div>`;
+      <div class="v num">${fmt(x.turnover)}<span class="small muted"> 億</span></div>
+      ${o ? `<div class="s num">漲 <span class="up">${fmt(o.up)}</span>（停 ${fmt(o.ul)}）　跌 <span class="dn">${fmt(o.dn)}</span>（停 ${fmt(o.dl)}）　平 <span class="flat">${fmt(o.fl)}</span>　未成交 ${fmt(o.nt)}</div>
+      <div class="s">家數為官方（股票）；成交額為網站自算，不含 ETF</div>`
+      : `<div class="s num">漲 <span class="up">${x.up}</span>　跌 <span class="dn">${x.down}</span>　平 <span class="flat">${x.flat}</span> 家</div>
+      <div class="s">一般股票，不含 ETF${L.breadth ? '；官方家數尚未取得，顯示自算' : ''}</div>`}
+    </div>`; };
   const bar = (g, color) => `<div class="bar-row" data-group="${esc(g.name)}">
       <span class="nm">${esc(g.name)}</span>
       <span class="bar-track"><span class="bar-fill" style="width:${Math.abs(g[key]) / maxAbs * 100}%;background:${color}"></span></span>
@@ -148,10 +152,11 @@ function renderToday() {
 
   $('#view').innerHTML = `
     <section class="sec grid g-stats">${indexCard(L.index?.TAIEX, '加權指數')}${indexCard(L.index?.TPEX, '櫃買指數')}</section>
-    <section class="sec grid g-stats">
+    <section class="sec grid g-stats g-mk">
       ${mk('TWSE', '上市')}${mk('TPEx', '上櫃')}
       ${instiCard(L)}
       ${marginCard(L)}
+      ${breadthCard(L)}
     </section>
 
     ${futuresHTML(L.futures)}
@@ -262,11 +267,26 @@ function marginCard(L) {
     </div>`;
 }
 
+// 市場寬度卡（A3＋A8）：全部為網站自算（還原收盤、股票、不含 ETF）；官方家數在成交額卡
+function breadthCard(L) {
+  const B = L.breadth;
+  if (!B) return '';
+  const pct = v => v == null ? '--' : fmt(v, 1) + '%';
+  const row = (x, name) => !x ? '' : `<div class="s num">${name}　站上 MA20 <b>${pct(x.ma20)}</b>（前日 ${pct(x.s20.at(-2))}）　MA60 <b>${pct(x.ma60)}</b>　20 日新高 <span class="up">${fmt(x.hi)}</span>、新低 <span class="dn">${fmt(x.lo)}</span>　量能 <b>${x.vr == null ? '--' : fmt(x.vr, 2) + ' 倍'}</b></div>`;
+  const T = B.TWSE, s = T?.s20.filter(v => v != null) || [];
+  return `<div class="card stat idx margin">
+      <div class="l">市場寬度 ${md(T?.d || B.TPEx?.d)}（自算，股票，不含 ETF）</div>
+      ${row(T, '上市')}${row(B.TPEx, '上櫃')}
+      ${spark(s)}${s.length ? `<div class="s">上市站上 MA20 比例，近 ${s.length} 個交易日（${md(T.from)} 起）</div>` : ''}
+      <div class="s">分母 = 當天有收盤、且有 20（MA60 為 60）個以上收盤的股票（上市 ${fmt(T?.n20)}、上櫃 ${fmt(B.TPEx?.n20)} 檔）；新高／新低 = 收盤高於／低於前 20 個收盤；量能 = 成交額 ÷ 前 20 日平均</div>
+    </div>`;
+}
+
 // 三大法人卡：上市用證交所官方金額（A2），上櫃另列估算值；尚無官方資料時維持第 1 輪估算卡
 function instiCard(L) {
   const O = L.insti_official, X = L.insti_otc, I = L.insti;
   const yi1 = v => v == null ? '--' : sgn(v, 1) + '億';
-  if (!O) return `<div class="card stat"><div class="l">三大法人（${md(L.flow_date)}）</div>
+  if (!O) return `<div class="card stat insti"><div class="l">三大法人（${md(L.flow_date)}）</div>
       <div class="v num ${cls(I.foreign + I.trust + I.dealer)}">${yi(I.foreign + I.trust + I.dealer)}</div>
       <div class="s num">外資 <span class="${cls(I.foreign)}">${yi(I.foreign)}</span>　投信 <span class="${cls(I.trust)}">${yi(I.trust)}</span>　自營 <span class="${cls(I.dealer)}">${yi(I.dealer)}</span></div>
       <div class="s">估算：買賣超張數 × 收盤價，不含 ETF</div></div>`;
@@ -671,7 +691,7 @@ function renderEtf() {
         <select id="etfSel" class="sel" aria-label="排序">${ETF_SORT.map(x => `<option value="${x[0]}"${x[0] === by ? ' selected' : ''}>${x[1]}</option>`).join('')}</select></div>
       <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr>
         <th>ETF</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>成交額</th><th>融資餘額</th><th>融資增減</th><th>融券餘額</th><th>融券增減</th></tr></thead><tbody>` +
-      list.map(([c, r]) => `<tr><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span></td>
+      list.map(([c, r]) => `<tr${App.latest.holdings?.[c] ? ` data-etf="${c}"` : ''}><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
         <td class="num ${cls(r.ch)}">${pfmt(r.c)}</td>
         <td class="num ${cls(r.ch)}">${r.c == null ? '無成交' : sgn(r.p) + '%'}</td>
         <td class="num">${fmt(r.v)}</td><td class="num">${fmt(r.tv, 2)}億</td>
@@ -681,6 +701,45 @@ function renderEtf() {
       <div class="muted small" style="margin-top:6px">共 ${list.length} 檔。成交量為張、成交額為億元；融資融券為張，增減 = 今日餘額 − 前日餘額，「--」表示不在信用交易清單。ETF 不計入首頁家數、成交額、類股資金流、排行、自選與股票口徑的融資融券。</div></section>`;
   $('#etfSel').addEventListener('change', e => { localStore('etfSort', null, e.target.value); renderEtf(); });
   onSeg('etfMktSeg', v => { localStore('etfMkt', null, v); renderEtf(); });
+  $('#view').addEventListener('click', e => { const tr = e.target.closest('tr[data-etf]'); if (tr) location.hash = '#/etf/' + tr.dataset.etf; });
+}
+
+// E2-4：已支援持股的主動 ETF 可點；其他主動型（代號 A 結尾）標示尚未支援
+const holdTag = c => App.latest.holdings?.[c] ? `<a class="pill hold" href="#/etf/${c}">持股</a>`
+  : /A$/.test(c) ? '<span class="pill muted">持股尚未支援</span>' : '';
+
+const HOLD_SORT = [['pw', '權重'], ['d1', '張數增減'], ['w1', '權重變化']];
+
+async function renderHoldings(code) {
+  // 不在支援清單就不請求（避免 404）
+  const H = App.latest.holdings?.[code] && await getJSON(`data/etfs/${code}.json`);
+  if (!H) { $('#view').innerHTML = `<div class="empty">${esc(code)} 的持股資料尚未支援（目前只有統一投信 4 檔主動 ETF）</div>`; return; }
+  const S = H.sum, by = localStore('holdSort', 'pw'), unit = r => r.tw ? '張' : '股';
+  const rows = [...H.rows].sort((a, b) => (b[by] ?? -Infinity) - (a[by] ?? -Infinity));
+  const prev = H.dates.at(-2), d5 = H.dates.length > 5 ? H.dates.at(-6) : null;
+  const chg = (v, d = 0) => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v, d)}</td>`;
+  const name = r => r.tw ? `<b>${esc(r.n)}</b><span>${esc(r.c)}</span>` : `<b>${esc(r.n)}</b><span>${esc(r.c)}（海外）</span>`;
+  $('#view').innerHTML = `<section class="sec card">
+      <div class="sec-h"><h2>${esc(H.n)}</h2><span class="muted small">${code}　${H.m === 'TWSE' ? '上市' : '上櫃'}　持股日 ${md(S.d)}${H.delay ? '（跨境，晚一個交易日公布）' : ''}</span>
+        <span class="sp"></span><a class="muted small" href="#/etf">← ETF 列表</a></div>
+      <div class="grid g-stats">
+        ${[['淨資產', fmt(S.nav, 1) + ' 億'], ['每單位淨值', fmt(S.nu, 2) + ' 元'], ['股票權重合計', fmt(S.sw, 2) + '%'], ['持股檔數', fmt(S.n) + ' 檔'],
+           ['期貨', S.fl ? `${fmt(S.fl)} 口（${fmt(S.fa, 1)} 億）` : '無']].map(([l, v]) => `<div class="card stat"><div class="l">${l}</div><div class="v num" style="font-size:16px">${v}</div></div>`).join('')}
+      </div></section>
+    <section class="sec card">
+      <div class="sec-h"><h2>持股</h2><span class="muted small">${prev ? `1 日：相對 ${md(prev)}` : '只有一個持股日'}${d5 ? `；5 日：相對 ${md(d5)}` : ''}</span><span class="sp"></span>${segHTML('holdSeg', HOLD_SORT, by)}</div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>持有</th><th>權重</th><th>1 日增減</th><th>1 日權重變化</th><th>5 日增減</th></tr></thead><tbody>` +
+      rows.map(r => `<tr${r.tw ? ` data-code="${esc(r.c)}"` : ''}><td class="nm">${name(r)}${r.new ? '<i class="al al-new">新</i>' : ''}</td>
+        <td class="num">${fmt(r.l)} ${unit(r)}</td><td class="num">${fmt(r.pw, 2)}%</td>${chg(r.d1)}${chg(r.w1, 2)}${chg(r.d5)}</tr>`).join('') +
+      `</tbody></table></div>
+      ${H.out.length ? `<div class="sec-h" style="margin-top:12px"><h2>出清</h2><span class="muted small">${md(prev)} 持有、${md(S.d)} 已無</span></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>${md(prev)} 持有</th><th>權重</th></tr></thead><tbody>` +
+        H.out.map(r => `<tr${r.tw ? ` data-code="${esc(r.c)}"` : ''}><td class="nm">${name(r)}</td><td class="num">${fmt(r.l)} ${unit(r)}</td><td class="num">${fmt(r.pw, 2)}%</td></tr>`).join('') +
+        '</tbody></table></div>' : ''}
+      <div class="muted small" style="margin-top:6px">資料來源：統一投信每日申購買回清單。台股為張、海外為股；權重為占基金淨資產 %，權重變化為百分點。
+        本基金為現金申購買回，持股不會隨申購按比例增減：<b>張數增減就是經理人的買賣</b>；權重變化另含股價漲跌的影響（張數不變、權重也會變）。標「新」= 前一持股日沒有持有。</div></section>`;
+  onSeg('holdSeg', v => { localStore('holdSort', null, v); renderHoldings(code); });
+  $('#view').addEventListener('click', onRowClick);
 }
 
 function renderWatch() {

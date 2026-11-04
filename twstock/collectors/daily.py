@@ -1,5 +1,5 @@
 """
-每日資料：上市 + 上櫃的收盤行情、本益比/殖利率、三大法人買賣超、ETF 行情、融資融券。
+每日資料：上市 + 上櫃的收盤行情、本益比/殖利率、三大法人買賣超、ETF 行情、融資融券、官方漲跌家數、主動 ETF 持股。
 
 寫入採批次：整批資料序列化成一個 JSON 參數，由 OPENJSON 展開後 MERGE；
 每張表一次資料庫往返，取代逐筆查詢/更新的上萬次往返。
@@ -9,21 +9,26 @@ from datetime import date
 
 from .. import db
 from ..fetch import FetchError, SchemaError, clean_number, is_etf_code, is_valid_stock_code, request
+from ..health import HOLDINGS
+from ..tradingcal import load_closed
+from .holdings import fetch_holdings, merge_holdings
 
 TWSE = "https://www.twse.com.tw/rwd/zh"
 TPEX = "https://www.tpex.org.tw/www/zh-tw"
 
 # history --only 的資料集名稱；INDEX = 加權指數（抓行情時會一併寫入），TPEX_INDEX = 櫃買指數（月查詢）
 PRICES, PE, INSTI, INDEX, AMOUNT, TPEX_INDEX = "prices", "pe", "insti", "index", "amount", "tpex_index"
-ETF, MARGIN = "etf", "margin"
+ETF, MARGIN, HOLDINGS_DS = "etf", "margin", "holdings"
 ALL_DATASETS = (PRICES, PE, INSTI, ETF, MARGIN)
+HOLDINGS_KEYS = tuple(f"holdings.{c}" for c in HOLDINGS)
 # 每個資料集對應的細項（分市場），也是 collect_for_date 與 health.SPECS 共用的鍵
 DATASET_KEYS = {PRICES: ("prices.TWSE", "prices.TPEx"), PE: ("pe.TWSE", "pe.TPEx"),
                 INSTI: ("insti.TWSE", "insti.TPEx"), INDEX: ("index.TAIEX",), AMOUNT: ("amount",),
-                ETF: ("etf.TWSE", "etf.TPEx"), MARGIN: ("margin.TWSE", "margin.TPEx")}
-# 一天之內的收集順序：行情先於本益比、法人；ETF 行情先於融資融券（融資融券的 ETF 列只寫入 etfs 已有的 ETF）
+                ETF: ("etf.TWSE", "etf.TPEx"), MARGIN: ("margin.TWSE", "margin.TPEx"), HOLDINGS_DS: HOLDINGS_KEYS}
+# 一天之內的收集順序：行情先於本益比、法人；ETF 行情先於融資融券與持股（兩者都只寫入 etfs 已有的 ETF）
+# 漲跌家數不補歷史（health.BREADTH_FROM），所以不在 DATASET_KEYS；上市家數與行情共用同一個 MI_INDEX 回應
 DAY_KEYS = ("prices.TWSE", "prices.TPEx", "index.TAIEX", "etf.TWSE", "etf.TPEx", "pe.TWSE", "pe.TPEx",
-            "insti.TWSE", "insti.TPEx", "amount", "margin.TWSE", "margin.TPEx")
+            "insti.TWSE", "insti.TPEx", "amount", "margin.TWSE", "margin.TPEx", "breadth.TWSE", "breadth.TPEx") + HOLDINGS_KEYS
 PARSE_ERRORS = (SchemaError, KeyError, IndexError, TypeError, ValueError, AttributeError)
 
 
@@ -71,10 +76,17 @@ def _twse_quote(row: list, idx: dict) -> dict:
     }
 
 
-def fetch_twse_daily(d: date):
-    """上市每日收盤行情、加權指數、ETF 原始列 → (股票列, 指數, (欄位索引, ETF 原始列))；休市回傳 ([], None, ({}, []))。"""
-    data = request("GET", f"{TWSE}/afterTrading/MI_INDEX",
+def _mi_index(d: date) -> dict:
+    return request("GET", f"{TWSE}/afterTrading/MI_INDEX",
                    params={"response": "json", "date": f"{d:%Y%m%d}", "type": "ALLBUT0999"})
+
+
+def fetch_twse_daily(d: date, data=None):
+    """
+    上市每日收盤行情、加權指數、ETF 原始列 → (股票列, 指數, (欄位索引, ETF 原始列))；休市回傳 ([], None, ({}, []))。
+    data：已取得的 MI_INDEX 回應（與漲跌家數共用），None 時才發請求。
+    """
+    data = _mi_index(d) if data is None else data
     if data.get("stat") != "OK":
         return [], None, ({}, [])
     taiex = parse_taiex(data, d)
@@ -127,6 +139,29 @@ def fetch_twse_insti(d: date) -> dict:
     return result
 
 
+def _count(text) -> tuple:
+    """'1,000(33)' → (1000, 33)；沒有括號 → (數字, None)。"""
+    head, _, tail = str(text).partition("(")
+    return clean_number(head, int), clean_number(tail.rstrip(")"), int) if tail else None
+
+
+def parse_twse_breadth(data: dict, d: date):
+    """MI_INDEX 的「漲跌證券數合計」股票欄 → 一列；休市回傳 None；有行情卻沒有這張表 → SchemaError。"""
+    if data.get("stat") != "OK":
+        return None
+    for table in data.get("tables", []):
+        if (table.get("title") or "").strip() != "漲跌證券數合計":
+            continue
+        fields = table.get("fields", [])
+        if "股票" not in fields or "類型" not in fields:
+            raise SchemaError("漲跌證券數合計 缺少「類型」或「股票」欄")
+        rows = {str(r[fields.index("類型")]).strip(): r[fields.index("股票")] for r in table.get("data", [])}
+        (up, up_limit), (down, down_limit) = _count(rows["上漲(漲停)"]), _count(rows["下跌(跌停)"])
+        return {"trade_date": d.isoformat(), "market": "TWSE", "up": up, "up_limit": up_limit, "down": down,
+                "down_limit": down_limit, "flat": _count(rows["持平"])[0], "no_trade": _count(rows["未成交"])[0]}
+    raise SchemaError("MI_INDEX 找不到「漲跌證券數合計」表")
+
+
 # ─── 上櫃 ─────────────────────────────────────────────────
 def _tpex_tables(path: str, d: date) -> list:
     data = request("POST", f"{TPEX}/{path}", data={"date": f"{d:%Y/%m/%d}", "response": "json"})
@@ -161,6 +196,22 @@ def fetch_tpex_daily(d: date) -> tuple:
     if tables:
         raise SchemaError("dailyQuotes 找不到含「代號」的行情表")
     return [], None, ({}, [])
+
+
+def parse_tpex_breadth(tables: list, d: date):
+    """afterTrading/highlight 的「上櫃股票當日彙總資訊」→ 一列；未公布（沒有資料表）回傳 None。"""
+    if not tables:
+        return None
+    idx = {f: i for i, f in enumerate(tables[0]["fields"])}
+    row = tables[0]["data"][0]
+    get = lambda f: clean_number(row[idx[f]], int)
+    return {"trade_date": d.isoformat(), "market": "TPEx", "up": get("上漲家數"), "up_limit": get("漲停家數"),
+            "down": get("下跌家數"), "down_limit": get("跌停家數"), "flat": get("平盤家數"),
+            "no_trade": get("未成交(含暫停交易)家數")}
+
+
+def fetch_tpex_breadth(d: date):
+    return parse_tpex_breadth(_tpex_tables("afterTrading/highlight", d), d)
 
 
 def parse_etf_quotes(raw: tuple, market: str) -> list:
@@ -617,11 +668,27 @@ def merge_insti_amount(cursor, rows: list):
     """, db.to_json(rows))
 
 
+def merge_breadth(cursor, row: dict):
+    cursor.execute("""
+        MERGE market_breadth AS t
+        USING OPENJSON(?) WITH (
+            trade_date DATE, market NVARCHAR(10), up INT, up_limit INT, down INT, down_limit INT, flat INT, no_trade INT
+        ) AS s
+        ON t.trade_date = s.trade_date AND t.market = s.market
+        WHEN MATCHED THEN UPDATE SET
+            up = s.up, up_limit = s.up_limit, down = s.down, down_limit = s.down_limit, flat = s.flat, no_trade = s.no_trade
+        WHEN NOT MATCHED THEN
+            INSERT (trade_date, market, up, up_limit, down, down_limit, flat, no_trade)
+            VALUES (s.trade_date, s.market, s.up, s.up_limit, s.down, s.down_limit, s.flat, s.no_trade);
+    """, db.to_json([row]))
+
+
 def _save(fn, *args):
     conn = db.connect()
     try:
-        fn(conn.cursor(), *args)
+        result = fn(conn.cursor(), *args)
         conn.commit()
+        return result
     finally:
         conn.close()
 
@@ -640,7 +707,11 @@ def _quotes(market: str, d: date, cache: dict) -> tuple:
     """同一市場的行情回應只抓一次：股票行情、加權指數、ETF 共用；失敗也快取，同一次執行不重打。"""
     if market not in cache:
         try:
-            cache[market] = fetch_twse_daily(d) if market == "TWSE" else fetch_tpex_daily(d)
+            if market == "TWSE":
+                cache["MI_INDEX"] = _mi_index(d)                # 漲跌家數也從這個回應解析
+                cache[market] = fetch_twse_daily(d, cache["MI_INDEX"])
+            else:
+                cache[market] = fetch_tpex_daily(d)
         except (FetchError, *PARSE_ERRORS) as e:
             cache[market] = e
     if isinstance(cache[market], Exception):
@@ -681,6 +752,30 @@ def _collect_key(key: str, d: date, cache: dict) -> int:
         if insti:
             _save(merge_institutional, d, [{"stock_code": c, **r} for c, r in insti.items()])
         return len(insti)
+    if dataset == "breadth":
+        if market == "TWSE":
+            _quotes("TWSE", d, cache)                   # 行情抓取失敗時這裡丟出同一個例外
+            row = parse_twse_breadth(cache["MI_INDEX"], d)
+        else:
+            row = fetch_tpex_breadth(d)
+        if row:
+            _save(merge_breadth, row)
+        return 1 if row else 0
+    if dataset == HOLDINGS_DS:
+        if "closed" not in cache:
+            conn = db.connect()
+            try:
+                cache["closed"] = load_closed(conn.cursor())
+            finally:
+                conn.close()
+        got = fetch_holdings(market, d, cache["closed"])
+        if not got:
+            return 0                                    # 尚未公布，或回應的持股日不是 d
+        summary, rows = got
+        if not _save(merge_holdings, market, summary, rows):
+            print(f"  ⚠️  etfs 沒有 {market}，持股未寫入")
+            return 0
+        return summary["n_stocks"]
     if dataset == MARGIN:
         rows, total = (fetch_twse_margin if market == "TWSE" else fetch_tpex_margin)(d)
         stocks = [r for r in rows if is_valid_stock_code(r["stock_code"])]
@@ -706,8 +801,8 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
     written, errors, cache = {}, {}, {}
     for key in keys:
         dataset, _, market = key.partition(".")
-        if dataset in ("pe", "insti", MARGIN) and written.get(f"prices.{market}") == 0:
-            continue                # 同市場行情還沒有：本益比、法人、融資融券不可能先有，不發請求
+        if dataset in ("pe", "insti", MARGIN, "breadth") and written.get(f"prices.{market}") == 0:
+            continue                # 同市場行情還沒有：本益比、法人、融資融券、漲跌家數不可能先有，不發請求
         if dataset == "pe" and f"prices.{market}" in errors:
             continue                # 本益比只寫入有行情列的股票
         try:
@@ -724,4 +819,4 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
     return written, errors
 
 
-__all__ = ["collect_for_date", "FetchError", "PRICES", "PE", "INSTI", "ETF", "MARGIN", "ALL_DATASETS"]
+__all__ = ["collect_for_date", "FetchError", "PRICES", "PE", "INSTI", "ETF", "MARGIN", "HOLDINGS_DS", "ALL_DATASETS"]

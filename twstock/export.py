@@ -2,8 +2,10 @@
 把資料庫內容匯出成靜態 JSON（site/data/），網站只讀這些檔案、不需要後端：
 
   latest.json        今日總覽：大盤統計、台指期日 K、類股/產業鏈/概念股資金流（含回放用的每日座標）、
-                     每檔股票最新指標、融資融券（margin）、ETF（etfs，與股票完全分開）
-  stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈、最新融資融券
+                     每檔股票最新指標、融資融券（margin）、ETF（etfs，與股票完全分開）、
+                     已支援持股的主動 ETF（holdings）、市場寬度（breadth）
+  stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈、最新融資融券、主動 ETF 持有（active）
+  etfs/{代號}.json   主動 ETF 持股：近 HOLD_DAYS 個持股日的張數與權重、最新一天的增減
 """
 import json
 import os
@@ -17,7 +19,7 @@ from . import db
 from .analysis.flow import LONG, group_flows, load_concepts, streak
 from .analysis.forecast import build_forecast, load_oi
 from .config import SITE_DATA_DIR, tw_now
-from .health import build_status
+from .health import HOLDINGS, build_status
 
 REPLAY = 20                    # 泡泡圖回放天數
 FUTURES_DAYS = 500             # 首頁台指期日 K 匯出天數
@@ -34,6 +36,8 @@ CAP_DAYS = 90
 # 升降單位（一般股票）：(價格上限, 單位)
 MARGIN_DAYS = 20               # 首頁上市股票融資增減迷你柱天數
 COVER_MIN = 99.0               # 維持率分子涵蓋的融資張數 ÷ 官方融資張數（%）低於此值不顯示
+HOLD_DAYS = 60                 # ETF 持股 JSON 的持股日數
+BREADTH_DAYS = 60              # 市場寬度走勢天數
 _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
 
@@ -332,6 +336,127 @@ def etf_block(latest, margin_rows):
     return {"dates": {m: str(d) for m, (d, _) in latest.items()}, "rows": rows}
 
 
+def _load_holdings(cur):
+    """{ETF 代號: (持股日 [舊到新], {持股日: 彙總列}, {持股日: {(類別, 代號): (名稱, 股數, 權重)}})}，各取最近 HOLD_DAYS 個持股日。"""
+    summary = defaultdict(dict)
+    for code, d, *v in cur.execute("""
+        SELECT e.etf_code, s.hold_date, s.nav, s.nav_unit, s.n_stocks, s.stock_weight, s.futures_lots, s.futures_amount
+        FROM etf_holding_summary s JOIN etfs e ON e.etf_id = s.etf_id ORDER BY s.hold_date"""):
+        summary[code][d] = v
+    if not summary:
+        return {}
+    since = min(sorted(v)[-HOLD_DAYS:][0] for v in summary.values())
+    held = defaultdict(lambda: defaultdict(dict))
+    for code, d, kind, c, name, shares, w in cur.execute("""
+        SELECT e.etf_code, h.hold_date, h.asset_type, h.code, h.name, h.shares, h.weight
+        FROM etf_holdings h JOIN etfs e ON e.etf_id = h.etf_id WHERE h.hold_date >= ?""", since):
+        held[code][d][(kind, c)] = (name, shares, w)
+    return {code: (sorted(v)[-HOLD_DAYS:], v, held[code]) for code, v in summary.items() if code in HOLDINGS}
+
+
+def holding_table(dates, held, tw):
+    """
+    ETF 持股頁的列（最新持股日）。dates：持股日（舊到新）；held：{持股日: {(類別, 代號): (名稱, 股數, 權重)}}；
+    tw：台股代號集合（張 = 股 ÷ 1000、可點進個股頁；其他如海外股票單位為股）。
+    回傳 (rows, out)：rows 每列 {c, n, tw, s: [各持股日數量，未持有 null], w: [權重], l, pw, d1, w1, d5, new}；
+    out：前一持股日有、最新一天沒有（出清）。1 日、5 日以「前 1、前 5 個有資料的持股日」為基準。
+    """
+    last, prev = dates[-1], dates[-2] if len(dates) > 1 else None
+    d5 = dates[-6] if len(dates) > 5 else None
+    names = {}
+    for d in dates:
+        for (kind, c), (name, _, _) in held[d].items():
+            if kind == "ST":
+                names[c] = name
+    qty = lambda c, d: None if d is None or ("ST", c) not in held[d] else (
+        round(held[d][("ST", c)][1] / 1000) if c in tw else held[d][("ST", c)][1])
+    wt = lambda c, d: None if d is None or ("ST", c) not in held[d] else _f(held[d][("ST", c)][2])
+    rows, out = [], []
+    for c, name in names.items():
+        now, before = qty(c, last), qty(c, prev)
+        if now is None:
+            if before is not None:
+                out.append({"c": c, "n": name, "tw": int(c in tw), "l": before, "pw": wt(c, prev)})
+            continue
+        r = {"c": c, "n": name, "tw": int(c in tw), "s": [qty(c, d) for d in dates], "w": [wt(c, d) for d in dates],
+             "l": now, "pw": wt(c, last), "d1": now - (before or 0) if prev else None,
+             "w1": _f(wt(c, last) - (wt(c, prev) or 0)) if prev else None,
+             "d5": now - (qty(c, d5) or 0) if d5 else None}
+        if prev and before is None:
+            r["new"] = 1
+        rows.append(r)
+    rows.sort(key=lambda r: -(r["pw"] or 0))
+    return rows, out
+
+
+def holding_export(code, dates, summary, held, tw, name, market):
+    """etfs/{代號}.json。金額單位：億元；nu 每單位淨值（元）；sw 股票權重合計（%）；fl 期貨口數。"""
+    nav, nu, n, sw, fl, fa = summary[dates[-1]]
+    rows, out = holding_table(dates, held, tw)
+    fund, delay, _ = HOLDINGS[code]
+    return {"code": code, "n": name, "m": market, "fund": fund, "delay": delay, "dates": [str(d) for d in dates],
+            "sum": {"d": str(dates[-1]), "nav": _f(float(nav) / YI), "nu": _f(nu), "n": n, "sw": _f(sw),
+                    "fl": fl, "fa": _f(float(fa) / YI)},
+            "rows": rows, "out": out}
+
+
+def stock_active(holdings, tw):
+    """{股票代號: [主動 ETF 持有]}：各 ETF 最新持股日有持有的台股；張、權重（%）、1 日／5 日張數增減。"""
+    out = defaultdict(list)
+    for code, (dates, _, held) in sorted(holdings.items()):
+        for r in holding_table(dates, held, tw)[0]:
+            if r["tw"]:
+                out[r["c"]].append({"e": code, "d": str(dates[-1]), "l": r["l"], "w": r["pw"], "d1": r["d1"], "d5": r["d5"],
+                                    **({"new": 1} if r.get("new") else {})})
+    return out
+
+
+def breadth_calc(series, days, turnover):
+    """
+    自算市場寬度。series：{市場: [每檔股票 {日期: 還原收盤}]}（只含股票）；days：交易日（舊到新，最後 BREADTH_DAYS 天輸出）；
+    turnover：{市場: {日期: 成交額（億）}}。分母 = 當天有收盤、且之前（含當天）至少有 20／60 個收盤的股票。
+    回傳 {市場: {d, ma20, ma60（%）, n20, n60（分母）, hi, lo（20 日新高／新低家數）, vr（成交額 ÷ 前 20 日平均）, s20（MA20 比例走勢）, from}}。
+    20 日新高／新低：收盤高於（低於）前 20 個收盤的最高（最低）。
+    """
+    out_days = days[-BREADTH_DAYS:]
+    pos = {d: i for i, d in enumerate(out_days)}
+    out = {}
+    for m, stocks in series.items():
+        cnt = {k: [0] * len(out_days) for k in ("a20", "n20", "a60", "n60", "hi", "lo")}
+        for closes in stocks:
+            ds = sorted(closes)
+            px = [closes[d] for d in ds]
+            acc = [0.0]
+            for x in px:
+                acc.append(acc[-1] + x)
+            for j, d in enumerate(ds):
+                i = pos.get(d)
+                if i is None:
+                    continue
+                for n, a, k in ((20, "a20", "n20"), (60, "a60", "n60")):
+                    if j >= n - 1:
+                        cnt[k][i] += 1
+                        cnt[a][i] += px[j] > (acc[j + 1] - acc[j + 1 - n]) / n
+                if j >= 20:
+                    window = px[j - 20:j]
+                    cnt["hi"][i] += px[j] > max(window)
+                    cnt["lo"][i] += px[j] < min(window)
+        pct = lambda a, n: round(a / n * 100, 1) if n else None
+        tv = [turnover[m].get(d) for d in days]
+        prior = tv[-21:-1]
+        out[m] = {"d": str(out_days[-1]), "ma20": pct(cnt["a20"][-1], cnt["n20"][-1]), "ma60": pct(cnt["a60"][-1], cnt["n60"][-1]),
+                  "n20": cnt["n20"][-1], "n60": cnt["n60"][-1], "hi": cnt["hi"][-1], "lo": cnt["lo"][-1],
+                  "vr": round(tv[-1] / (sum(prior) / len(prior)), 2) if tv[-1] and len(prior) == 20 and all(prior) else None,
+                  "s20": [pct(a, n) for a, n in zip(cnt["a20"], cnt["n20"])], "from": str(out_days[0])}
+    return out
+
+
+def _load_breadth(cur, d):
+    """官方漲跌家數：{市場: {up, ul（漲停）, dn, dl（跌停）, fl（平盤）, nt（未成交）}}，只取資料日當天。"""
+    return {m: dict(zip(("up", "ul", "dn", "dl", "fl", "nt"), v)) for m, *v in cur.execute(
+        "SELECT market, up, up_limit, down, down_limit, flat, no_trade FROM market_breadth WHERE trade_date = ?", d)}
+
+
 def _load_chains(cur):
     """回傳 ({產業鏈: [代號...]}, {代號: [[產業鏈, 區段, [細項...]], ...]})。"""
     groups, tags = defaultdict(list), defaultdict(dict)
@@ -470,6 +595,11 @@ def export_all() -> float:
     mdates, mofficial, mstocks, metfs, mper = _load_margin(cur)
     first_m = min((ds[0] for ds in mdates.values()), default=latest_date)
     etf_px, etf_latest = _load_etfs(cur, first_m - timedelta(days=60))
+    holdings = _load_holdings(cur)
+    etf_names = {code: (name, m) for code, name, m in cur.execute("SELECT etf_code, etf_name, market_type FROM etfs")}
+    official_breadth = _load_breadth(cur, latest_date)
+    # 寬度輸出 BREADTH_DAYS 天，前面多 60 天給 MA60
+    b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
     status = build_status(cur, latest_date, now)
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
@@ -481,8 +611,16 @@ def export_all() -> float:
         for c in codes:
             concept_of[c].append(name)
 
+    # ── ETF 持股檔（台股 = stocks 表的代號）──
+    tw = set(stocks)
+    for code, (hdates, summary, held) in holdings.items():
+        _write(SITE_DATA_DIR / "etfs" / f"{code}.json", holding_export(code, hdates, summary, held, tw, *etf_names[code]))
+    active = stock_active(holdings, tw)
+
     # ── 個股檔 + 最新指標 ──
     window = set(dates)
+    b_from = b_days[0]
+    b_series, b_turnover = defaultdict(list), defaultdict(lambda: defaultdict(float))
     daily = {}            # 板塊計算用：{代號: {日期: {net, turnover, pct}}}
     snapshot = {}
     market = {m: {"up": 0, "down": 0, "flat": 0, "turnover": 0.0} for m in ("TWSE", "TPEx")}
@@ -524,7 +662,13 @@ def export_all() -> float:
             # 該市場有融資融券資料時才有 margin；null = 不在信用交易清單（無信用交易）
             **({"margin": stock_margin(mper.get(code, {}), mlast[info["market"]], m5[info["market"]])}
                if info["market"] in mlast else {}),
+            **({"active": active[code]} if code in active else {}),
         })
+        # 市場寬度：還原收盤（無成交日不列入）、成交額
+        b_series[info["market"]].append({d_[i]: float(c[i]) * af[i] for i in range(len(d_)) if d_[i] >= b_from and c[i] is not None})
+        for i in range(len(d_)):
+            if d_[i] >= b_from:
+                b_turnover[info["market"]][d_[i]] += (tv[i] or 0) / YI
 
         # 板塊計算用的近 WINDOW 天
         net_value, f_value, t_value, d_value = [], [], [], []
@@ -624,6 +768,9 @@ def export_all() -> float:
         "forecast": forecast,
         "margin": margin,
         "etfs": etf_block(etf_latest, etf_margin_rows),
+        "holdings": {code: {"d": str(hd[-1]), "n": etf_names[code][0]} for code, (hd, _, _) in holdings.items()},
+        # o：官方家數（資料日當天沒有為 null）；其餘為自算
+        "breadth": {m: {"o": official_breadth.get(m), **b} for m, b in breadth_calc(b_series, b_days, b_turnover).items()},
         "groups": {
             "industry": group_flows(industries, daily, dates, REPLAY),
             "chain": group_flows(chains, daily, dates, REPLAY),

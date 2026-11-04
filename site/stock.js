@@ -51,6 +51,17 @@ window.renderStock = async function (code) {
        ['券資比', MG.sr == null ? '--' : fmt(MG.sr, 2) + '%', '', '資料 ' + md(MG.d)],
        ['融資使用率', MG.mu == null ? '--' : fmt(MG.mu, 2) + '%', '', mgNote ? '次一營業日' + mgNote : '資料 ' + md(MG.d)]];
 
+  // E2-4：主動 ETF 持有（只含統一投信 4 檔；沒有任何一檔持有時不顯示）
+  const AC = data.active;
+  const acHTML = !AC ? '' : `<section class="sec card">
+      <div class="sec-h"><h2>主動 ETF 持有</h2><span class="muted small">目前只含統一投信 4 檔主動 ETF</span></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>張數</th><th>權重</th><th>1 日</th><th>5 日</th><th>持股日</th></tr></thead><tbody>` +
+      AC.map(a => `<tr><td class="nm"><a href="#/etf/${a.e}"><b>${esc(App.latest.holdings?.[a.e]?.n || a.e)}</b><span>${a.e}</span></a>${a.new ? '<i class="al al-new">新</i>' : ''}</td>
+        <td class="num">${fmt(a.l)}</td><td class="num">${fmt(a.w, 2)}%</td>
+        <td class="num ${cls(a.d1)}">${a.d1 == null ? '--' : sgn(a.d1, 0)}</td><td class="num ${cls(a.d5)}">${a.d5 == null ? '--' : sgn(a.d5, 0)}</td>
+        <td class="num">${md(a.d)}</td></tr>`).join('') +
+      '</tbody></table></div><div class="muted small" style="margin-top:6px">張數增減為經理人買賣（現金申購買回，不會按比例被動增減）；權重為占該 ETF 淨資產 %，含股價漲跌影響。</div></section>';
+
   $('#view').innerHTML = `
     <section class="sec card">
       <div class="s-head">
@@ -84,6 +95,7 @@ window.renderStock = async function (code) {
          ['外資5日', yi(s?.f5), cls(s?.f5), '至 ' + fd], ['投信5日', yi(s?.t5), cls(s?.t5), '至 ' + fd], ...mgCards]
         .map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
     </section>
+    ${acHTML}
 
     <section class="sec card">
       <div class="sec-h">

@@ -187,8 +187,17 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .rel{text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
 @media (max-width:520px){.g-stats .insti{grid-column:1/-1}}   /* 手機佔滿一列，三行數字不擠成 166px */
 .g-stats .margin{grid-column:1/-1}   /* 信用交易卡：行數多，佔滿一列 */
+.g-mk{grid-template-columns:repeat(4,minmax(0,1fr))}   /* 成交額 2 張＋三大法人 2 格寬，不留空欄 */
+.g-mk .insti{grid-column:span 2}
+.g-mk .margin{grid-column:span 2}                      /* 信用交易、市場寬度左右並排 */
+.g-mk .insti + .margin:last-child{grid-column:1/-1}    /* 只有其中一張時佔滿一列 */
+@media (max-width:900px){.g-mk .margin{grid-column:1/-1}}
+@media (max-width:720px){.g-mk{grid-template-columns:repeat(2,minmax(0,1fr))}.g-mk .insti{grid-column:1/-1}}
 .night-old{opacity:.7}               /* P20：前一夜盤淡化 */
 .al{display:inline-block;font-style:normal;font-size:10px;line-height:15px;padding:0 3px;border-radius:3px;margin-left:4px;color:#fff;vertical-align:1px}
 .al-d{background:var(--up)}.al-n{background:var(--amber)}
 .pill.al-d{background:var(--up-bg);border-color:var(--up);color:var(--up)}
 .pill.al-n{background:color-mix(in srgb,var(--amber) 15%,transparent);border-color:var(--amber);color:var(--amber)}
+.al-new{background:var(--blue)}                                  /* E2-4：新建倉 */
+.pill.hold{margin-left:6px;border-color:var(--blue);color:var(--blue)}
+.tbl .nm .pill{font-size:10px;margin-left:6px}

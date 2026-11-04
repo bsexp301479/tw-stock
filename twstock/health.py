@@ -2,7 +2,8 @@
 資料完整性：check、collect --catch-up、history、export 的 status 共用同一張資料集表與同一套判斷。
 
 一個資料集在某交易日「齊全」= 筆數 ≥ max(下限, 近 20 日中位數 × 80%)，且本益比類的三個欄位填充率都 ≥ 50%。
-不齊全時：當天 22:00 前算「尚未公布」，之後算「異常」。
+不齊全時：公布日 22:00 前算「尚未公布」，之後算「異常」。公布日通常是當天；跨境 ETF 持股落後 1 個交易日（delay）。
+since 之前的日期不算缺（ETF 上市前、開始收集前）。
 """
 import json
 import statistics
@@ -22,9 +23,15 @@ COUNT_RATIO, FILL_MIN, MEDIAN_DAYS = 0.8, 0.5, 20
 OK, PENDING, ABNORMAL = "ok", "pending", "abnormal"
 
 Row = namedtuple("Row", "n pe pb dy", defaults=(0, 0, 0, 0))
-Spec = namedtuple("Spec", "key label min_rows fills")
+Spec = namedtuple("Spec", "key label min_rows fills since delay", defaults=(None, 0))
 Item = namedtuple("Item", "key label date status n reason")
 FILLS = (("pe", "本益比"), ("pb", "淨值比"), ("dy", "殖利率"))
+
+# 統一投信主動型 ETF（第 5 輪）：代號 → (基金代碼, 持股公布落後的交易日數, 上市日)
+# 上市日 = etf_daily 最早一筆（2025-10-30 之前上市的填 None）；跨境 ETF 的持股日是前一個交易日
+HOLDINGS = {"00981A": ("49YTW", 0, None), "00403A": ("63YTW", 0, date(2026, 5, 12)),
+            "00411A": ("64YTW", 1, date(2026, 8, 26)), "00988A": ("61YTW", 1, date(2025, 11, 5))}
+BREADTH_FROM = date(2026, 11, 3)        # 官方漲跌家數不補歷史，從這天開始收集
 
 SPECS = (
     Spec("prices.TWSE", "上市行情", 800, False), Spec("prices.TPEx", "上櫃行情", 650, False),
@@ -35,7 +42,8 @@ SPECS = (
     Spec("futures", "台指期", 1, False), Spec("futures_oi", "期貨法人", 9, False),
     Spec("etf.TWSE", "上市ETF", 150, False), Spec("etf.TPEx", "上櫃ETF", 80, False),
     Spec("margin.TWSE", "上市融資融券", 800, False), Spec("margin.TPEx", "上櫃融資融券", 550, False),
-)
+    Spec("breadth.TWSE", "上市漲跌家數", 1, False, BREADTH_FROM), Spec("breadth.TPEx", "上櫃漲跌家數", 1, False, BREADTH_FROM),
+) + tuple(Spec(f"holdings.{c}", f"{c}持股", 1, False, since, delay) for c, (_, delay, since) in HOLDINGS.items())
 SPEC = {s.key: s for s in SPECS}
 
 _MARKET_SQL = {
@@ -61,6 +69,15 @@ def load_snapshot(cur, start: date, end: date) -> dict:
     for d, market, n in cur.execute("SELECT x.trade_date, e.market_type, COUNT(*) FROM etf_daily x JOIN etfs e ON e.etf_id = x.etf_id "
                                     "WHERE x.trade_date BETWEEN ? AND ? GROUP BY x.trade_date, e.market_type", start, end).fetchall():
         snap[f"etf.{market}"][d] = Row(n)
+    # 持股筆數 = 股票檔數（期貨不算）
+    for d, code, n in cur.execute("SELECT h.hold_date, e.etf_code, COUNT(*) FROM etf_holdings h JOIN etfs e ON e.etf_id = h.etf_id "
+                                  "WHERE h.asset_type = 'ST' AND h.hold_date BETWEEN ? AND ? GROUP BY h.hold_date, e.etf_code",
+                                  start, end).fetchall():
+        if f"holdings.{code}" in snap:
+            snap[f"holdings.{code}"][d] = Row(n)
+    for d, market, n in cur.execute("SELECT trade_date, market, COUNT(*) FROM market_breadth WHERE trade_date BETWEEN ? AND ? "
+                                    "GROUP BY trade_date, market", start, end).fetchall():
+        snap[f"breadth.{market}"][d] = Row(n)
     for key, sql in (("amount", "SELECT trade_date, COUNT(*) FROM insti_amount WHERE trade_date BETWEEN ? AND ? GROUP BY trade_date"),
                      # 只看日盤：夜盤的日期是歸屬日，不代表該日資料已齊
                      ("futures", "SELECT trade_date, COUNT(*) FROM futures_daily_prices WHERE commodity_id = 'TX' AND session = 'DAY' "
@@ -95,8 +112,15 @@ def assess(spec: Spec, row: Row, median: float):
     return None
 
 
-def missing_keys(d: date, keys, snap: dict, med: dict) -> tuple:
-    return tuple(k for k in keys if assess(SPEC[k], snap[k].get(d, Row()), med[k]))
+def is_due(spec: Spec, d: date, days=None) -> bool:
+    """這天該不該有資料：since 之前不算；delay > 0 要等 days（交易日，舊到新）裡再過 delay 天才公布。days=None 不看 delay。"""
+    if spec.since and d < spec.since:
+        return False
+    return not spec.delay or days is None or (d in days and days.index(d) + spec.delay < len(days))
+
+
+def missing_keys(d: date, keys, snap: dict, med: dict, days=None) -> tuple:
+    return tuple(k for k in keys if is_due(SPEC[k], d, days) and assess(SPEC[k], snap[k].get(d, Row()), med[k]))
 
 
 def due_days(now: datetime, n: int, closed: set) -> list:
@@ -110,7 +134,9 @@ def evaluate(days, snap: dict, now: datetime, errors=None) -> list:
     """每個資料集 × 每個交易日的狀態。errors = {(鍵, 日期) 或 鍵: 例外}：抓取失敗一律算異常，不論時間。"""
     errors, med, items = errors or {}, medians(snap), []
     for spec in SPECS:
-        for d in days:
+        for i, d in enumerate(days):
+            if not is_due(spec, d, days):
+                continue
             row = snap[spec.key].get(d, Row())
             bad = assess(spec, row, med[spec.key])
             # (鍵, 日期)：這天抓取失敗；鍵：範圍查詢失敗（期貨、櫃買指數），只影響還缺資料的日期
@@ -119,7 +145,7 @@ def evaluate(days, snap: dict, now: datetime, errors=None) -> list:
                 items.append(Item(spec.key, spec.label, d, ABNORMAL, row.n, ("error", str(err))))
             elif bad is None:
                 items.append(Item(spec.key, spec.label, d, OK, row.n, None))
-            elif d == now.date() and now.time() < DEADLINE:
+            elif days[i + spec.delay] == now.date() and now.time() < DEADLINE:    # 公布日當天
                 items.append(Item(spec.key, spec.label, d, PENDING, row.n, bad))
             else:
                 items.append(Item(spec.key, spec.label, d, ABNORMAL, row.n, bad))
@@ -136,12 +162,16 @@ def _day_list(days) -> str:
 
 
 def all_missing_days(items) -> list:
-    """所有資料集都是「異常且 0 筆」的交易日（整天沒有收集）；休市日本來就不在 items 裡。"""
+    """
+    當天公布的資料集全部「異常且 0 筆」的交易日（整天沒有收集）；休市日本來就不在 items 裡。
+    落後公布的持股（delay）是隔天才收，不列入判斷。
+    """
     by_day = {}
     for i in items:
-        by_day.setdefault(i.date, []).append(i)
+        if not SPEC[i.key].delay:
+            by_day.setdefault(i.date, []).append(i)
     return sorted(d for d, its in by_day.items()
-                  if len(its) == len(SPECS) and all(i.status == ABNORMAL and not i.n for i in its))
+                  if len(its) == sum(is_due(s, d) for s in SPECS if not s.delay) and all(i.status == ABNORMAL and not i.n for i in its))
 
 
 def problem_lines(items, last_run=None) -> list:
@@ -336,12 +366,19 @@ def collected_at(cur, state: dict) -> tuple:
     return (t.isoformat(timespec="seconds") + "+08:00", "db") if t else (None, "db")
 
 
-def dataset_status(snap: dict, data_date: date, now: datetime) -> list:
-    """以「資料日」為基準判斷各資料集（整站落後由橫幅處理）；m 只在異常時有。"""
+def dataset_status(snap: dict, data_date: date, now: datetime, closed=None) -> list:
+    """
+    以「資料日」為基準判斷各資料集（整站落後由橫幅處理）；m 只在異常時有。
+    落後公布的持股（delay）看資料日往前 delay 個交易日（closed = 休市日；未提供時只排除週末與內建休市表）。
+    """
     med, out = medians(snap), []
+    days = trading_days(data_date - timedelta(days=45), data_date, closed)
     for spec in SPECS:
+        target = days[-1 - spec.delay] if spec.delay else data_date
+        if not is_due(spec, target):
+            continue
         rows = snap[spec.key]
-        bad = assess(spec, rows.get(data_date, Row()), med[spec.key])
+        bad = assess(spec, rows.get(target, Row()), med[spec.key])
         good = [d for d in sorted(rows) if not assess(spec, rows[d], med[spec.key])]
         last = good[-1] if good else None
         item = {"k": spec.key, "n": spec.label, "d": str(last) if last else None, "s": OK}
@@ -349,7 +386,7 @@ def dataset_status(snap: dict, data_date: date, now: datetime) -> list:
             item["s"] = PENDING if data_date == now.date() and now.time() < DEADLINE else ABNORMAL
         if item["s"] == ABNORMAL:
             if bad[0].startswith("fill"):
-                item["m"] = f"{spec.label} {data_date:%m/%d} {bad[1].split('（')[0]}"
+                item["m"] = f"{spec.label} {target:%m/%d} {bad[1].split('（')[0]}"
             else:
                 item["m"] = f"{spec.label}停在 {last:%m/%d}" if last else f"{spec.label}近期資料不足"
         out.append(item)
@@ -366,5 +403,5 @@ def build_status(cur, data_date: date, now: datetime) -> dict:
     at, src = collected_at(cur, state)
     snap = load_snapshot(cur, data_date - timedelta(days=45), data_date)
     return {"collected_at": at, "collected_src": src, "exported_at": now.isoformat(timespec="seconds"),
-            "datasets": dataset_status(snap, data_date, now),
+            "datasets": dataset_status(snap, data_date, now, closed),
             "closed": site_closed(closed, data_date)}

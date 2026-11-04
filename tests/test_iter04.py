@@ -513,7 +513,7 @@ def test_t25_banner_text():
 
 def test_t26_specs_and_keys():
     keys = [s.key for s in health.SPECS]
-    assert keys[-4:] == ["etf.TWSE", "etf.TPEx", "margin.TWSE", "margin.TPEx"]
+    assert keys[keys.index("etf.TWSE"):][:4] == ["etf.TWSE", "etf.TPEx", "margin.TWSE", "margin.TPEx"]     # 第 5 輪之後還有新鍵
     assert daily.DAY_KEYS.index("etf.TWSE") < daily.DAY_KEYS.index("margin.TWSE")
     assert set(daily.DAY_KEYS) | {"index.TPEX", "futures", "futures_oi"} == set(keys)
     assert daily.ALL_DATASETS == ("prices", "pe", "insti", "etf", "margin")

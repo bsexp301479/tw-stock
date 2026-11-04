@@ -48,7 +48,7 @@ def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, reven
         return plan
     med = medians(snap)
     for d in days:
-        keys = missing_keys(d, DAY_KEYS, snap, med)
+        keys = missing_keys(d, DAY_KEYS, snap, med, days)       # 跨境 ETF 持股要等下一個交易日才抓
         if keys:
             plan["by_date"].append((d, keys))
     plan["tpex_months"] = sorted({month_key(d) for d in days if missing_keys(d, ("index.TPEX",), snap, med)})
@@ -306,7 +306,7 @@ def _run_locked(days, date_, no_revenue, no_export, notify, now, export_all) -> 
     # closed 的起點要和匯出時相同（export 的資料日是兩市場的最新日），否則只有上櫃公布時會誤判為變動
     site_date = max((d for k in ("prices.TWSE", "prices.TPEx") for d, r in after[k].items() if r.n), default=None)
     need_export = not no_export and (date_ is not None or changed or
-                                     (data_date is not None and status_changed(health.dataset_status(after, data_date, now),
+                                     (data_date is not None and status_changed(health.dataset_status(after, data_date, now, closed),
                                                                                health.site_closed(closed, site_date))))
     if need_export:
         export_seconds = None

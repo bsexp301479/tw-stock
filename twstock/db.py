@@ -368,6 +368,61 @@ DDL = [
         CONSTRAINT UQ_margin_market UNIQUE (trade_date, market)
     )
     """,
+    # 主動型 ETF 持股（第 5 輪；統一投信 GetPCF）：以持股日為準，代號保留官方原文（海外股票 'BE US'、期貨 'TX'）
+    """
+    IF OBJECT_ID('etf_holdings') IS NULL
+    CREATE TABLE etf_holdings (
+        id          BIGINT IDENTITY(1,1) PRIMARY KEY,
+        etf_id      INT            NOT NULL REFERENCES etfs(etf_id),
+        hold_date   DATE           NOT NULL,     -- 持股日（回應的 TranDate）
+        asset_type  NVARCHAR(10)   NOT NULL,     -- 官方 AssetCode：ST 股票、GD 期貨
+        code        NVARCHAR(20)   NOT NULL,
+        month       NVARCHAR(10)   NOT NULL DEFAULT '',  -- 期貨契約年月（2026/11），其他為空字串
+        name        NVARCHAR(100)  NOT NULL,
+        shares      BIGINT         NOT NULL,     -- 股；期貨為口
+        amount      DECIMAL(20,2)  NULL,         -- 市值或名目本金（原幣，見 currency）
+        weight      DECIMAL(7,2)   NULL,         -- 占淨資產 %
+        currency    NVARCHAR(5)    NOT NULL,     -- NTD、USD…
+        created_at  DATETIME       NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_etf_holdings UNIQUE (etf_id, hold_date, asset_type, code, month)
+    )
+    """,
+    """
+    IF OBJECT_ID('etf_holding_summary') IS NULL
+    CREATE TABLE etf_holding_summary (
+        id             INT IDENTITY(1,1) PRIMARY KEY,
+        etf_id         INT            NOT NULL REFERENCES etfs(etf_id),
+        hold_date      DATE           NOT NULL,
+        post_date      DATE           NOT NULL,  -- 清單生效日（請求參數）
+        nav            DECIMAL(20,2)  NOT NULL,  -- 基金淨資產（元）
+        units          BIGINT         NULL,      -- 已發行受益權單位
+        nav_unit       DECIMAL(12,4)  NULL,      -- 每單位淨值（元）
+        n_stocks       INT            NOT NULL,
+        stock_weight   DECIMAL(7,2)   NULL,      -- 股票權重合計 %
+        futures_lots   INT            NOT NULL,
+        futures_amount DECIMAL(20,2)  NOT NULL,  -- 期貨名目本金（元）
+        edited_at      DATETIME2(0)   NULL,      -- 投信更新時間（台灣時間）
+        created_at     DATETIME       NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_etf_holding_summary UNIQUE (etf_id, hold_date)
+    )
+    """,
+    # 官方漲跌家數（第 5 輪；股票）：上市 MI_INDEX「漲跌證券數合計」、上櫃 afterTrading/highlight
+    """
+    IF OBJECT_ID('market_breadth') IS NULL
+    CREATE TABLE market_breadth (
+        id          INT IDENTITY(1,1) PRIMARY KEY,
+        trade_date  DATE          NOT NULL,
+        market      NVARCHAR(10)  NOT NULL CHECK (market IN ('TWSE','TPEx')),
+        up          INT           NOT NULL,
+        up_limit    INT           NULL,
+        down        INT           NOT NULL,
+        down_limit  INT           NULL,
+        flat        INT           NOT NULL,
+        no_trade    INT           NULL,      -- 未成交（上櫃含暫停交易）
+        created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_market_breadth UNIQUE (trade_date, market)
+    )
+    """,
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -383,6 +438,8 @@ DDL = [
     "CREATE INDEX IX_margin_trades_date ON margin_trades(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_daily_date') "
     "CREATE INDEX IX_etf_daily_date ON etf_daily(trade_date)",
+    "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_holdings_code') "
+    "CREATE INDEX IX_etf_holdings_code ON etf_holdings(code, hold_date)",
 ]
 
 
@@ -403,4 +460,4 @@ def setup_database():
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
-          "etfs、etf_daily、margin_trades、etf_margin、margin_market")
+          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth")

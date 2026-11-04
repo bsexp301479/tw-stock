@@ -102,7 +102,8 @@ def _full_snapshot(days, skip=()):
     ok = {"prices.TWSE": Row(1086), "prices.TPEx": Row(889), "pe.TWSE": Row(1082, 870, 1082, 1082),
           "pe.TPEx": Row(888, 675, 888, 888), "insti.TWSE": Row(1077), "insti.TPEx": Row(784), "amount": Row(6),
           "index.TAIEX": Row(1), "index.TPEX": Row(1), "futures": Row(6), "futures_oi": Row(9),
-          "etf.TWSE": Row(250), "etf.TPEx": Row(120), "margin.TWSE": Row(1100), "margin.TPEx": Row(900)}   # 第 4 輪
+          "etf.TWSE": Row(250), "etf.TPEx": Row(120), "margin.TWSE": Row(1100), "margin.TPEx": Row(900),   # 第 4 輪
+          "breadth.TWSE": Row(1), "breadth.TPEx": Row(1), **{f"holdings.{c}": Row(50) for c in health.HOLDINGS}}   # 第 5 輪
     return {k: {d: v for d in days if (k, d) not in skip} for k, v in ok.items()}
 
 
@@ -357,7 +358,7 @@ INX_FIELDS = ["日期", "開市", "最高", "最低", "收市", "漲/跌"]
 FUT_HEAD = "交易日期,契約,到期月份(週別),開盤價,最高價,最低價,收盤價,漲跌價,漲跌%,成交量,結算價,未沖銷契約數,最後最佳買價,最後最佳賣價,歷史最高價,歷史最低價,是否因訊息面暫停交易,交易時段,價差對單式委託成交量\r\n"
 OI_HEAD = "日期,商品名稱,身份別,多方交易口數,多方交易契約金額(千元),空方交易口數,空方交易契約金額(千元),多空交易口數淨額,多空交易契約金額淨額(千元),多方未平倉口數,多方未平倉契約金額(千元),空方未平倉口數,空方未平倉契約金額(千元),多空未平倉口數淨額,多空未平倉契約金額淨額(千元)\r\n"
 ALL_EP = ("MI_INDEX", "BWIBBU_d", "fund/T86", "BFI82U", "dailyQuotes", "peQryDate", "dailyTrade", "futDataDown", "futContractsDateDown",
-          "MI_MARGN", "margin/balance")
+          "MI_MARGN", "margin/balance", "highlight", "GetPCF")     # 第 5 輪：GetPCF 的日期是持股日
 # 第 4 輪：行情回應含 ETF 列（另有權證、TDR 等其他證券，兩邊都不可寫入）；融資融券回應含股票與 ETF
 TWSE_ETFS = [f"00{n:03d}" for n in range(100, 350)]          # 250 檔，如 00100
 TPEX_ETFS = [f"00{n:03d}B" for n in range(700, 820)]         # 120 檔，如 00700B
@@ -399,8 +400,8 @@ class World:
         return [p for p, _ in self.requests]
 
     # ── HTTP ──
-    def http(self, method, url, timeout=30, params=None, data=None):
-        form = params or data or {}
+    def http(self, method, url, timeout=30, params=None, data=None, json=None):
+        form = params or data or json or {}
         path = re.sub(r"https://[^/]+", "", url)
         self.requests.append((path, form))
         for ep in self.down:
@@ -411,7 +412,7 @@ class World:
         for key, fn in (("MI_INDEX", self._mi), ("BWIBBU_d", self._bwi), ("fund/T86", self._t86), ("BFI82U", self._bfi),
                         ("dailyQuotes", self._quotes), ("peQryDate", self._pe), ("dailyTrade", self._tpex_insti),
                         ("indexInfo/inx", self._inx), ("futDataDown", self._fut), ("futContractsDateDown", self._oi),
-                        ("MI_MARGN", self._mgn), ("margin/balance", self._tpex_mgn)):
+                        ("MI_MARGN", self._mgn), ("margin/balance", self._tpex_mgn), ("highlight", self._hl), ("GetPCF", self._pcf)):
             if key in url:
                 return fn(form)
         return Resp([]) if "openapi" in url else Resp({"stat": "沒有資料", "tables": []})
@@ -433,7 +434,30 @@ class World:
         rows = [[c, "名", "1000", "10", "10000", "10", "11", "9", "10.5", "+", "0.5"] for c in TWSE_CODES + etfs + OTHERS]
         idx = {"title": "價格指數(臺灣證券交易所)", "fields": ["指數", "收盤指數", "漲跌(+/-)", "漲跌點數", "漲跌百分比(%)"],
                "data": [["發行量加權股價指數", "45,211.83", "<p>-</p>", "1,156.50", "-2.49"]]}
-        return Resp({"stat": "OK", "tables": [idx, {"fields": fields, "data": rows}]})
+        breadth = {"title": "漲跌證券數合計", "fields": ["類型", "整體市場", "股票"],                     # 第 5 輪
+                   "data": [["上漲(漲停)", "1(0)", "58(2)"], ["下跌(跌停)", "1(0)", "1,000(33)"], ["持平", "1", "22"], ["未成交", "1", "6"]]}
+        return Resp({"stat": "OK", "tables": [idx, breadth, {"fields": fields, "data": rows}]})
+
+    def _hl(self, form):
+        if self._no("highlight", form):
+            return Resp({"stat": "ok", "tables": []})
+        fields = ["上漲家數", "漲停家數", "下跌家數", "跌停家數", "平盤家數", "未成交(含暫停交易)家數"]
+        return Resp({"stat": "ok", "tables": [{"fields": fields, "data": [["59", "11", "782", "41", "32", "24"]]}]})
+
+    def _pcf(self, form):
+        """date 是生效日（民國）：往回第 delay + 1 個交易日才是持股日。"""
+        y, m, dd = form["date"].split("/")
+        post = date(int(y) + 1911, int(m), int(dd))
+        delay = next(v[1] for v in health.HOLDINGS.values() if v[0] == form["fundCode"])
+        hold = tradingcal.trading_days(post - timedelta(days=30), post - timedelta(days=1), CLOSED)[-1 - delay]
+        if hold not in self.published["GetPCF"]:
+            return Resp({"pcf": [{"PCFCode": "NAV", "TranDate": "/Date(-62135596800000)/", "PostDate": "/Date(-62135596800000)/",
+                                  "Amount": 0}], "fund": {}, "asset": []})
+        t = f"{hold}T00:00:00"
+        stocks = [{"TranDate": t, "DetailCode": str(c), "DetailName": "名", "Share": 1000.0, "Amount": 1.0, "NavRate": 1.0,
+                   "MoneyType": "NTD", "MTH": "", "EditTime": f"{hold}T16:30:00"} for c in range(1100, 1150)]
+        return Resp({"pcf": [{"PCFCode": "NAV", "TranDate": t, "PostDate": f"{post}T00:00:00", "Amount": 1e9}], "fund": {},
+                     "asset": [{"AssetCode": "ST", "Details": stocks}, {"AssetCode": "GD", "Details": None}]})
 
     def _bwi(self, form):
         if self._no("BWIBBU_d", form):
@@ -539,6 +563,10 @@ class World:
                 if mine:
                     cnt = lambda f: sum(r.get(f) is not None for r in mine)
                     self.rows[f"{name}.{mk}"][pd] = Row(len(mine), cnt("pe_ratio"), cnt("pb_ratio"), cnt("dividend_yield"))
+        elif table == "market_breadth":                         # 第 5 輪
+            self.rows[f"breadth.{rows[0]['market']}"][date.fromisoformat(rows[0]["trade_date"])] = Row(1)
+        elif table == "etf_holding_summary":                    # etf_id 就是 ETF 代號（見 FakeCursor）
+            self.rows[f"holdings.{params[1]}"][date.fromisoformat(rows[0]["hold_date"])] = Row(rows[0]["n_stocks"])
         elif table == "market_index":
             for r in rows:
                 self.rows[f"index.{r['index_code']}"][date.fromisoformat(r["trade_date"])] = Row(1)
@@ -572,6 +600,8 @@ class FakeCursor:
             w.apply_merge(m.group(1), sql, params)
         elif m:
             w.merges.append("stocks")
+        elif "SELECT etf_id FROM etfs WHERE etf_code" in sql:
+            self.result = [(params[0],)]
         elif "SELECT MAX(trade_date) FROM daily_prices" in sql:
             ds = sorted(w.rows["prices.TWSE"])
             self.result = [(ds[-1] if ds else None,)]
