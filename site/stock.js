@@ -51,10 +51,10 @@ window.renderStock = async function (code) {
        ['券資比', MG.sr == null ? '--' : fmt(MG.sr, 2) + '%', '', '資料 ' + md(MG.d)],
        ['融資使用率', MG.mu == null ? '--' : fmt(MG.mu, 2) + '%', '', mgNote ? '次一營業日' + mgNote : '資料 ' + md(MG.d)]];
 
-  // E2-4：主動 ETF 持有（只含統一投信 4 檔；沒有任何一檔持有時不顯示）
+  // E2-4：主動 ETF 持有（統一、群益投信 8 檔；沒有任何一檔持有時不顯示）
   const AC = data.active;
   const acHTML = !AC ? '' : `<section class="sec card">
-      <div class="sec-h"><h2>主動 ETF 持有</h2><span class="muted small">目前只含統一投信 4 檔主動 ETF</span></div>
+      <div class="sec-h"><h2>主動 ETF 持有</h2><span class="muted small">目前只含統一、群益投信 8 檔主動 ETF</span></div>
       <div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>張數</th><th>權重</th><th>1 日</th><th>5 日</th><th>持股日</th></tr></thead><tbody>` +
       AC.map(a => `<tr><td class="nm"><a href="#/etf/${a.e}"><b>${esc(App.latest.holdings?.[a.e]?.n || a.e)}</b><span>${a.e}</span></a>${a.new ? '<i class="al al-new">新</i>' : ''}</td>
         <td class="num">${fmt(a.l)}</td><td class="num">${fmt(a.w, 2)}%</td>

@@ -155,8 +155,8 @@ def test_e2_real_file():
 # ─── E2-1：資料集（since、delay）──────────────────────────
 def test_e2_specs():
     keys = [s.key for s in health.SPECS]
-    assert keys[-6:] == ["breadth.TWSE", "breadth.TPEx", *HKEYS]
-    assert daily.DAY_KEYS[-6:] == ("breadth.TWSE", "breadth.TPEx", *HKEYS)
+    assert keys[-len(HKEYS) - 2:] == ["breadth.TWSE", "breadth.TPEx", *HKEYS]          # 第 7 輪：持股 8 檔
+    assert daily.DAY_KEYS[-len(HKEYS) - 2:] == ("breadth.TWSE", "breadth.TPEx", *HKEYS)
     assert set(daily.DAY_KEYS) | {"index.TPEX", "futures", "futures_oi"} == set(keys)
     assert daily.DATASET_KEYS["holdings"] == tuple(HKEYS) and "holdings" not in daily.ALL_DATASETS     # 只有 --only holdings 才補
     assert health.SPEC["holdings.00411A"].since == D(8, 26) and health.SPEC["holdings.00411A"].delay == 1
@@ -294,7 +294,8 @@ def test_e2_m6_before_listing():
     ok, out = _history(w, D(8, 24), D(8, 28))
     assert ok and "Traceback" not in out
     assert [_hold(f) for f in _pcf_hits(w, "64YTW")] == [D(8, 26), D(8, 27), D(8, 28)]     # 00411A 8/26 上市，之前不請求
-    assert len(_pcf_hits(w, "49YTW")) == 5 and all(D(8, 26) in w.rows[k] for k in HKEYS)
+    assert len(_pcf_hits(w, "49YTW")) == 5 and all(D(8, 26) in w.rows[k] for k in HKEYS
+                                                   if (health.SPEC[k].since or D(8, 26)) <= D(8, 26))   # 第 7 輪：00415A 10/20 上市
     ok, out = _history(w, D(8, 24), D(8, 28))
     assert ok and len(_pcf_hits(w)) == 18 and "待抓 0 天" in out             # 重跑：待抓 0 天、0 請求
 

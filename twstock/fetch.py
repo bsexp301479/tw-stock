@@ -70,6 +70,7 @@ MIN_INTERVAL = {
     "www.taifex.com.tw":   3.0,
     "ic.tpex.org.tw":      2.0,
     "www.ezmoney.com.tw":  3.0,   # 統一投信（主動型 ETF 持股）
+    "www.capitalfund.com.tw": 3.0,  # 群益投信（主動型 ETF 持股，第 7 輪）
 }
 DEFAULT_INTERVAL = 3.0
 RETRY_BACKOFF = (30, 60, 120)   # 失敗後依序等待秒數，用完仍失敗就放棄

@@ -37,6 +37,7 @@ CAP_DAYS = 90
 MARGIN_DAYS = 20               # 首頁上市股票融資增減迷你柱天數
 COVER_MIN = 99.0               # 維持率分子涵蓋的融資張數 ÷ 官方融資張數（%）低於此值不顯示
 HOLD_DAYS = 60                 # ETF 持股 JSON 的持股日數
+ACTIVE_TOP = 20                # 主動 ETF 彙總排行（第 7 輪 F7-2）各區塊的列數
 BREADTH_DAYS = 60              # 市場寬度走勢天數
 _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
@@ -393,8 +394,8 @@ def holding_export(code, dates, summary, held, tw, name, market):
     """etfs/{代號}.json。金額單位：億元；nu 每單位淨值（元）；sw 股票權重合計（%）；fl 期貨口數。"""
     nav, nu, n, sw, fl, fa = summary[dates[-1]]
     rows, out = holding_table(dates, held, tw)
-    fund, delay, _ = HOLDINGS[code]
-    return {"code": code, "n": name, "m": market, "fund": fund, "delay": delay, "dates": [str(d) for d in dates],
+    f = HOLDINGS[code]
+    return {"code": code, "n": name, "m": market, "fund": f.fund, "delay": f.delay, "trust": f.trust, "dates": [str(d) for d in dates],
             "sum": {"d": str(dates[-1]), "nav": _f(float(nav) / YI), "nu": _f(nu), "n": n, "sw": _f(sw),
                     "fl": fl, "fa": _f(float(fa) / YI)},
             "rows": rows, "out": out}
@@ -409,6 +410,61 @@ def stock_active(holdings, tw):
                 out[r["c"]].append({"e": code, "d": str(dates[-1]), "l": r["l"], "w": r["pw"], "d1": r["d1"], "d5": r["d5"],
                                     **({"new": 1} if r.get("new") else {})})
     return out
+
+
+def active_rank(holdings, tw, close):
+    """
+    latest.json 的 active_rank（第 7 輪 F7-2）：已收持股的主動 ETF 合計，只算台股。
+    每檔用自己的最新持股日；同一 delay 的 ETF 中最新持股日落後的（當天還沒收到）不列入，放進 stale。
+    張數與 holding_table 相同（股 ÷ 1000 四捨五入）；估算金額 a、市值 v（億）= 張 × 1000 × 該 ETF 持股日收盤
+    （無成交用最近收盤，close 回傳 None 的股票不進買賣超排行）。只有一個持股日的 ETF 只計入 held。
+    回傳 {etfs, stale: [{c, t, d}], buy, sell: [{c, n, a, l1, l5, e: [{e, d1, new|out}]}], held: [{c, n, k, l, v, e: [{e, w}]}]}。
+    """
+    newest = {}
+    for code, (dates, _, _) in holdings.items():
+        k = HOLDINGS[code].delay
+        newest[k] = max(newest.get(k, dates[-1]), dates[-1])
+    etfs, stale, names = [], [], {}
+    flow = defaultdict(lambda: {"a": 0.0, "l1": 0, "l5": None, "e": [], "px": True})
+    held_by = defaultdict(lambda: {"k": 0, "l": 0, "v": 0.0, "e": []})
+    for code, (dates, _, held) in sorted(holdings.items()):
+        last = dates[-1]
+        info = {"c": code, "t": HOLDINGS[code].trust, "d": str(last)}
+        if last != newest[HOLDINGS[code].delay]:
+            stale.append(info)
+            continue
+        etfs.append(info)
+        prev, d5 = dates[-2] if len(dates) > 1 else None, dates[-6] if len(dates) > 5 else None
+        lots = lambda c, d: round(held[d][("ST", c)][1] / 1000) if d and ("ST", c) in held[d] else 0
+        codes = {c for d in (last, prev) if d for (kind, c) in held[d] if kind == "ST" and c in tw}
+        for c in codes:
+            names.setdefault(c, (held[last].get(("ST", c)) or held[prev][("ST", c)])[0])
+            now, px = lots(c, last), close(c, last)
+            if now:
+                h = held_by[c]
+                h["k"] += 1
+                h["l"] += now
+                h["v"] += now * 1000 * px / YI if px else 0
+                h["e"].append({"e": code, "w": _f(held[last][("ST", c)][2])})
+            if d5:                                              # 5 日：當天沒變動的 ETF 也要算（設計規則 5）
+                flow[c]["l5"] = (flow[c]["l5"] or 0) + now - lots(c, d5)
+            if not prev or now == lots(c, prev):
+                continue
+            before, f = lots(c, prev), flow[c]
+            d1 = now - before
+            f["l1"] += d1
+            if px:
+                f["a"] += d1 * 1000 * px / YI
+            else:
+                f["px"] = False
+            f["e"].append({"e": code, "d1": d1, **({"new": 1} if not before else {"out": 1} if not now else {})})
+    out = lambda c, f: {"c": c, "n": names[c], "a": _f(f["a"]), "l1": f["l1"], "l5": f["l5"], "e": f["e"]}
+    ok = [(c, f) for c, f in flow.items() if f["px"]]          # 排序、過濾用未四捨五入的金額（小額加減碼不會變成 0 而消失）
+    buy = [out(c, f) for c, f in sorted((x for x in ok if x[1]["a"] > 0), key=lambda x: (-x[1]["a"], x[0]))]
+    sell = [out(c, f) for c, f in sorted((x for x in ok if x[1]["a"] < 0), key=lambda x: (x[1]["a"], x[0]))]
+    held_rows = [{"c": c, "n": names[c], "k": h["k"], "l": h["l"], "v": _f(h["v"]), "e": h["e"]} for c, h in held_by.items()]
+    held_rows.sort(key=lambda r: (-r["k"], -r["v"], r["c"]))
+    return {"etfs": etfs, "stale": stale, "buy": buy[:ACTIVE_TOP], "sell": sell[:ACTIVE_TOP], "held": held_rows[:ACTIVE_TOP]}
 
 
 def breadth_calc(series, days, turnover):
@@ -769,6 +825,7 @@ def export_all() -> float:
         "margin": margin,
         "etfs": etf_block(etf_latest, etf_margin_rows),
         "holdings": {code: {"d": str(hd[-1]), "n": etf_names[code][0]} for code, (hd, _, _) in holdings.items()},
+        "active_rank": active_rank(holdings, tw, lambda c, d: close(c, d, False)) if holdings else None,   # 第 7 輪 F7-2
         # o：官方家數（資料日當天沒有為 null）；其餘為自算
         "breadth": {m: {"o": official_breadth.get(m), **b} for m, b in breadth_calc(b_series, b_days, b_turnover).items()},
         "groups": {

@@ -8,6 +8,8 @@
   A：清單已公布（PostDate = 要求的生效日），持股日卻是別天 → 這天沒有持股清單（海外休市、春節前）
   B：彙總的持股日就是這天，明細卻是空的 → 只有彙總（臺股臨時休市前一日）；公布當晚可能只是還沒寫完，到生效日才確定
 尚未公布的回應 pcf 日期都是西元 1 年、金額 0，不會落入 A、B。
+第 7 輪：群益投信 buyback（parse_capital）。日期語意相同（date1 生效日、date2 持股日）；明細只有股數與權重（沒有市值）。
+尚未公布與非交易日都回 code 400「沒有查詢到」，只請求 tradingcal 算出的生效日，所以一律當成尚未公布。
 """
 from collections import namedtuple
 from datetime import date, datetime, timedelta
@@ -18,6 +20,8 @@ from ..health import HOLDINGS
 from ..tradingcal import trading_days
 
 URL = "https://www.ezmoney.com.tw/ETF/Transaction/GetPCF"
+CAP_URL = "https://www.capitalfund.com.tw/CFWeb/api/etf/buyback"
+CAP_NONE = "沒有查詢到"                                   # 群益「沒有查詢到該條件的數據」：尚未公布或非交易日
 Gap = namedtuple("Gap", "reason src_date post_date nav")
 GAP_REASON = {"A": "投信當日無持股清單", "B": "投信只公布彙總、沒有明細"}
 _EPOCH = datetime(1970, 1, 1) + timedelta(hours=8)      # /Date(毫秒)/ 是 UTC，換成台灣時間
@@ -80,10 +84,48 @@ def parse_pcf(data: dict, d: date, post: date = None, today: date = None):
     return summary, rows
 
 
+def cap_date(post: date) -> str:
+    """群益的日期參數：官網送的是 JavaScript Date（台灣時間 0 點）的 ISO 字串，生效日 6/2 → '2026-06-01T16:00:00.000Z'。"""
+    return f"{post - timedelta(days=1)}T16:00:00.000Z"
+
+
+def parse_capital(data: dict, d: date, post: date, today: date = None):
+    """
+    群益 buyback 回應 → 與 parse_pcf 相同的 (彙總, 明細列)／None／Gap。
+    code 400 且訊息是「沒有查詢到」→ None（尚未公布）；其他 code、缺欄位、有期貨部位（欄位尚未對應）→ SchemaError。
+    明細沒有市值：amount 為 None、currency 為空字串；權重四捨五入到 2 位（資料表 DECIMAL(7,2)）。
+    """
+    if not isinstance(data, dict) or "code" not in data:
+        raise SchemaError("群益 buyback 回應缺少 code")
+    if data["code"] == 400 and CAP_NONE in (data.get("message") or ""):
+        return None
+    D = data.get("data")
+    if data["code"] != 200 or not isinstance(D, dict) or not {"pcf", "stocks"} <= D.keys() or not D["pcf"]:
+        raise SchemaError(f"群益 buyback 回應 code {data['code']}：{data.get('message')}")
+    p = D["pcf"]
+    hold, eff = date.fromisoformat(p["date2"][:10]), date.fromisoformat(p["date1"][:10])
+    if hold != d:
+        return Gap("A", hold, post, None) if eff == post else None
+    if not D["stocks"]:
+        if eff == post and today and today >= post and p["nav"]:
+            return Gap("B", d, post, p["nav"])
+        return None
+    if D.get("futures"):
+        raise SchemaError("群益 buyback 有期貨部位，欄位尚未對應")
+    rows = [{"asset_type": "ST", "code": str(s["stocNo"]).strip(), "month": "", "name": str(s["stocName"]).strip(),
+             "shares": int(s["share"]), "amount": None, "weight": round(s["weight"], 2), "currency": ""} for s in D["stocks"]]
+    summary = {"hold_date": d.isoformat(), "post_date": eff.isoformat(), "nav": p["nav"], "units": int(p["totUnit"]),
+               "nav_unit": p["pUnit"], "n_stocks": len(rows), "stock_weight": round(sum(s["weight"] for s in D["stocks"]), 2),
+               "futures_lots": 0, "futures_amount": 0, "edited_at": None}
+    return summary, rows
+
+
 def fetch_holdings(code: str, d: date, closed):
-    fund, delay, _ = HOLDINGS[code]
-    post = post_date(d, delay, closed)
-    data = request("POST", URL, json={"fundCode": fund, "date": f"{post.year - 1911}/{post:%m/%d}", "specificDate": True})
+    f = HOLDINGS[code]
+    post = post_date(d, f.delay, closed)
+    if f.trust == "群益":
+        return parse_capital(request("POST", CAP_URL, json={"fundId": f.fund, "date": cap_date(post)}), d, post, date.today())
+    data = request("POST", URL, json={"fundCode": f.fund, "date": f"{post.year - 1911}/{post:%m/%d}", "specificDate": True})
     return parse_pcf(data, d, post, date.today())
 
 

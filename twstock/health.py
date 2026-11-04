@@ -24,13 +24,16 @@ OK, PENDING, ABNORMAL = "ok", "pending", "abnormal"
 
 Row = namedtuple("Row", "n pe pb dy gap", defaults=(0, 0, 0, 0, None))     # gap：投信確定沒有明細（A／B），算齊全
 Spec = namedtuple("Spec", "key label min_rows fills since delay", defaults=(None, 0))
+Fund = namedtuple("Fund", "fund delay since trust")
 Item = namedtuple("Item", "key label date status n reason")
 FILLS = (("pe", "本益比"), ("pb", "淨值比"), ("dy", "殖利率"))
 
-# 統一投信主動型 ETF（第 5 輪）：代號 → (基金代碼, 持股公布落後的交易日數, 上市日)
+# 主動型 ETF 持股（第 5 輪統一、第 7 輪群益）：代號 → Fund(投信的基金代碼, 持股公布落後的交易日數, 上市日, 投信)
 # 上市日 = etf_daily 最早一筆（2025-10-30 之前上市的填 None）；跨境 ETF 的持股日是前一個交易日
-HOLDINGS = {"00981A": ("49YTW", 0, None), "00403A": ("63YTW", 0, date(2026, 5, 12)),
-            "00411A": ("64YTW", 1, date(2026, 8, 26)), "00988A": ("61YTW", 1, date(2025, 11, 5))}
+HOLDINGS = {"00981A": Fund("49YTW", 0, None, "統一"), "00403A": Fund("63YTW", 0, date(2026, 5, 12), "統一"),
+            "00411A": Fund("64YTW", 1, date(2026, 8, 26), "統一"), "00988A": Fund("61YTW", 1, date(2025, 11, 5), "統一"),
+            "00982A": Fund("399", 0, None, "群益"), "00992A": Fund("500", 0, date(2025, 12, 30), "群益"),
+            "00415A": Fund("504", 0, date(2026, 10, 20), "群益"), "00997A": Fund("502", 1, date(2026, 4, 14), "群益")}
 BREADTH_FROM = date(2026, 11, 3)        # 官方漲跌家數不補歷史，從這天開始收集
 
 SPECS = (
@@ -43,7 +46,7 @@ SPECS = (
     Spec("etf.TWSE", "上市ETF", 150, False), Spec("etf.TPEx", "上櫃ETF", 80, False),
     Spec("margin.TWSE", "上市融資融券", 800, False), Spec("margin.TPEx", "上櫃融資融券", 550, False),
     Spec("breadth.TWSE", "上市漲跌家數", 1, False, BREADTH_FROM), Spec("breadth.TPEx", "上櫃漲跌家數", 1, False, BREADTH_FROM),
-) + tuple(Spec(f"holdings.{c}", f"{c}持股", 1, False, since, delay) for c, (_, delay, since) in HOLDINGS.items())
+) + tuple(Spec(f"holdings.{c}", f"{c}持股", 1, False, f.since, f.delay) for c, f in HOLDINGS.items())
 SPEC = {s.key: s for s in SPECS}
 
 _MARKET_SQL = {

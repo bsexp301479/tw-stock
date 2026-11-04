@@ -188,7 +188,8 @@ def test_dataset_status():
     assert st["prices.TWSE"] == {"k": "prices.TWSE", "n": "上市行情", "d": "2026-10-30", "s": "ok"}
     st = {x["k"]: x for x in health.dataset_status(snap, D(10, 30), T(10, 30, 19))}
     assert st["pe.TPEx"]["s"] == "pending" and "m" not in st["pe.TPEx"]             # 當天 22:00 前
-    assert len(json.dumps(health.dataset_status(snap, D(10, 30), T(11, 2, 18)), ensure_ascii=False)) < 1500
+    # 每個資料集平均 < 75 字元（第 7 輪：持股 8 檔後由固定 1500 改成依資料集數）
+    assert len(json.dumps(health.dataset_status(snap, D(10, 30), T(11, 2, 18)), ensure_ascii=False)) < 75 * len(health.SPECS)
 
 
 # ─── S5：交易日曆與臨時休市 ───────────────────────────────
@@ -358,7 +359,8 @@ INX_FIELDS = ["日期", "開市", "最高", "最低", "收市", "漲/跌"]
 FUT_HEAD = "交易日期,契約,到期月份(週別),開盤價,最高價,最低價,收盤價,漲跌價,漲跌%,成交量,結算價,未沖銷契約數,最後最佳買價,最後最佳賣價,歷史最高價,歷史最低價,是否因訊息面暫停交易,交易時段,價差對單式委託成交量\r\n"
 OI_HEAD = "日期,商品名稱,身份別,多方交易口數,多方交易契約金額(千元),空方交易口數,空方交易契約金額(千元),多空交易口數淨額,多空交易契約金額淨額(千元),多方未平倉口數,多方未平倉契約金額(千元),空方未平倉口數,空方未平倉契約金額(千元),多空未平倉口數淨額,多空未平倉契約金額淨額(千元)\r\n"
 ALL_EP = ("MI_INDEX", "BWIBBU_d", "fund/T86", "BFI82U", "dailyQuotes", "peQryDate", "dailyTrade", "futDataDown", "futContractsDateDown",
-          "MI_MARGN", "margin/balance", "highlight", "GetPCF")     # 第 5 輪：GetPCF 的日期是持股日
+          "MI_MARGN", "margin/balance", "highlight", "GetPCF",     # 第 5 輪：GetPCF 的日期是持股日
+          "etf/buyback")                                            # 第 7 輪群益：和 GetPCF 共用已公布的持股日（down 才用得到）
 # 第 4 輪：行情回應含 ETF 列（另有權證、TDR 等其他證券，兩邊都不可寫入）；融資融券回應含股票與 ETF
 TWSE_ETFS = [f"00{n:03d}" for n in range(100, 350)]          # 250 檔，如 00100
 TPEX_ETFS = [f"00{n:03d}B" for n in range(700, 820)]         # 120 檔，如 00700B
@@ -412,7 +414,8 @@ class World:
         for key, fn in (("MI_INDEX", self._mi), ("BWIBBU_d", self._bwi), ("fund/T86", self._t86), ("BFI82U", self._bfi),
                         ("dailyQuotes", self._quotes), ("peQryDate", self._pe), ("dailyTrade", self._tpex_insti),
                         ("indexInfo/inx", self._inx), ("futDataDown", self._fut), ("futContractsDateDown", self._oi),
-                        ("MI_MARGN", self._mgn), ("margin/balance", self._tpex_mgn), ("highlight", self._hl), ("GetPCF", self._pcf)):
+                        ("MI_MARGN", self._mgn), ("margin/balance", self._tpex_mgn), ("highlight", self._hl), ("GetPCF", self._pcf),
+                        ("etf/buyback", self._cap)):
             if key in url:
                 return fn(form)
         return Resp([]) if "openapi" in url else Resp({"stat": "沒有資料", "tables": []})
@@ -458,6 +461,19 @@ class World:
                    "MoneyType": "NTD", "MTH": "", "EditTime": f"{hold}T16:30:00"} for c in range(1100, 1150)]
         return Resp({"pcf": [{"PCFCode": "NAV", "TranDate": t, "PostDate": f"{post}T00:00:00", "Amount": 1e9}], "fund": {},
                      "asset": [{"AssetCode": "ST", "Details": stocks}, {"AssetCode": "GD", "Details": None}]})
+
+    def _cap(self, form):
+        """第 7 輪群益 buyback：date 是生效日（台灣 0 點的 ISO 字串）；和 GetPCF 共用「已公布的持股日」。"""
+        post = date.fromisoformat(form["date"][:10]) + timedelta(days=1)
+        delay = next(v.delay for v in health.HOLDINGS.values() if v.fund == form["fundId"])
+        hold = tradingcal.trading_days(post - timedelta(days=30), post - timedelta(days=1), CLOSED)[-1 - delay]
+        if hold not in self.published["GetPCF"]:
+            return Resp({"code": 400, "data": None, "message": "沒有查詢到該條件的數據"})
+        stocks = [{"date1": f"{post:%Y/%-m/%-d} 上午 12:00:00", "stocNo": str(c), "stocName": "名", "weight": 1.0, "share": 1000.0}
+                  for c in range(1100, 1150)]
+        return Resp({"code": 200, "message": None, "data": {
+            "pcf": {"date1": str(post), "date2": str(hold), "nav": 1e9, "totUnit": 1e8, "pUnit": 10.0},
+            "stocks": stocks, "bonds": [], "futures": [], "assets": [], "rps": [], "characteristics": []}})
 
     def _bwi(self, form):
         if self._no("BWIBBU_d", form):

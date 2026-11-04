@@ -62,7 +62,7 @@ const routes = {
   bubble: renderBubble,
   rank: renderRank,
   watch: renderWatch,
-  etf: code => code ? renderHoldings(code) : renderEtf(),
+  etf: code => code === 'active' ? renderActive() : code ? renderHoldings(code) : renderEtf(),   // 第 7 輪：#/etf/active 彙總排行
   stock: code => window.renderStock(code),
 };
 
@@ -185,7 +185,8 @@ function renderToday() {
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>買賣超</th></tr></thead><tbody>${rows(topBuy)}</tbody></table></div></div>
       <div class="card"><div class="sec-h"><h2>法人賣超</h2><span class="muted small">${md(L.flow_date)}，億，估算，不含 ETF</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>買賣超</th></tr></thead><tbody>${rows(topSell)}</tbody></table></div></div>
-    </section>`;
+    </section>
+    ${activeCard(L.active_rank)}`;
 
   onSeg('grpSeg', v => { setGroup(v); renderToday(); });
   onSeg('spanSeg', v => { localStore('span', null, v); renderToday(); });
@@ -686,7 +687,7 @@ function renderEtf() {
   const lots = v => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v, 0)}</td>`;
   const dates = Object.entries(E.dates).map(([m, d]) => `${m === 'TWSE' ? '上市' : '上櫃'} ${md(d)}`).join('　');
   $('#view').innerHTML = `<section class="sec">
-      <div class="sec-h"><h2>ETF</h2><span class="muted small">${dates}</span><span class="sp"></span>
+      <div class="sec-h"><h2>ETF</h2><span class="muted small">${dates}</span>${App.latest.active_rank ? '<a class="pill hold" href="#/etf/active">主動 ETF 彙總</a>' : ''}<span class="sp"></span>
         ${segHTML('etfMktSeg', [['all', '全部'], ['TWSE', '上市'], ['TPEx', '上櫃']], mkt)}
         <select id="etfSel" class="sel" aria-label="排序">${ETF_SORT.map(x => `<option value="${x[0]}"${x[0] === by ? ' selected' : ''}>${x[1]}</option>`).join('')}</select></div>
       <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr>
@@ -704,6 +705,45 @@ function renderEtf() {
   $('#view').addEventListener('click', e => { const tr = e.target.closest('tr[data-etf]'); if (tr) location.hash = '#/etf/' + tr.dataset.etf; });
 }
 
+// ─── F7-2：主動 ETF 彙總排行 ─────────────────────────────
+const ACT_NOTE = '估算金額 = 各 ETF 張數增減 × 該 ETF 持股日收盤，不是實際成交金額；只含台股。各 ETF 用自己的最新持股日（跨境 ETF 晚一個交易日）。';
+const actDates = R => R.etfs.map(x => `${x.c} ${md(x.d)}`).join('、') +
+  (R.stale.length ? `；未更新：${R.stale.map(x => `${x.c}（停在 ${md(x.d)}）`).join('、')}` : '');
+const actEtfs = r => r.e.map(x => `<a href="#/etf/${x.e}">${x.e}</a> ${sgn(x.d1, 0)}${x.new ? '<i class="al al-new">新</i>' : x.out ? '<i class="al">清</i>' : ''}`).join('、');
+const actRows = (list, full) => list.map(r => `<tr data-code="${r.c}"><td class="nm"><b>${esc(r.n)}</b><span>${r.c}</span></td>
+    <td class="num ${cls(r.a)}">${sgn(r.a, 2)}</td><td class="num ${cls(r.l1)}">${sgn(r.l1, 0)}</td>` +
+  (full ? `<td class="num ${cls(r.l5)}">${r.l5 == null ? '--' : sgn(r.l5, 0)}</td><td class="small">${actEtfs(r)}</td>` : '') + '</tr>').join('');
+
+// 今日頁小卡：買超、賣超各 5 名
+function activeCard(R) {
+  if (!R || !R.etfs.length) return '';
+  const tbl = (t, list) => `<div class="card"><div class="sec-h"><h2>${t}</h2><span class="muted small">億，估算</span></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>估算金額</th><th>張數</th></tr></thead><tbody>${actRows(list.slice(0, 5)) ||
+    '<tr><td colspan="3" class="muted">無</td></tr>'}</tbody></table></div></div>`;
+  return `<section class="sec"><div class="sec-h"><h2>主動 ETF 一起買了什麼</h2><span class="muted small">${R.etfs.length} 檔合計</span>
+      <span class="sp"></span><a class="muted small" href="#/etf/active">完整排行 →</a></div>
+    <div class="grid g2">${tbl('主動 ETF 合計加碼', R.buy)}${tbl('主動 ETF 合計減碼', R.sell)}</div></section>`;
+}
+
+function renderActive() {
+  const R = App.latest.active_rank;
+  if (!R || !R.etfs.length) { $('#view').innerHTML = '<div class="empty">尚無主動 ETF 持股資料</div>'; return; }
+  const head = '<thead><tr><th>股票</th><th>估算金額（億）</th><th>1 日張數</th><th>5 日張數</th><th>參與 ETF（張數增減）</th></tr></thead>';
+  $('#view').innerHTML = `<section class="sec card">
+      <div class="sec-h"><h2>主動 ETF 彙總</h2><span class="muted small">${R.etfs.length} 檔</span><span class="sp"></span><a class="muted small" href="#/etf">← ETF 列表</a></div>
+      <div class="muted small">持股日：${actDates(R)}</div></section>
+    ${[['合計加碼', R.buy], ['合計減碼', R.sell]].map(([t, list]) => `<section class="sec card"><div class="sec-h"><h2>${t}</h2></div>
+      <div class="tbl-wrap"><table class="tbl">${head}<tbody>${actRows(list, true) || '<tr><td colspan="5" class="muted">無</td></tr>'}</tbody></table></div></section>`).join('')}
+    <section class="sec card"><div class="sec-h"><h2>最多檔持有</h2><span class="muted small">市值為估算（億）</span></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>檔數</th><th>合計張數</th><th>估算市值</th><th>各 ETF 權重</th></tr></thead><tbody>` +
+      R.held.map(r => `<tr data-code="${r.c}"><td class="nm"><b>${esc(r.n)}</b><span>${r.c}</span></td><td class="num">${r.k}</td>
+        <td class="num">${fmt(r.l)}</td><td class="num">${fmt(r.v, 1)}</td>
+        <td class="small">${r.e.map(x => `<a href="#/etf/${x.e}">${x.e}</a> ${fmt(x.w, 2)}%`).join('、')}</td></tr>`).join('') +
+      `</tbody></table></div>
+      <div class="muted small" style="margin-top:6px">${ACT_NOTE}標「新」= 前一持股日沒有持有，「清」= 最新持股日已出清。</div></section>`;
+  $('#view').addEventListener('click', e => { if (!e.target.closest('a')) onRowClick(e); });   // 列內的 ETF 連結不要被整列的個股連結蓋掉
+}
+
 // E2-4：已支援持股的主動 ETF 可點；其他主動型（代號 A 結尾）標示尚未支援
 const holdTag = c => App.latest.holdings?.[c] ? `<a class="pill hold" href="#/etf/${c}">持股</a>`
   : /A$/.test(c) ? '<span class="pill muted">持股尚未支援</span>' : '';
@@ -713,7 +753,7 @@ const HOLD_SORT = [['pw', '權重'], ['d1', '張數增減'], ['w1', '權重變�
 async function renderHoldings(code) {
   // 不在支援清單就不請求（避免 404）
   const H = App.latest.holdings?.[code] && await getJSON(`data/etfs/${code}.json`);
-  if (!H) { $('#view').innerHTML = `<div class="empty">${esc(code)} 的持股資料尚未支援（目前只有統一投信 4 檔主動 ETF）</div>`; return; }
+  if (!H) { $('#view').innerHTML = `<div class="empty">${esc(code)} 的持股資料尚未支援（目前支援統一、群益投信 8 檔主動 ETF）</div>`; return; }
   const S = H.sum, by = localStore('holdSort', 'pw'), unit = r => r.tw ? '張' : '股';
   const rows = [...H.rows].sort((a, b) => (b[by] ?? -Infinity) - (a[by] ?? -Infinity));
   const prev = H.dates.at(-2), d5 = H.dates.length > 5 ? H.dates.at(-6) : null;
@@ -736,7 +776,7 @@ async function renderHoldings(code) {
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>${md(prev)} 持有</th><th>權重</th></tr></thead><tbody>` +
         H.out.map(r => `<tr${r.tw ? ` data-code="${esc(r.c)}"` : ''}><td class="nm">${name(r)}</td><td class="num">${fmt(r.l)} ${unit(r)}</td><td class="num">${fmt(r.pw, 2)}%</td></tr>`).join('') +
         '</tbody></table></div>' : ''}
-      <div class="muted small" style="margin-top:6px">資料來源：統一投信每日申購買回清單。台股為張、海外為股；權重為占基金淨資產 %，權重變化為百分點。
+      <div class="muted small" style="margin-top:6px">資料來源：${esc(H.trust || '統一')}投信每日申購買回清單。台股為張、海外為股；權重為占基金淨資產 %，權重變化為百分點。
         本基金為現金申購買回，持股不會隨申購按比例增減：<b>張數增減就是經理人的買賣</b>；權重變化另含股價漲跌的影響（張數不變、權重也會變）。標「新」= 前一持股日沒有持有。</div></section>`;
   onSeg('holdSeg', v => { localStore('holdSort', null, v); renderHoldings(code); });
   $('#view').addEventListener('click', onRowClick);
