@@ -5,6 +5,7 @@
 HTML 錯誤頁或 403/429，而不是 JSON。這裡把它和「休市沒資料」明確區分：
 封鎖 → 退避重試，仍失敗就丟 FetchError，呼叫端不可寫入半套資料。
 """
+import re
 import ssl
 import time
 from decimal import InvalidOperation
@@ -132,3 +133,15 @@ def is_valid_stock_code(code: str) -> bool:
     """
     code = code.strip()
     return code.isdigit() and 4 <= len(code) <= 5 and not code.startswith(("00", "06"))
+
+
+ETF_CODE = re.compile(r"00\d{2,4}[A-Z]?")
+
+
+def is_etf_code(code: str) -> bool:
+    """
+    ETF：00 開頭、4～6 碼，數字後最多一個英文字尾（0050、00878、006201、00406A、00679B、00631L、00632R、00635U）。
+    ETN（02 開頭）、受益證券（01 開頭）、TDR（91 開頭）、特別股（4 碼＋英文）、權證（7 開頭 6 碼）都不是。
+    """
+    code = code.strip()
+    return len(code) <= 6 and ETF_CODE.fullmatch(code) is not None

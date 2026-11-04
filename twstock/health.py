@@ -10,6 +10,7 @@ import subprocess
 import sys
 from collections import namedtuple
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 
 from .config import LOG_DIR
 from .tradingcal import load_closed, trading_days
@@ -32,6 +33,8 @@ SPECS = (
     Spec("amount", "上市法人金額", 6, False),
     Spec("index.TAIEX", "加權指數", 1, False), Spec("index.TPEX", "櫃買指數", 1, False),
     Spec("futures", "台指期", 1, False), Spec("futures_oi", "期貨法人", 9, False),
+    Spec("etf.TWSE", "上市ETF", 150, False), Spec("etf.TPEx", "上櫃ETF", 80, False),
+    Spec("margin.TWSE", "上市融資融券", 800, False), Spec("margin.TPEx", "上櫃融資融券", 550, False),
 )
 SPEC = {s.key: s for s in SPECS}
 
@@ -40,6 +43,7 @@ _MARKET_SQL = {
     "pe": "SELECT x.trade_date, s.market_type, COUNT(*), COUNT(x.pe_ratio), COUNT(x.pb_ratio), COUNT(x.dividend_yield) "
           "FROM stock_fundamentals x",
     "insti": "SELECT x.trade_date, s.market_type, COUNT(*), 0, 0, 0 FROM institutional_trades x",
+    "margin": "SELECT x.trade_date, s.market_type, COUNT(*), 0, 0, 0 FROM margin_trades x",
 }
 
 
@@ -54,6 +58,9 @@ def load_snapshot(cur, start: date, end: date) -> dict:
     for d, code, n in cur.execute("SELECT trade_date, index_code, COUNT(*) FROM market_index "
                                   "WHERE trade_date BETWEEN ? AND ? GROUP BY trade_date, index_code", start, end).fetchall():
         snap[f"index.{code}"][d] = Row(n)
+    for d, market, n in cur.execute("SELECT x.trade_date, e.market_type, COUNT(*) FROM etf_daily x JOIN etfs e ON e.etf_id = x.etf_id "
+                                    "WHERE x.trade_date BETWEEN ? AND ? GROUP BY x.trade_date, e.market_type", start, end).fetchall():
+        snap[f"etf.{market}"][d] = Row(n)
     for key, sql in (("amount", "SELECT trade_date, COUNT(*) FROM insti_amount WHERE trade_date BETWEEN ? AND ? GROUP BY trade_date"),
                      # 只看日盤：夜盤的日期是歸屬日，不代表該日資料已齊
                      ("futures", "SELECT trade_date, COUNT(*) FROM futures_daily_prices WHERE commodity_id = 'TX' AND session = 'DAY' "
@@ -124,20 +131,41 @@ def outcome(items) -> str:
     return ABNORMAL if ABNORMAL in states else PENDING if PENDING in states else OK
 
 
-def problem_lines(items) -> list:
-    """把異常與尚未公布的項目彙總成一行一項（同資料集同原因合併）。"""
+def _day_list(days) -> str:
+    return "、".join(map(str, days[:8])) + (f" 等 {len(days)} 天" if len(days) > 8 else "")
+
+
+def all_missing_days(items) -> list:
+    """所有資料集都是「異常且 0 筆」的交易日（整天沒有收集）；休市日本來就不在 items 裡。"""
+    by_day = {}
+    for i in items:
+        by_day.setdefault(i.date, []).append(i)
+    return sorted(d for d, its in by_day.items()
+                  if len(its) == len(SPECS) and all(i.status == ABNORMAL and not i.n for i in its))
+
+
+def problem_lines(items, last_run=None) -> list:
+    """把異常與尚未公布的項目彙總成一行一項（同資料集同原因合併）；整天所有資料集都缺的日子合併成一行。"""
+    whole = all_missing_days(items)
+    lines = []
+    if whole:
+        why = ""
+        if last_run:
+            at = last_run["at"]
+            why = (f"：最後一次收集是 {at:%m/%d %H:%M}，之後沒有執行收集"
+                   if at < datetime.combine(whole[-1], COLLECT_FROM) else f"：最後一次收集 {at:%m/%d %H:%M} 也沒有取得")
+        lines.append(f"❌ {_day_list(whole)} 全部資料集都沒有{why}")
     groups = {}
     for i in items:
-        if i.status != OK:
+        if i.status != OK and i.date not in whole:
             groups.setdefault((i.status, i.key, i.reason[0]), []).append(i)
-    lines = []
     for (status, _, kind), its in sorted(groups.items(), key=lambda g: (g[0][0] != ABNORMAL, list(SPEC).index(g[0][1]))):
         mark, label = ("❌", its[0].label) if status == ABNORMAL else ("⏳", its[0].label)
         days = [i.date for i in its]
         if status == PENDING:
             lines.append(f"{mark} {label}：{days[-1]} 尚未公布")
         elif kind == "none":
-            lines.append(f"{mark} {label}：缺 " + "、".join(map(str, days[:8])) + (f" 等 {len(days)} 天" if len(days) > 8 else ""))
+            lines.append(f"{mark} {label}：缺 " + _day_list(days))
         elif len(days) == 1:
             lines.append(f"{mark} {label}：{days[0]} {its[0].reason[1]}")
         else:
@@ -147,10 +175,15 @@ def problem_lines(items) -> list:
 
 # ─── 執行紀錄 ─────────────────────────────────────────────
 def load_state(cur) -> dict:
-    """由最近 200 筆執行紀錄整理：處置注意股、事件、營收最後成功的時間，與最後一次有新資料的時間。"""
-    state = {"alerts_at": None, "events_to": None, "revenue_on": None, "collected_at": None}
-    for finished, new_data, detail in cur.execute(
-            "SELECT TOP 200 finished_at, new_data, detail FROM collect_runs ORDER BY run_id DESC").fetchall():
+    """
+    由最近 200 筆執行紀錄整理：處置注意股、事件、營收最後成功的時間，最後一次有新資料的時間，
+    與最後一次收集（last_run：時間、指令、有無新資料）。
+    """
+    state = {"alerts_at": None, "events_to": None, "revenue_on": None, "collected_at": None, "last_run": None}
+    for finished, new_data, detail, *extra in cur.execute(
+            "SELECT TOP 200 finished_at, new_data, detail, command FROM collect_runs ORDER BY run_id DESC").fetchall():
+        if state["last_run"] is None:
+            state["last_run"] = {"at": finished, "command": extra[0] if extra else None, "new_data": bool(new_data)}
         if new_data and state["collected_at"] is None:
             state["collected_at"] = finished
         und = json.loads(detail).get("undated", {})
@@ -203,10 +236,46 @@ def notify_once(problems, today: date) -> bool:
 
 
 # ─── check 指令 ───────────────────────────────────────────
-def check_report(days, snap, now, state, closed, adhoc=()) -> tuple:
-    """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求。"""
+PLIST = Path("Library/LaunchAgents/com.twstock.collect.plist")      # 相對於使用者家目錄
+RUN_LABEL = {"catch-up": "collect --catch-up", "date": "collect --date"}
+CATCHUP_DAYS, CATCHUP_MAX = 10, 30      # 與 collectors.catchup 的 DEFAULT_DAYS、MAX_DAYS 相同（health 不匯入 collectors）
+
+
+def schedule_status(platform=None, home=None) -> str:
+    """只看排程檔是否存在（唯讀，不呼叫 launchctl／schtasks）。"""
+    if (platform or sys.platform) != "darwin":
+        return "無法判斷，請在工作排程器確認"
+    path = Path(home or Path.home()) / PLIST
+    return f"已安裝（{path}）" if path.exists() else "未安裝（安裝方式見 README，由使用者自行執行）"
+
+
+def last_run_line(run) -> str:
+    if not run:
+        return "尚無執行紀錄"
+    what = RUN_LABEL.get(run["command"], "收集")
+    return f"{run['at']:%Y-%m-%d %H:%M}（{what}，{'有新資料' if run['new_data'] else '沒有新資料'}）"
+
+
+def suggest(items, days, stale_alerts) -> str:
+    """有異常時的建議指令：缺口在 --catch-up 預設範圍內 → collect --catch-up；30 天內 → 加 --days；更早 → history。"""
+    bad = sorted({i.date for i in items if i.status == ABNORMAL})
+    if not bad and not stale_alerts:
+        return ""
+    n = len(days) - days.index(bad[0]) if bad else 1
+    if n <= CATCHUP_DAYS:
+        return "👉 請執行 python3 -m twstock collect --catch-up"
+    if n <= CATCHUP_MAX:
+        return f"👉 請執行 python3 -m twstock collect --catch-up --days {n}"
+    return f"👉 請執行 python3 -m twstock history --start {bad[0]}，再執行 python3 -m twstock collect --catch-up"
+
+
+def check_report(days, snap, now, state, closed, adhoc=(), schedule=None) -> tuple:
+    """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求；schedule 由呼叫端傳入（schedule_status()）。"""
     items, med = evaluate(days, snap, now), medians(snap)
-    out = [f"📋 資料完整性檢查：近 {len(days)} 個交易日 {days[0]} ～ {days[-1]}（現在 {now:%Y-%m-%d %H:%M}，台灣時間）"]
+    out = [f"📋 資料完整性檢查：近 {len(days)} 個交易日 {days[0]} ～ {days[-1]}（現在 {now:%Y-%m-%d %H:%M}，台灣時間）",
+           f"🕘 最後一次收集：{last_run_line(state.get('last_run'))}"]
+    if schedule:
+        out.append(f"🗓️  排程：{schedule}")
     if now.weekday() >= 5 or now.date() in closed:
         out.append(f"ℹ️  今天 {now.date()} 休市")
     if adhoc:
@@ -226,7 +295,7 @@ def check_report(days, snap, now, state, closed, adhoc=()) -> tuple:
                    f"{last.n if last else 0:>7,}{med[spec.key]:>7,.0f}  {fill:<20}  {mark[worst]}")
     alerts = state.get("alerts_at")
     out.append(f"\n處置／注意股最後成功：{alerts:%Y-%m-%d %H:%M}" if alerts else "\n處置／注意股最後成功：尚無執行紀錄")
-    lines = problem_lines(items)
+    lines = problem_lines(items, state.get("last_run"))
     # 處置／注意股端點只有近幾日，錯過無法回補：落後 2 個交易日以上算異常；沒有紀錄不算（還沒跑過）
     stale = alerts and len(trading_days(alerts.date() + timedelta(days=1), days[-1], closed)) >= 2
     if stale:
@@ -234,6 +303,8 @@ def check_report(days, snap, now, state, closed, adhoc=()) -> tuple:
     abnormal = sum(ln.startswith("❌") for ln in lines)
     out += ["", *lines] if lines else []
     out.append(f"\n結果：異常 {abnormal} 項" if abnormal else "\n結果：無異常")
+    if abnormal:
+        out.append(suggest(items, days, bool(stale)))
     return "\n".join(out), (1 if abnormal else 0)
 
 
@@ -251,7 +322,7 @@ def run_check(n: int, now: datetime) -> int:
                                            "ORDER BY holiday_date", start, days[-1]).fetchall()]
     finally:
         conn.close()
-    text, rc = check_report(days, snap, now, state, closed, adhoc)
+    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status())
     print(text)
     return rc
 

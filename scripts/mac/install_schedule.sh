@@ -1,5 +1,5 @@
 #!/bin/bash
-# launchd 排程：週一到週五 17:30、19:30、21:45，以及登入時，執行 collect --catch-up
+# launchd 排程：週一到週五 17:30、19:30、21:45、22:30，以及登入時，執行 collect --catch-up（22:30 負責當天的異常判定）
 #   bash install_schedule.sh             安裝（安裝當下與之後每次登入都會補跑一次）
 #   bash install_schedule.sh --print     只印出 plist 內容，不安裝、不動 launchctl
 #   bash install_schedule.sh --uninstall 移除
@@ -21,7 +21,7 @@ PY="$ROOT/.venv/bin/python"; [ -x "$PY" ] || PY="$(command -v python3)"
 render_plist() {
   local times="" wd t
   for wd in 1 2 3 4 5; do
-    for t in "17 30" "19 30" "21 45"; do
+    for t in "17 30" "19 30" "21 45" "22 30"; do
       set -- $t
       times="$times<dict><key>Weekday</key><integer>$wd</integer><key>Hour</key><integer>$1</integer><key>Minute</key><integer>$2</integer></dict>"
     done
@@ -57,5 +57,5 @@ fi
 mkdir -p "$ROOT/logs" "$HOME/Library/LaunchAgents"
 render_plist > "$PLIST"
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "✅ 已安裝排程：週一至週五 17:30、19:30、21:45，以及登入時；紀錄寫入 logs/collect.log"
+echo "✅ 已安裝排程：週一至週五 17:30、19:30、21:45、22:30，以及登入時；紀錄寫入 logs/collect.log"
 echo "   安裝當下會立刻執行一次（RunAtLoad）。立即再測一次：launchctl kickstart gui/$(id -u)/$LABEL"

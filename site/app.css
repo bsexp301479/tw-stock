@@ -186,6 +186,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .ev-note{color:var(--blue)}
 .rel{text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
 @media (max-width:520px){.g-stats .insti{grid-column:1/-1}}   /* 手機佔滿一列，三行數字不擠成 166px */
+.g-stats .margin{grid-column:1/-1}   /* 信用交易卡：行數多，佔滿一列 */
+.night-old{opacity:.7}               /* P20：前一夜盤淡化 */
 .al{display:inline-block;font-style:normal;font-size:10px;line-height:15px;padding:0 3px;border-radius:3px;margin-left:4px;color:#fff;vertical-align:1px}
 .al-d{background:var(--up)}.al-n{background:var(--amber)}
 .pill.al-d{background:var(--up-bg);border-color:var(--up);color:var(--up)}

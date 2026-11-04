@@ -101,7 +101,8 @@ def test_assess():
 def _full_snapshot(days, skip=()):
     ok = {"prices.TWSE": Row(1086), "prices.TPEx": Row(889), "pe.TWSE": Row(1082, 870, 1082, 1082),
           "pe.TPEx": Row(888, 675, 888, 888), "insti.TWSE": Row(1077), "insti.TPEx": Row(784), "amount": Row(6),
-          "index.TAIEX": Row(1), "index.TPEX": Row(1), "futures": Row(6), "futures_oi": Row(9)}
+          "index.TAIEX": Row(1), "index.TPEX": Row(1), "futures": Row(6), "futures_oi": Row(9),
+          "etf.TWSE": Row(250), "etf.TPEx": Row(120), "margin.TWSE": Row(1100), "margin.TPEx": Row(900)}   # 第 4 輪
     return {k: {d: v for d in days if (k, d) not in skip} for k, v in ok.items()}
 
 
@@ -355,7 +356,18 @@ Q_FIELDS = ["代號", "名稱", "收盤", "漲跌", "開盤", "最高", "最低"
 INX_FIELDS = ["日期", "開市", "最高", "最低", "收市", "漲/跌"]
 FUT_HEAD = "交易日期,契約,到期月份(週別),開盤價,最高價,最低價,收盤價,漲跌價,漲跌%,成交量,結算價,未沖銷契約數,最後最佳買價,最後最佳賣價,歷史最高價,歷史最低價,是否因訊息面暫停交易,交易時段,價差對單式委託成交量\r\n"
 OI_HEAD = "日期,商品名稱,身份別,多方交易口數,多方交易契約金額(千元),空方交易口數,空方交易契約金額(千元),多空交易口數淨額,多空交易契約金額淨額(千元),多方未平倉口數,多方未平倉契約金額(千元),空方未平倉口數,空方未平倉契約金額(千元),多空未平倉口數淨額,多空未平倉契約金額淨額(千元)\r\n"
-ALL_EP = ("MI_INDEX", "BWIBBU_d", "fund/T86", "BFI82U", "dailyQuotes", "peQryDate", "dailyTrade", "futDataDown", "futContractsDateDown")
+ALL_EP = ("MI_INDEX", "BWIBBU_d", "fund/T86", "BFI82U", "dailyQuotes", "peQryDate", "dailyTrade", "futDataDown", "futContractsDateDown",
+          "MI_MARGN", "margin/balance")
+# 第 4 輪：行情回應含 ETF 列（另有權證、TDR 等其他證券，兩邊都不可寫入）；融資融券回應含股票與 ETF
+TWSE_ETFS = [f"00{n:03d}" for n in range(100, 350)]          # 250 檔，如 00100
+TPEX_ETFS = [f"00{n:03d}B" for n in range(700, 820)]         # 120 檔，如 00700B
+OTHERS = ["910322", "020001", "01001T", "2881A", "710000"]    # TDR、ETN、受益證券、特別股、權證
+MGN_FIELDS = ["代號", "名稱", "買進", "賣出", "現金償還", "前日餘額", "今日餘額", "次一營業日限額",
+              "買進", "賣出", "現券償還", "前日餘額", "今日餘額", "次一營業日限額", "資券互抵", "註記"]
+MGN_GROUPS = [{"title": "股票", "span": 2}, {"title": "融資", "span": 6}, {"title": "融券", "span": 6},
+              {"title": "", "span": 1}, {"title": "", "span": 1}]
+TPM_FIELDS = ["代號", "名稱", "前資餘額(張)", "資買", "資賣", "現償", "資餘額", "資屬證金", "資使用率(%)", "資限額", "前券餘額(張)",
+              "券賣", "券買", "券償", "券餘額", "券屬證金", "券使用率(%)", "券限額", "資券相抵(張)", "備註"]
 
 
 class World:
@@ -364,6 +376,7 @@ class World:
     def __init__(self, seed_until, unsettled=False):
         self.published = {ep: set() for ep in ALL_EP}
         self.renamed, self.down, self.requests, self.merges = set(), set(), [], []
+        self.no_etf = False                                     # 第 4 輪：行情回應沒有任何 ETF 列
         self.cells = defaultdict(lambda: defaultdict(dict))     # {表: {日期: {鍵: 列}}}
         self.rows = {s.key: {} for s in health.SPECS}
         self.runs, self.holidays, self.exports, self.notices = [], [], 0, []
@@ -397,7 +410,8 @@ class World:
             return Resp(CAL)
         for key, fn in (("MI_INDEX", self._mi), ("BWIBBU_d", self._bwi), ("fund/T86", self._t86), ("BFI82U", self._bfi),
                         ("dailyQuotes", self._quotes), ("peQryDate", self._pe), ("dailyTrade", self._tpex_insti),
-                        ("indexInfo/inx", self._inx), ("futDataDown", self._fut), ("futContractsDateDown", self._oi)):
+                        ("indexInfo/inx", self._inx), ("futDataDown", self._fut), ("futContractsDateDown", self._oi),
+                        ("MI_MARGN", self._mgn), ("margin/balance", self._tpex_mgn)):
             if key in url:
                 return fn(form)
         return Resp([]) if "openapi" in url else Resp({"stat": "沒有資料", "tables": []})
@@ -415,7 +429,8 @@ class World:
         if self._no("MI_INDEX", form):
             return Resp({"stat": "很抱歉，沒有符合條件的資料!"})
         fields = ["欄位改名"] + MI_FIELDS[1:] if "MI_INDEX" in self.renamed else MI_FIELDS
-        rows = [[c, "名", "1000", "10", "10000", "10", "11", "9", "10.5", "+", "0.5"] for c in TWSE_CODES]
+        etfs = [] if self.no_etf else TWSE_ETFS
+        rows = [[c, "名", "1000", "10", "10000", "10", "11", "9", "10.5", "+", "0.5"] for c in TWSE_CODES + etfs + OTHERS]
         idx = {"title": "價格指數(臺灣證券交易所)", "fields": ["指數", "收盤指數", "漲跌(+/-)", "漲跌點數", "漲跌百分比(%)"],
                "data": [["發行量加權股價指數", "45,211.83", "<p>-</p>", "1,156.50", "-2.49"]]}
         return Resp({"stat": "OK", "tables": [idx, {"fields": fields, "data": rows}]})
@@ -444,7 +459,30 @@ class World:
     def _quotes(self, form):
         if self._no("dailyQuotes", form):
             return self._empty_tables(Q_FIELDS)
-        return Resp({"stat": "ok", "tables": [{"fields": Q_FIELDS, "data": [[c, "名", "10.5", "0.5", "10", "11", "9", "1000", "10000", "10"] for c in TPEX_CODES]}]})
+        etfs = [] if self.no_etf else TPEX_ETFS
+        return Resp({"stat": "ok", "tables": [{"fields": Q_FIELDS, "data": [[c, "名", "10.5", "0.5", "10", "11", "9", "1000", "10000", "10"]
+                                                                            for c in TPEX_CODES + etfs + OTHERS]}]})
+
+    def _mgn(self, form):
+        if self._no("MI_MARGN", form):
+            return Resp({"stat": "很抱歉，沒有符合條件的資料!"})
+        fields = MGN_FIELDS[:6] + ["改名"] + MGN_FIELDS[7:] if "MI_MARGN" in self.renamed else MGN_FIELDS
+        total = {"fields": ["項目", "買進", "賣出", "現金(券)償還", "前日餘額", "今日餘額"],
+                 "data": [["融資(交易單位)", "1", "1", "0", "200", "200"], ["融券(交易單位)", "1", "1", "0", "20", "20"],
+                          ["融資金額(仟元)", "1", "1", "0", "3,000", "3,000"]]}
+        rows = [[c, "名", "1", "1", "0", "100", "100", "1,000", "0", "0", "0", "10", "10", "1,000", "0", " "]
+                for c in TWSE_CODES + TWSE_ETFS + OTHERS]
+        return Resp({"stat": "OK", "tables": [total, {"fields": fields, "groups": MGN_GROUPS, "data": rows}]})
+
+    def _tpex_mgn(self, form):
+        if self._no("margin/balance", form):
+            return self._empty_tables(TPM_FIELDS)
+        fields = ["改名" if f == "資餘額" else f for f in TPM_FIELDS] if "margin/balance" in self.renamed else TPM_FIELDS
+        rows = [[c, "名", "100", "1", "1", "0", "100", "0", "10.0", "1,000", "10", "0", "0", "0", "10", "0", "1.0", "1,000", "0", ""]
+                for c in TPEX_CODES + TPEX_ETFS]
+        summary = [["", "合計(張)", "200", "", "", "", "200", "", "", "", "20", "", "", "", "20", "", "", "", "", ""],
+                   ["", "融資金(仟元)", "3,000", "", "", "", "3,000", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
+        return Resp({"stat": "ok", "tables": [{"fields": fields, "data": rows, "summary": summary}]})
 
     def _pe(self, form):
         if self._no("peQryDate", form):
@@ -489,8 +527,13 @@ class World:
         rows = json.loads(params[0])
         pd = next((p for p in params[1:] if isinstance(p, date)), None)
         market = lambda c: "TWSE" if c < "3000" else "TPEx"
-        if table in ("daily_prices", "stock_fundamentals", "institutional_trades"):
-            name = {"daily_prices": "prices", "stock_fundamentals": "pe", "institutional_trades": "insti"}[table]
+        if table == "etf_daily":                                # 第 4 輪：上櫃 ETF 以 B 結尾
+            for mk in ("TWSE", "TPEx"):
+                mine = [r for r in rows if r["stock_code"].endswith("B") == (mk == "TPEx")]
+                if mine:
+                    self.rows[f"etf.{mk}"][pd] = Row(len(mine))
+        elif table in ("daily_prices", "stock_fundamentals", "institutional_trades", "margin_trades"):
+            name = {"daily_prices": "prices", "stock_fundamentals": "pe", "institutional_trades": "insti", "margin_trades": "margin"}[table]
             for mk in ("TWSE", "TPEx"):
                 mine = [r for r in rows if market(r["stock_code"]) == mk]
                 if mine:
@@ -1083,7 +1126,7 @@ def test_qa02_adhoc_reaches_site():
         rc, out, first = run_site(w, T(10, 30, 22, 0), Path(tmp))
         assert rc == 0 and w.exports == 0 and "2026-11-02" not in first["status"]["closed"]
         lines = fresh_lines(first, "2026-11-03T10:00:00+08:00")
-        assert lines is None or lines == [["資料停在 10/30，最新交易日為 11/02，可能尚未收集"]]    # 修正前的誤報
+        assert lines is None or lines == [["資料停在 10/30，最新交易日為 11/02，可能尚未收集。請在收集資料的電腦執行 python3 -m twstock collect --catch-up"]]    # 修正前的誤報
         rc, out, L = run_site(w, T(11, 3, 9, 0), Path(tmp))
         assert rc == 0 and "判定為臨時休市" in out and w.exports == 1 and "2026-11-02" in L["status"]["closed"]
         assert L["status"]["collected_at"] == first["status"]["collected_at"] and w.runs[-1][1] == 0
@@ -1100,7 +1143,7 @@ def test_qa02_adhoc_reaches_site():
         assert rc == 0 and "判定為臨時休市" in out and w.exports == 1 and "2026-11-06" in L["status"]["closed"]
         lines = fresh_lines(L, "2026-11-07T10:00:00+08:00", "2026-11-08T20:00:00+08:00", "2026-11-09T17:59:00+08:00",
                             "2026-11-09T18:00:00+08:00")
-        assert lines is None or lines == [[], [], [], ["資料停在 11/05，最新交易日為 11/09，可能尚未收集"]]
+        assert lines is None or lines == [[], [], [], ["資料停在 11/05，最新交易日為 11/09，可能尚未收集。請在收集資料的電腦執行 python3 -m twstock collect --catch-up"]]
         rc, out, _ = run_site(w, T(11, 8, 10, 0), Path(tmp))
         assert rc == 0 and w.exports == 1
 

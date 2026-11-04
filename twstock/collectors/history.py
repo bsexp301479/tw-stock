@@ -11,12 +11,14 @@ from .. import db
 from ..fetch import FetchError
 from ..health import load_snapshot, medians, missing_keys
 from ..tradingcal import HOLIDAYS, is_trading_day, load_closed, trading_days  # noqa: F401（沿用的對外名稱）
-from .daily import ALL_DATASETS, DATASET_KEYS, INDEX, PRICES, TPEX_INDEX, collect_for_date, collect_tpex_index
+from .daily import (ALL_DATASETS, DATASET_KEYS, DAY_KEYS, INDEX, PARSE_ERRORS, PRICES, TPEX_INDEX, collect_for_date,  # noqa: F401
+                    collect_tpex_index)
 from .revenue import collect_monthly_revenue, revenue_month_for
 
 # 依網站節流間隔 + 回應時間的實測值（秒，每個細項）
 SECONDS_PER_KEY = {"prices.TWSE": 4, "prices.TPEx": 4, "pe.TWSE": 4, "pe.TPEx": 3.2, "insti.TWSE": 4, "insti.TPEx": 3.2,
-                   "index.TAIEX": 4, "amount": 4}
+                   "index.TAIEX": 4, "amount": 4, "etf.TWSE": 4, "etf.TPEx": 1, "margin.TWSE": 4, "margin.TPEx": 0.5}
+SHARED = {"etf.TWSE": "prices.TWSE", "etf.TPEx": "prices.TPEx"}   # 同一天也要抓行情時共用回應，不另計時
 SECONDS_PER_MONTH = 3.2
 
 
@@ -32,20 +34,25 @@ def load_status(start: date, end: date) -> tuple:
         conn.close()
 
 
+def day_seconds(keys) -> float:
+    return sum(SECONDS_PER_KEY[k] for k in keys if SHARED.get(k) not in keys)
+
+
 def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
                 revenue=True, delay=0.0) -> bool:
     """回傳 True = 全部完成；False = 中途疑似被封鎖或欄位不符而停止。"""
     closed, snap, med = load_status(start, end)
     days = trading_days(start, end, closed)
-    keys = tuple(k for ds in datasets if ds != TPEX_INDEX for k in DATASET_KEYS[ds])
-    # 每一天只抓還缺的細項（分市場、看筆數與填充率）；順序照 DATASET_KEYS，行情先於本益比
+    wanted = {k for ds in datasets if ds != TPEX_INDEX for k in DATASET_KEYS[ds]}
+    keys = tuple(k for k in DAY_KEYS if k in wanted)
+    # 每一天只抓還缺的細項（分市場、看筆數與填充率）；順序一律照 DAY_KEYS（行情先於本益比，ETF 先於融資融券），與 --only 的順序無關
     todo = [(d, keys if force else missing_keys(d, keys, snap, med)) for d in days]
     todo = [(d, ks) for d, ks in todo if ks]
     months = []
     if TPEX_INDEX in datasets:
         months = sorted({(d.year, d.month) for d in days if force or missing_keys(d, ("index.TPEX",), snap, med)})
 
-    est = (sum(sum(SECONDS_PER_KEY[k] for k in ks) + delay for _, ks in todo) + SECONDS_PER_MONTH * len(months)) / 60
+    est = (sum(day_seconds(ks) + delay for _, ks in todo) + SECONDS_PER_MONTH * len(months)) / 60
     print(f"📅 補抓範圍：{start} ~ {end}，資料集：{'、'.join(datasets)}")
     print(f"📊 交易日 {len(days)} 天，待抓 {len(todo)} 天；⏱️  預估約 {est:.1f} 分鐘")
     for k in keys:
@@ -81,6 +88,9 @@ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
             except FetchError as e:
                 print(f"  ❌ {e}")
                 blocked_at = date(y, m, 1)
+                break
+            except PARSE_ERRORS as e:          # QA-04：欄位不符不可出現 Traceback
+                schema_err = (date(y, m, 1), e)
                 break
 
     # 月營收：每個月份只抓一次（每市場 1 個請求）

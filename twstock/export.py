@@ -2,8 +2,8 @@
 把資料庫內容匯出成靜態 JSON（site/data/），網站只讀這些檔案、不需要後端：
 
   latest.json        今日總覽：大盤統計、台指期日 K、類股/產業鏈/概念股資金流（含回放用的每日座標）、
-                     每檔股票最新指標
-  stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈
+                     每檔股票最新指標、融資融券（margin）、ETF（etfs，與股票完全分開）
+  stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈、最新融資融券
 """
 import json
 import os
@@ -32,6 +32,8 @@ _SRC_RANK = {"TWTAUU": 0, "TWTB8U": 0}   # 同一列有多筆官方事件時優�
 CAP_TYPES = ("權", "權息", "減", "面", "調")
 CAP_DAYS = 90
 # 升降單位（一般股票）：(價格上限, 單位)
+MARGIN_DAYS = 20               # 首頁上市股票融資增減迷你柱天數
+COVER_MIN = 99.0               # 維持率分子涵蓋的融資張數 ÷ 官方融資張數（%）低於此值不顯示
 _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
 
@@ -196,6 +198,140 @@ def _insti_official(amount):
             "t": [yi(amount[d]["total"]) for d in recent], "fs": streak(foreign)}
 
 
+# ─── 融資融券（B2＋A4）與 ETF（E1）────────────────────────
+def usage(balance, limit):
+    """融資（券）使用率 %：餘額 ÷ 限額，截斷到小數 2 位（與櫃買官方欄位一致）；限額 0 或空 → None。"""
+    return balance * 10000 // limit / 100 if limit and balance is not None else None
+
+
+def short_ratio(short, margin):
+    """券資比 %：融券餘額 ÷ 融資餘額，四捨五入到小數 2 位；融資 0 → None。"""
+    return round(short / margin * 100, 2) if margin else None
+
+
+def last_close(series, day):
+    """series：[(日期, 收盤)] 舊到新；回傳日期 ≤ day 的最後一個非空收盤（當日無成交用最近收盤）；沒有 → None。"""
+    return next((float(c) for d, c in reversed(series) if d <= day and c is not None), None)
+
+
+def maint_ratio(items, official_lots, amount_k):
+    """
+    大盤融資維持率（自算）= Σ(融資張數 × 1,000 × 收盤) ÷ (官方融資金額仟元 × 1,000) × 100。
+    items：[(融資張數, 收盤或 None)]，股票＋ETF。涵蓋率 = 有收盤的張數 ÷ 官方融資張數（%）。
+    回傳 (維持率, 涵蓋率)，各取小數 2 位；涵蓋率 < COVER_MIN 或沒有金額 → 維持率 None。
+    """
+    covered = sum(n for n, c in items if c is not None)
+    cov = round(covered / official_lots * 100, 2) if official_lots else 0.0
+    if not amount_k or cov < COVER_MIN:
+        return None, cov
+    return round(sum(n * c for n, c in items if c is not None) / amount_k * 100, 2), cov
+
+
+def stock_margin(rows: dict, mdate, d5):
+    """
+    個股 JSON 的 margin。rows：{日期: (融資前日, 融資餘額, 融資限額, 融券前日, 融券餘額, 註記)}；
+    mdate：該市場最新融資融券日；d5：往前第 5 個融資融券日（不足 6 天為 None）。該股當天沒有列 → None（無信用交易）。
+    """
+    r = rows.get(mdate)
+    if r is None:
+        return None
+    mp, mb, ml, sp, sb, nt = r
+    old = rows.get(d5) if d5 else None
+    out = {"d": str(mdate), "mb": mb, "m1": mb - mp, "m5": mb - old[1] if old else None,
+           "sb": sb, "s1": sb - sp, "sr": short_ratio(sb, mb), "mu": usage(mb, ml)}
+    if nt:
+        out["nt"] = nt
+    return out
+
+
+def market_margin(dates, official, stocks, etfs, close):
+    """
+    一個市場的融資融券區塊（latest.json 的 margin.TWSE／margin.TPEx）。
+    dates：該市場有官方合計的日期（舊到新）；official：{日期: (資前, 資今, 券前, 券今, 金前, 金今)}；
+    stocks、etfs：{日期: [(代號, 融資前日, 融資餘額, 融券前日, 融券餘額)]}；close(代號, 日期, 是否ETF) → 收盤或 None。
+    頭條（mb、sb…）只用股票；etf 另計；維持率分子用股票＋ETF、分母用官方融資金額。
+    """
+    if not dates:
+        return None
+    d = dates[-1]
+    pct = lambda a, b: round(a / b * 100, 2) if b else None
+    total = lambda rows, i: sum(r[i] for r in rows)
+
+    def ratio(day):
+        items = [(r[2], close(r[0], day, False)) for r in stocks.get(day, [])] + \
+                [(r[2], close(r[0], day, True)) for r in etfs.get(day, [])]
+        return maint_ratio(items, official[day][1], official[day][5])
+
+    S, E, o = stocks.get(d, []), etfs.get(d, []), official[d]
+    mb, mp, sb, sp = total(S, 2), total(S, 1), total(S, 4), total(S, 3)
+    mr, cov = ratio(d)
+    recent = dates[-MARGIN_DAYS:]
+    return {"d": str(d), "mb": mb, "m1": mb - mp, "mp": pct(mb - mp, mp), "sb": sb, "s1": sb - sp, "sp": pct(sb - sp, sp),
+            "sr": short_ratio(sb, mb), "amt": round(o[5] / 1e5, 1), "amt1": round((o[5] - o[4]) / 1e5, 1),
+            "mr": mr, "mr0": ratio(dates[-2])[0] if len(dates) > 1 else None, "cov": cov,
+            "etf": {"mb": total(E, 2), "m1": total(E, 2) - total(E, 1), "sb": total(E, 4), "s1": total(E, 4) - total(E, 3)},
+            "d20": [str(x) for x in recent], "m20": [total(stocks.get(x, []), 2) - total(stocks.get(x, []), 1) for x in recent]}
+
+
+def _load_margin(cur):
+    """回傳 (各市場日期, 官方合計, 股票列, ETF 列, 個股 rows)；沒有融資融券資料時日期為空。"""
+    mdates = [r[0] for r in cur.execute("SELECT DISTINCT TOP 25 trade_date FROM margin_market ORDER BY trade_date DESC")][::-1]
+    dates, official = defaultdict(list), defaultdict(dict)
+    stocks, etfs = defaultdict(lambda: defaultdict(list)), defaultdict(lambda: defaultdict(list))
+    per_stock = defaultdict(dict)
+    if not mdates:
+        return dates, official, stocks, etfs, per_stock
+    for d, m, *v in cur.execute("SELECT trade_date, market, margin_prev, margin_balance, short_prev, short_balance, "
+                                "amount_prev, amount_balance FROM margin_market WHERE trade_date >= ? ORDER BY trade_date", mdates[0]):
+        dates[m].append(d)
+        official[m][d] = v
+    for code, m, d, mp, mb, ml, sp, sb, nt in cur.execute("""
+        SELECT s.stock_code, s.market_type, x.trade_date, x.margin_prev, x.margin_balance, x.margin_limit,
+               x.short_prev, x.short_balance, x.note
+        FROM margin_trades x JOIN stocks s ON s.stock_id = x.stock_id WHERE x.trade_date >= ?""", mdates[0]):
+        stocks[m][d].append((code, mp, mb, sp, sb))
+        per_stock[code][d] = (mp, mb, ml, sp, sb, nt)
+    for code, m, d, mp, mb, sp, sb in cur.execute("""
+        SELECT e.etf_code, e.market_type, x.trade_date, x.margin_prev, x.margin_balance, x.short_prev, x.short_balance
+        FROM etf_margin x JOIN etfs e ON e.etf_id = x.etf_id WHERE x.trade_date >= ?""", mdates[0]):
+        etfs[m][d].append((code, mp, mb, sp, sb))
+    return dates, official, stocks, etfs, per_stock
+
+
+def _load_etfs(cur, since):
+    """(ETF 收盤序列 {代號: [(日期, 收盤)]}（since 起）, 最新一天的 ETF 列 {市場: (日期, [列])})。"""
+    px = defaultdict(list)
+    for code, d, c in cur.execute("""
+        SELECT e.etf_code, x.trade_date, x.close_price FROM etf_daily x JOIN etfs e ON e.etf_id = x.etf_id
+        WHERE x.trade_date >= ? ORDER BY e.etf_code, x.trade_date""", since):
+        px[code].append((d, c))
+    latest = {}
+    for code, name, m, d, c, ch, v, tv in cur.execute("""
+        SELECT e.etf_code, e.etf_name, e.market_type, x.trade_date, x.close_price, x.change, x.volume, x.trade_value
+        FROM etf_daily x JOIN etfs e ON e.etf_id = x.etf_id
+        WHERE x.trade_date = (SELECT MAX(y.trade_date) FROM etf_daily y JOIN etfs z ON z.etf_id = y.etf_id
+                              WHERE z.market_type = e.market_type)
+        ORDER BY e.etf_code"""):
+        latest.setdefault(m, (d, []))[1].append((code, name, c, ch, v, tv))
+    return px, latest
+
+
+def etf_block(latest, margin_rows):
+    """latest.json 的 etfs。margin_rows：{代號: (融資前日, 融資餘額, 融券前日, 融券餘額)}（該市場最新融資融券日）。"""
+    if not latest:
+        return None
+    rows = {}
+    for m, (d, items) in latest.items():
+        for code, name, c, ch, v, tv in items:
+            r = {"n": name, "m": m, "c": _f(c), "ch": _f(ch), "p": _f(_pct(c, ch)) if c is not None else None,
+                 "v": round((v or 0) / 1000), "tv": round((tv or 0) / YI, 2)}
+            mg = margin_rows.get(code)
+            if mg:
+                r.update(mb=mg[1], m1=mg[1] - mg[0], sb=mg[3], s1=mg[3] - mg[2])
+            rows[code] = r
+    return {"dates": {m: str(d) for m, (d, _) in latest.items()}, "rows": rows}
+
+
 def _load_chains(cur):
     """回傳 ({產業鏈: [代號...]}, {代號: [[產業鏈, 區段, [細項...]], ...]})。"""
     groups, tags = defaultdict(list), defaultdict(dict)
@@ -331,8 +467,13 @@ def export_all() -> float:
         FROM price_events e JOIN stocks s ON s.stock_id = e.stock_id
         ORDER BY s.stock_code, e.event_date"""):
         events[code].append({"d": d, "t": t, "p": float(p), "r": float(r), "src": src})
+    mdates, mofficial, mstocks, metfs, mper = _load_margin(cur)
+    first_m = min((ds[0] for ds in mdates.values()), default=latest_date)
+    etf_px, etf_latest = _load_etfs(cur, first_m - timedelta(days=60))
     status = build_status(cur, latest_date, now)
     conn.close()
+    mlast = {m: ds[-1] for m, ds in mdates.items()}
+    m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
 
     concepts = load_concepts()
     concept_of = defaultdict(list)
@@ -380,6 +521,9 @@ def export_all() -> float:
                     if code in fund else None,
             **({"capchg": cap} if (cap := _cap_event(ev, latest_date)) else {}),
             **({"alerts": alerts[code]} if code in alerts else {}),
+            # 該市場有融資融券資料時才有 margin；null = 不在信用交易清單（無信用交易）
+            **({"margin": stock_margin(mper.get(code, {}), mlast[info["market"]], m5[info["market"]])}
+               if info["market"] in mlast else {}),
         })
 
         # 板塊計算用的近 WINDOW 天
@@ -451,6 +595,13 @@ def export_all() -> float:
     for code in snapshot:
         industries[snapshot[code]["i"]].append(code)
 
+    # 維持率用的收盤：股票取 prices（日期 ≤ 當日最後收盤），ETF 取 etf_daily
+    stock_px = {code: [(r[0], r[4]) for r in rows] for code, rows in prices.items()}
+    close = lambda code, day, is_etf: last_close((etf_px if is_etf else stock_px).get(code, []), day)
+    margin = {m: market_margin(mdates[m], mofficial[m], mstocks[m], metfs[m], close) for m in ("TWSE", "TPEx")
+              if mdates.get(m)} or None
+    etf_margin_rows = {code: (mp, mb, sp, sb) for m, d in mlast.items() for code, mp, mb, sp, sb in metfs[m].get(d, [])}
+
     replay_dates = [str(d) for d in dates[-REPLAY:]]
     latest = {
         "updated_at": status["collected_at"],     # 最後成功收集時間，不是匯出時間
@@ -471,6 +622,8 @@ def export_all() -> float:
         "futures": futures,
         "futures_oi": futures_oi,
         "forecast": forecast,
+        "margin": margin,
+        "etfs": etf_block(etf_latest, etf_margin_rows),
         "groups": {
             "industry": group_flows(industries, daily, dates, REPLAY),
             "chain": group_flows(chains, daily, dates, REPLAY),

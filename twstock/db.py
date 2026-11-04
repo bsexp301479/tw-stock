@@ -272,6 +272,102 @@ DDL = [
         fetched_at   DATETIME2(0)  NOT NULL      -- 台灣時間
     )
     """,
+    # ETF（第 4 輪）：與 stocks 分開，所有個股統計都不會讀到
+    """
+    IF OBJECT_ID('etfs') IS NULL
+    CREATE TABLE etfs (
+        etf_id      INT IDENTITY(1,1) PRIMARY KEY,
+        etf_code    NVARCHAR(10)  NOT NULL,
+        etf_name    NVARCHAR(50)  NOT NULL,
+        market_type NVARCHAR(10)  NOT NULL CHECK (market_type IN ('TWSE','TPEx')),
+        created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
+        updated_at  DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_etf_code UNIQUE (etf_code)
+    )
+    """,
+    """
+    IF OBJECT_ID('etf_daily') IS NULL
+    CREATE TABLE etf_daily (
+        id          BIGINT IDENTITY(1,1) PRIMARY KEY,
+        etf_id      INT            NOT NULL REFERENCES etfs(etf_id),
+        trade_date  DATE           NOT NULL,
+        open_price  DECIMAL(10,2)  NULL,
+        high_price  DECIMAL(10,2)  NULL,
+        low_price   DECIMAL(10,2)  NULL,
+        close_price DECIMAL(10,2)  NULL,
+        volume      BIGINT         NULL,     -- 股
+        trade_value BIGINT         NULL,     -- 元
+        trade_count INT            NULL,
+        change      DECIMAL(10,2)  NULL,
+        created_at  DATETIME       NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_etf_daily UNIQUE (etf_id, trade_date)
+    )
+    """,
+    # 融資融券（第 4 輪；張）：股票 margin_trades、ETF etf_margin 欄位相同；官方合計（含 ETF）margin_market
+    """
+    IF OBJECT_ID('margin_trades') IS NULL
+    CREATE TABLE margin_trades (
+        id             BIGINT IDENTITY(1,1) PRIMARY KEY,
+        stock_id       INT           NOT NULL REFERENCES stocks(stock_id),
+        trade_date     DATE          NOT NULL,
+        margin_buy     INT           NULL,    -- 融資買進
+        margin_sell    INT           NULL,    -- 融資賣出
+        margin_redeem  INT           NULL,    -- 現金償還
+        margin_prev    INT           NOT NULL,-- 融資前日餘額
+        margin_balance INT           NOT NULL,-- 融資今日餘額
+        margin_limit   INT           NULL,    -- 融資限額（上市：次一營業日限額）
+        short_sell     INT           NULL,    -- 融券賣出
+        short_buy      INT           NULL,    -- 融券買進（回補）
+        short_redeem   INT           NULL,    -- 現券償還
+        short_prev     INT           NOT NULL,
+        short_balance  INT           NOT NULL,
+        short_limit    INT           NULL,
+        offset_lots    INT           NULL,    -- 資券互抵（offset 是保留字）
+        note           NVARCHAR(20)  NULL,    -- 上市註記／上櫃備註原文
+        created_at     DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_margin_trades UNIQUE (stock_id, trade_date)
+    )
+    """,
+    """
+    IF OBJECT_ID('etf_margin') IS NULL
+    CREATE TABLE etf_margin (
+        id             BIGINT IDENTITY(1,1) PRIMARY KEY,
+        etf_id         INT           NOT NULL REFERENCES etfs(etf_id),
+        trade_date     DATE          NOT NULL,
+        margin_buy     INT           NULL,
+        margin_sell    INT           NULL,
+        margin_redeem  INT           NULL,
+        margin_prev    INT           NOT NULL,
+        margin_balance INT           NOT NULL,
+        margin_limit   INT           NULL,
+        short_sell     INT           NULL,
+        short_buy      INT           NULL,
+        short_redeem   INT           NULL,
+        short_prev     INT           NOT NULL,
+        short_balance  INT           NOT NULL,
+        short_limit    INT           NULL,
+        offset_lots    INT           NULL,
+        note           NVARCHAR(20)  NULL,
+        created_at     DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_etf_margin UNIQUE (etf_id, trade_date)
+    )
+    """,
+    """
+    IF OBJECT_ID('margin_market') IS NULL
+    CREATE TABLE margin_market (
+        id             INT IDENTITY(1,1) PRIMARY KEY,
+        trade_date     DATE          NOT NULL,
+        market         NVARCHAR(10)  NOT NULL CHECK (market IN ('TWSE','TPEx')),
+        margin_prev    BIGINT        NOT NULL,   -- 官方融資前日餘額（張，含 ETF 與其他證券）
+        margin_balance BIGINT        NOT NULL,
+        short_prev     BIGINT        NOT NULL,   -- 官方融券（張）
+        short_balance  BIGINT        NOT NULL,
+        amount_prev    BIGINT        NOT NULL,   -- 官方融資金額（仟元）
+        amount_balance BIGINT        NOT NULL,
+        created_at     DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_margin_market UNIQUE (trade_date, market)
+    )
+    """,
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -283,6 +379,10 @@ DDL = [
     "CREATE INDEX IX_institutional_date ON institutional_trades(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_industry_chains_code') "
     "CREATE INDEX IX_industry_chains_code ON industry_chains(stock_code)",
+    "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_margin_trades_date') "
+    "CREATE INDEX IX_margin_trades_date ON margin_trades(trade_date)",
+    "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_daily_date') "
+    "CREATE INDEX IX_etf_daily_date ON etf_daily(trade_date)",
 ]
 
 
@@ -302,4 +402,5 @@ def setup_database():
     conn.close()
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
-          "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays")
+          "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
+          "etfs、etf_daily、margin_trades、etf_margin、margin_market")
