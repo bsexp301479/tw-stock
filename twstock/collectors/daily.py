@@ -11,7 +11,7 @@ from .. import db
 from ..fetch import FetchError, SchemaError, clean_number, is_etf_code, is_valid_stock_code, request
 from ..health import HOLDINGS
 from ..tradingcal import load_closed
-from .holdings import fetch_holdings, merge_holdings
+from .holdings import GAP_REASON, Gap, fetch_holdings, merge_gap, merge_holdings
 
 TWSE = "https://www.twse.com.tw/rwd/zh"
 TPEX = "https://www.tpex.org.tw/www/zh-tw"
@@ -769,6 +769,10 @@ def _collect_key(key: str, d: date, cache: dict) -> int:
             finally:
                 conn.close()
         got = fetch_holdings(market, d, cache["closed"])
+        if isinstance(got, Gap):                        # 投信確定沒有這天的明細：記下來，不算缺、不再請求
+            _save(merge_gap, market, d, got)
+            cache.setdefault("gaps", {})[key] = got
+            return 0
         if not got:
             return 0                                    # 尚未公布，或回應的持股日不是 d
         summary, rows = got
@@ -810,12 +814,15 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
         except (FetchError, *PARSE_ERRORS) as e:
             errors[key] = e
             print(f"  ⚠️  {key} 失敗：{e}")
+    gaps = cache.get("gaps", {})
     done = "、".join(f"{k} {v} 筆" for k, v in written.items() if v)
-    none = "、".join(k for k, v in written.items() if not v)
+    none = "、".join(k for k, v in written.items() if not v and k not in gaps)
     if done:
         print(f"  ✅ 寫入：{done}")
     if none:
         print(f"  ℹ️  官方尚無資料：{none}")
+    if gaps:
+        print("  ℹ️  來源無持股明細（不算缺）：" + "、".join(f"{k}（{GAP_REASON[g.reason]}）" for k, g in gaps.items()))
     return written, errors
 
 

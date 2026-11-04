@@ -8,6 +8,7 @@ import time
 from datetime import date
 
 from .. import db
+from ..config import tw_now
 from ..fetch import FetchError
 from ..health import load_snapshot, medians, missing_keys
 from ..tradingcal import HOLIDAYS, is_trading_day, load_closed, trading_days  # noqa: F401（沿用的對外名稱）
@@ -47,7 +48,9 @@ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
     wanted = {k for ds in datasets if ds != TPEX_INDEX for k in DATASET_KEYS[ds]}
     keys = tuple(k for k in DAY_KEYS if k in wanted)
     # 每一天只抓還缺的細項（分市場、看筆數與填充率）；順序一律照 DAY_KEYS（行情先於本益比，ETF 先於融資融券），與 --only 的順序無關
-    todo = [(d, keys if force else missing_keys(d, keys, snap, med)) for d in days]
+    # 落後公布的持股（delay）以「到今天為止」的交易日判斷，還沒公布的日期不算待抓（第 6 輪 QA-04）
+    published = trading_days(start, max(end, tw_now().date()), closed)
+    todo = [(d, keys if force else missing_keys(d, keys, snap, med, published)) for d in days]
     todo = [(d, ks) for d, ks in todo if ks]
     months = []
     if TPEX_INDEX in datasets:

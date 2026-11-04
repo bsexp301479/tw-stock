@@ -18,7 +18,7 @@
 | `twstock/export.py` | 匯出 `site/data/latest.json` 與 `site/data/stocks/{代號}.json` |
 | `twstock/analysis/` | `flow` 資金流象限、`forecast` 依期貨法人未平倉的大盤漲跌預測、`chanlun` 纏論 |
 | `site/` | 網站：今日（含加權與櫃買指數、台指期日 K、期貨法人未平倉、籌碼因子觀察、信用交易、市場寬度）、泡泡圖、排行、ETF（含主動型 ETF 持股頁）、自選、個股頁（含主動 ETF 持有） |
-| `tests/` | 純邏輯測試（不連網、不連資料庫）：`python3 tests/test_iter01.py`、`python3 tests/test_iter02.py`、`python3 tests/test_iter03.py`、`python3 tests/test_iter04.py`、`python3 tests/test_iter05.py` |
+| `tests/` | 純邏輯測試（不連網、不連資料庫）：`python3 tests/test_iter01.py`、`python3 tests/test_iter02.py`、`python3 tests/test_iter03.py`、`python3 tests/test_iter04.py`、`python3 tests/test_iter05.py`、`python3 tests/test_iter06.py` |
 | `docs/iterations/` | 持續優化流程：每一輪分析師、PM、SA、PG、QA 的文件 |
 | `data/concepts.csv` | 自訂概念股（只需放產業鏈沒有的題材，如 CoWoS、矽光子） |
 | `scripts/mac/`、`scripts/windows/` | 安裝、預覽、手動收集、排程 |
@@ -37,7 +37,7 @@
    - Mac：`bash scripts/mac/setup.sh`
    - Windows：雙擊 `scripts\windows\setup.bat`
 
-更新程式後若有新增資料表（例如第 1 輪的 `market_index`、`stock_alerts`，第 2 輪的 `price_events`、`insti_amount`，第 3 輪的 `collect_runs`、`market_holidays`，第 4 輪的 `etfs`、`etf_daily`、`margin_trades`、`etf_margin`、`margin_market`，第 5 輪的 `etf_holdings`、`etf_holding_summary`、`market_breadth`），請再執行一次 `python -m twstock setup-db`（可重複執行，不影響既有資料），否則 `collect`、`check`、`export` 會失敗。
+更新程式後若有新增資料表（例如第 1 輪的 `market_index`、`stock_alerts`，第 2 輪的 `price_events`、`insti_amount`，第 3 輪的 `collect_runs`、`market_holidays`，第 4 輪的 `etfs`、`etf_daily`、`margin_trades`、`etf_margin`、`margin_market`，第 5 輪的 `etf_holdings`、`etf_holding_summary`、`market_breadth`，第 6 輪的 `etf_holding_gaps`），請再執行一次 `python -m twstock setup-db`（可重複執行，不影響既有資料），否則 `collect`、`check`、`export` 會失敗。
 
 ## 日常使用
 
@@ -64,12 +64,14 @@ python -m twstock chains                         # 立即更新產業鏈族群�
 python -m twstock export                         # 只重新匯出網站 JSON
 python -m twstock serve                          # 本機預覽 http://localhost:8000
 python -m twstock chanlun 2330                   # 產生 output/chanlun_2330.svg
+python -m twstock backup                         # 備份資料庫到專案上一層的 _backups/（COPY_ONLY＋RESTORE VERIFYONLY；只新增不覆寫；--out 指定資料夾）
 python -m twstock setup-db                       # 建立／補建資料表
 python3 tests/test_iter01.py                     # 執行測試
 python3 tests/test_iter02.py                     # 第 2 輪測試
 python3 tests/test_iter03.py                     # 第 3 輪測試
 python3 tests/test_iter04.py                     # 第 4 輪測試
 python3 tests/test_iter05.py                     # 第 5 輪測試
+python3 tests/test_iter06.py                     # 第 6 輪測試
 ```
 
 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
@@ -87,6 +89,27 @@ python3 tests/test_iter05.py                     # 第 5 輪測試
 
 - Mac 睡眠：電腦睡著時排程不會執行，喚醒後合併補跑一次，所以資料通常是「下次打開電腦時補齊」，不會遺失（處置／注意股例外，只查得到近幾日）。要當天晚上就有資料，可固定喚醒（需要管理者權限）：`sudo pmset repeat wakeorpoweron MTWRF 17:25:00`。
 - 資料庫容器：重開機後容器沒啟動時收集會失敗（回傳 2、提示啟動）。可設定自動重啟：`docker update --restart unless-stopped MySqlServer`，並在 Docker Desktop 設定開機啟動。
+
+## 備份與還原
+
+資料庫在容器裡，`docker rm` 會一起刪掉。處置／注意股歷史、主動 ETF 持股都無法完整重抓，請定期備份。
+
+```bash
+python -m twstock backup                    # 存到專案上一層的 _backups/TwStock_YYYYMMDD_HHMMSS.bak
+python -m twstock backup --out ~/Desktop    # 指定資料夾
+python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker 裡（例如 Windows 本機安裝）：由 SQL Server 直接寫到該資料夾
+```
+
+- 使用 `COPY_ONLY`（不影響其他備份），備份後以 `RESTORE VERIFYONLY` 驗證（只驗證、不還原）；檔名含日期時間，只新增、不覆寫，舊備份不會自動刪除，請自行整理（每份約 80 MB）。
+- 容器：自動找發布 `DB_SERVER` 埠號的容器（`MySqlServer`、`twstock-mssql` 都適用）；找到多個或名稱特殊時在 `.env` 設定 `DB_CONTAINER=容器名稱`。
+- 建議時機：更新程式或補抓歷史之前、每週一次。要定期自動備份，可自行把這個指令加進排程。
+- 回傳碼：0 = 成功；1 = 檔名已存在、Docker 問題或備份檔驗證失敗；2 = 連不上資料庫或備份失敗。中途失敗時會刪除容器內這次產生的暫存檔，刪不掉時印出要自行執行的指令。
+
+**還原（沒有提供指令，請手動執行；會覆蓋現有資料，請先停用排程並確認備份檔正確）**：
+
+1. `docker cp _backups/TwStock_….bak MySqlServer:/var/opt/mssql/data/restore.bak`
+2. 用 SQL 工具連到 `master` 執行 `RESTORE DATABASE [TwStock] FROM DISK = N'/var/opt/mssql/data/restore.bak' WITH REPLACE`
+3. 執行 `python -m twstock check` 確認資料
 
 ## 注意事項
 
@@ -113,9 +136,9 @@ python3 tests/test_iter05.py                     # 第 5 輪測試
 - 融資使用率 = 融資餘額 ÷ 限額（上市用「次一營業日限額」、上櫃用「資限額」），截斷到小數 2 位，限額 0 或空時顯示 `--`；券資比 = 融券餘額 ÷ 融資餘額。上市註記 O 停止融資、X 停止融券、@ 融資分配、% 融券分配、! 停止買賣，表示**次一營業日**的狀況，個股頁加註；上櫃備註存原文、不解讀。個股頁「無信用交易」表示該股不在融資融券清單，與融資 0 張不同。
 - 大盤融資維持率（**自算、非官方**）= Σ(融資張數 × 1,000 × 收盤) ÷ 官方融資金額，分子含股票與 ETF；當日無成交用最近一次收盤；有收盤的融資張數 ÷ 官方融資張數（涵蓋率）不足 99% 時顯示「資料不足」。
 - ETF：代號 `00` 開頭、4～6 碼、數字後最多一個英文字尾（例：0050、00878、006201、00406A、00679B）；ETN、受益證券、TDR、權證、特別股不算。ETF 存在獨立的資料表（`etfs`、`etf_daily`、`etf_margin`），`stocks` 表沒有任何 ETF。行情取自與股票同一個 `MI_INDEX`／`dailyQuotes` 回應，**每日不增加請求**；歷史需用 `history --only etf` 補抓。ETF 頁（`#/etf`）列出全部 ETF 的收盤、漲跌、成交量（張）、成交額（億）、融資融券餘額與增減（張），可依成交額、漲幅、跌幅、融資增減、融券增減排序並篩選上市／上櫃。**ETF 不計入**首頁家數與成交額、類股／產業鏈／概念股資金流與泡泡圖、排行、自選、搜尋、個股頁、法人估算、股票口徑的融資融券；只計入大盤融資維持率的分子。上市官方三大法人金額本來就含 ETF。
-- 主動型 ETF 持股：取自統一投信每日申購買回清單（`www.ezmoney.com.tw` 的 `GetPCF`，間隔 3 秒），支援 00981A、00403A、00411A、00988A；**00406A（中信）與其他投信尚未支援**，ETF 頁標示「持股尚未支援」。日期以**持股日**為準：國內 ETF（00981A、00403A）當天傍晚公布當天的持股；跨境 ETF（00411A、00988A）晚一個交易日（11/03 晚上公布的是 11/02 的持股）。單位：台股為張（股數 ÷ 1,000）、海外股票為股，海外與期貨只在 ETF 持股頁顯示原文。持股頁（`#/etf/代號`）列淨資產、每單位淨值、股票權重合計、持股檔數、期貨，以及每檔的持有張數、權重、1 日增減、1 日權重變化、5 日增減、「新」與出清；個股頁「主動 ETF 持有」卡列出持有該股的已支援 ETF。這 4 檔為現金申購買回，持股不會隨申購按比例增減：**張數增減就是經理人的買賣**；權重變化另含股價漲跌的影響。新增統一投信的主動 ETF：在 `twstock/health.py` 的 `HOLDINGS` 加一列（代號 → 基金代碼、delay、上市日），再執行 `history --start 上市日 --only holdings`。
+- 主動型 ETF 持股：取自統一投信每日申購買回清單（`www.ezmoney.com.tw` 的 `GetPCF`，間隔 3 秒），支援 00981A、00403A、00411A、00988A；**00406A（中信）與其他投信尚未支援**，ETF 頁標示「持股尚未支援」。日期以**持股日**為準：國內 ETF（00981A、00403A）當天傍晚公布當天的持股；跨境 ETF（00411A、00988A）晚一個交易日（11/03 晚上公布的是 11/02 的持股）。單位：台股為張（股數 ÷ 1,000）、海外股票為股，海外與期貨只在 ETF 持股頁顯示原文。持股頁（`#/etf/代號`）列淨資產、每單位淨值、股票權重合計、持股檔數、期貨，以及每檔的持有張數、權重、1 日增減、1 日權重變化、5 日增減、「新」與出清；個股頁「主動 ETF 持有」卡列出持有該股的已支援 ETF。這 4 檔為現金申購買回，持股不會隨申購按比例增減：**張數增減就是經理人的買賣**；權重變化另含股價漲跌的影響。新增統一投信的主動 ETF：在 `twstock/health.py` 的 `HOLDINGS` 加一列（代號 → 基金代碼、delay、上市日），再執行 `history --start 上市日 --only holdings`。**海外休市日**（跨境 ETF 當天沒有持股清單，例如美國感恩節）與**臺股臨時休市前一個交易日**（投信只公布彙總、沒有明細）會記在 `etf_holding_gaps`，`check` 視為正常並另列一行，不再請求；持股頁與 1 日增減以前一個有明細的持股日為準。臨時休市前一日的明細在生效日之前都當成尚未公布，所以當晚 22:00 後可能先顯示異常，隔天收集後自動消失。
 - 市場寬度：今日頁成交額卡的漲跌家數改用**官方**（股票）：上市取自與行情同一個 `MI_INDEX` 回應的「漲跌證券數合計」（不增加請求）、上櫃取自櫃買 `afterTrading/highlight`（每日 +1 請求），2026-11-03 起，歷史不補；沒有官方家數時退回網站自算並註明。**官方與網站自算的差別**：上市官方「股票」欄不含 TDR、另列「無比價」，網站自算把 TDR 算成股票、無比價依參考價算漲跌，2026-11-03 網站自算多 3 漲 3 跌（上櫃一致）。市場寬度卡為自算（股票，不含 ETF，還原收盤）：站上 MA20／MA60 = 收盤 > 含當天的 20／60 日均價的比例，分母 = 當天有收盤且有 20／60 個以上收盤的股票；20 日新高／新低 = 收盤高於／低於前 20 個收盤；量能 = 當天成交額 ÷ 前 20 個交易日平均。
-- 資料完整性：每個資料集分市場判斷。**齊全** = 筆數 ≥ max(下限, 近 20 日中位數 × 80%)，且本益比、淨值比、殖利率的非空比例都 ≥ 50%。狀態：**正常**；**尚未公布**（當天 22:00 前還沒有）；**異常**（22:00 後或隔日仍缺、抓取失敗、欄位不符）；**休市**（不列入）。`collect --catch-up` 回傳 0 = 正常、尚未公布、休市或另一個程序正在執行；1 = 有異常；2 = 連不上資料庫。第 4 輪新增上市／上櫃 ETF、上市／上櫃融資融券 4 個資料集。第 5 輪新增上市／上櫃漲跌家數（2026-11-03 起）與 4 檔主動 ETF 持股 6 個資料集；持股在 ETF 上市日之前不算缺；跨境 ETF（00411A、00988A）的持股日晚一個交易日，公布日 22:00 後仍沒有才算異常。`check` 開頭列最後一次收集（時間、指令、有無新資料）與排程狀態（只看 `~/Library/LaunchAgents/com.twstock.collect.plist` 是否存在，不呼叫 `launchctl`；非 Mac 顯示「無法判斷」）；同一交易日所有資料集都缺時合併成一行；有異常時最後印建議指令（缺口 10 天內 `collect --catch-up`、30 天內加 `--days N`、更早用 `history --start`）。網站橫幅在「可能尚未收集」後提示「請在收集資料的電腦執行 python3 -m twstock collect --catch-up」。
+- 資料完整性：每個資料集分市場判斷。**齊全** = 筆數 ≥ max(下限, 近 20 日中位數 × 80%)，且本益比、淨值比、殖利率的非空比例都 ≥ 50%。狀態：**正常**；**尚未公布**（當天 22:00 前還沒有）；**異常**（22:00 後或隔日仍缺、抓取失敗、欄位不符）；**休市**（不列入）。`collect --catch-up` 回傳 0 = 正常、尚未公布、休市或另一個程序正在執行；1 = 有異常；2 = 連不上資料庫。第 4 輪新增上市／上櫃 ETF、上市／上櫃融資融券 4 個資料集。第 5 輪新增上市／上櫃漲跌家數（2026-11-03 起）與 4 檔主動 ETF 持股 6 個資料集；持股在 ETF 上市日之前不算缺；跨境 ETF（00411A、00988A）的持股日晚一個交易日，公布日 22:00 後仍沒有才算異常。`check` 開頭列最後一次收集（時間、指令、有無新資料）與排程狀態（只看 `~/Library/LaunchAgents/com.twstock.collect.plist` 是否存在，不呼叫 `launchctl`；非 Mac 顯示「無法判斷」）；同一交易日所有資料集都缺時合併成一行；有異常時最後印建議指令（缺口 10 天內 `collect --catch-up`、30 天內加 `--days N`、更早用 `history --start`）。網站橫幅在「可能尚未收集」後提示「請在收集資料的電腦執行 python3 -m twstock collect --catch-up」。第 6 輪：主動 ETF 持股遇到投信確定沒有明細的日期（見「主動型 ETF 持股」），算齊全，涵蓋數含這些日期，`check` 另列「投信沒有持股明細（不算缺）」。
 - 交易日曆：優先用證交所官方休市表（`market_holidays`，只有當年，30 天更新一次），抓不到時只印警告、不影響當次收集，沿用已存的官方表；沒有該年資料時用程式內的手寫表；都沒有時平日一律視為交易日並印警告，**每年年底請確認新年度的休市表**。
 - 臨時休市（颱風假）：日期已過，且上市、上櫃、期交所都沒有資料、查詢都沒有失敗時，自動登記為臨時休市，不再算缺漏。判定錯誤時執行 `python -m twstock collect --date 該日`，查到資料就會移除判定。
 - 網站的「更新於」是**最後一次收集到新資料的時間**，不是匯出時間；還沒有執行紀錄時退回資料寫入時間，並標示「（依資料寫入時間）」。`history` 補抓不算。依交易日曆資料落後時（交易日 18:00 前看前一交易日，之後看當天，台灣時間），顯示橘色提示；部分資料異常時顯示局部提示。分頁回到前景時會重新檢查，有新資料會提示重新整理，不會自動跳轉。

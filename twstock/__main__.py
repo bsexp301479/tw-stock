@@ -19,6 +19,7 @@
   python -m twstock futures --start 2025-01-01       台指期日 K 與期貨三大法人未平倉
   python -m twstock chains                           更新產業鏈族群（櫃買產業價值鏈平台）
   python -m twstock chanlun 2330                     纏論結構圖（output/chanlun_2330.svg）
+  python -m twstock backup [--out 資料夾]            備份資料庫（COPY_ONLY＋RESTORE VERIFYONLY），預設存到專案上一層的 _backups/
 """
 import argparse
 import sys
@@ -69,6 +70,16 @@ def cmd_check(args):
         return run_check(args.days, tw_now())
     except pyodbc.Error as e:
         print(f"❌ 連不上資料庫或資料表不存在（請確認 Docker 與容器已啟動，並執行過 setup-db）：{str(e).splitlines()[0][:200]}")
+        return 2
+
+
+def cmd_backup(args):
+    from .backup import run
+    import pyodbc
+    try:
+        return run(args.out, args.direct)
+    except pyodbc.Error as e:
+        print(f"❌ 連不上資料庫或備份失敗（請確認 Docker 與容器已啟動）：{str(e).splitlines()[0][:200]}")
         return 2
 
 
@@ -226,6 +237,11 @@ def main(argv=None):
     s.add_argument("code")
     s.add_argument("--days", type=int, default=130)
     s.set_defaults(fn=cmd_chanlun)
+
+    s = sub.add_parser("backup", help="備份資料庫（COPY_ONLY，備份後 RESTORE VERIFYONLY 驗證；只新增不覆寫）")
+    s.add_argument("--out", help="輸出資料夾，預設專案上一層的 _backups/")
+    s.add_argument("--direct", action="store_true", help="SQL Server 不在 Docker 裡時：由 SQL Server 直接寫到 --out")
+    s.set_defaults(fn=cmd_backup)
 
     args = p.parse_args(argv)
     return args.fn(args) or 0

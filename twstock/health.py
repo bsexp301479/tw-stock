@@ -22,7 +22,7 @@ ALERTS_SETTLED = time(19, 0)    # 處置／注意股當日公告大致底定的�
 COUNT_RATIO, FILL_MIN, MEDIAN_DAYS = 0.8, 0.5, 20
 OK, PENDING, ABNORMAL = "ok", "pending", "abnormal"
 
-Row = namedtuple("Row", "n pe pb dy", defaults=(0, 0, 0, 0))
+Row = namedtuple("Row", "n pe pb dy gap", defaults=(0, 0, 0, 0, None))     # gap：投信確定沒有明細（A／B），算齊全
 Spec = namedtuple("Spec", "key label min_rows fills since delay", defaults=(None, 0))
 Item = namedtuple("Item", "key label date status n reason")
 FILLS = (("pe", "本益比"), ("pb", "淨值比"), ("dy", "殖利率"))
@@ -75,6 +75,10 @@ def load_snapshot(cur, start: date, end: date) -> dict:
                                   start, end).fetchall():
         if f"holdings.{code}" in snap:
             snap[f"holdings.{code}"][d] = Row(n)
+    for d, code, reason in cur.execute("SELECT g.hold_date, e.etf_code, g.reason FROM etf_holding_gaps g JOIN etfs e ON e.etf_id = g.etf_id "
+                                       "WHERE g.hold_date BETWEEN ? AND ?", start, end).fetchall():
+        if f"holdings.{code}" in snap:
+            snap[f"holdings.{code}"].setdefault(d, Row(gap=reason))
     for d, market, n in cur.execute("SELECT trade_date, market, COUNT(*) FROM market_breadth WHERE trade_date BETWEEN ? AND ? "
                                     "GROUP BY trade_date, market", start, end).fetchall():
         snap[f"breadth.{market}"][d] = Row(n)
@@ -99,6 +103,8 @@ def medians(snap: dict) -> dict:
 
 def assess(spec: Spec, row: Row, median: float):
     """齊全回傳 None；否則回傳 (種類, 說明)。種類：none 無資料 / count 筆數偏低 / fill:欄位 填充率偏低。"""
+    if row.gap:
+        return None                     # 來源確定沒有：不算缺
     if not row.n:
         return ("none", "無資料")
     need = max(spec.min_rows, median * COUNT_RATIO)
@@ -312,6 +318,7 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None) -> tup
         out.append("ℹ️  臨時休市（自動判定，判定錯誤可用 collect --date 復原）：" + "、".join(map(str, adhoc)))
     out.append(f"\n{'資料集':<8}{'涵蓋':>7}{'最新日':>12}{'筆數':>7}{'中位數':>7}  本益比/淨值比/殖利率  狀態")
     mark = {OK: "✅ 正常", PENDING: "⏳ 尚未公布", ABNORMAL: "❌ 異常"}
+    gaps = []
     for spec in SPECS:
         mine = [i for i in items if i.key == spec.key]
         have = [i for i in mine if i.n]
@@ -321,8 +328,12 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None) -> tup
             r = snap[spec.key][last.date]
             fill = f"{r.pe / r.n:.0%} / {r.pb / r.n:.0%} / {r.dy / r.n:.0%}"
         worst = outcome(mine)
-        out.append(f"{spec.label:<8}{len(have):>4}/{len(mine):<3}{str(last.date) if last else '--':>12}"
+        gaps += [(spec.label, i.date, snap[spec.key][i.date].gap) for i in mine if snap[spec.key].get(i.date, Row()).gap]
+        out.append(f"{spec.label:<8}{len(have) + sum(g[0] == spec.label for g in gaps):>4}/{len(mine):<3}{str(last.date) if last else '--':>12}"
                    f"{last.n if last else 0:>7,}{med[spec.key]:>7,.0f}  {fill:<20}  {mark[worst]}")
+    if gaps:
+        out.append("ℹ️  投信沒有持股明細（不算缺）：" + "、".join(f"{label} {d}（{'無持股清單' if r == 'A' else '只有彙總'}）"
+                                                    for label, d, r in gaps))
     alerts = state.get("alerts_at")
     out.append(f"\n處置／注意股最後成功：{alerts:%Y-%m-%d %H:%M}" if alerts else "\n處置／注意股最後成功：尚無執行紀錄")
     lines = problem_lines(items, state.get("last_run"))

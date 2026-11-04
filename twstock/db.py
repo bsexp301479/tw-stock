@@ -423,6 +423,21 @@ DDL = [
         CONSTRAINT UQ_market_breadth UNIQUE (trade_date, market)
     )
     """,
+    # 投信確定沒有持股明細的持股日（第 6 輪）：A 當日無持股清單（海外休市等）、B 只有彙總沒有明細（臺股臨時休市前一日）
+    """
+    IF OBJECT_ID('etf_holding_gaps') IS NULL
+    CREATE TABLE etf_holding_gaps (
+        id          INT IDENTITY(1,1) PRIMARY KEY,
+        etf_id      INT            NOT NULL REFERENCES etfs(etf_id),
+        hold_date   DATE           NOT NULL,
+        reason      CHAR(1)        NOT NULL CHECK (reason IN ('A','B')),
+        src_date    DATE           NOT NULL,  -- 回應的持股日（A 為前一個海外交易日；B 等於 hold_date）
+        post_date   DATE           NOT NULL,  -- 清單生效日（請求參數）
+        nav         DECIMAL(20,2)  NULL,      -- B 的彙總淨資產（元）
+        created_at  DATETIME       NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_etf_holding_gaps UNIQUE (etf_id, hold_date)
+    )
+    """,
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -460,4 +475,5 @@ def setup_database():
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
-          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth")
+          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、"
+          "etf_holding_gaps")
