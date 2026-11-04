@@ -1,8 +1,8 @@
-// 個股頁：K 線 + 均線、成交量、法人買賣超、MACD（四張圖同步拖曳/縮放），以及基本面與月營收
+// 個股頁：K 線 + 均線、成交量、法人買賣超、融資融券、MACD（同步拖曳/縮放），以及基本面與月營收
 'use strict';
 
 let charts = [], syncLeader = null;
-const CHART_IDS = ['kC', 'vC', 'iC', 'mC'];
+const CHART_IDS = ['kC', 'vC', 'iC', 'gC', 'mC'];   // gC（融資融券）只在有 mg 時存在
 // 法人買賣超堆疊柱：外資在最靠近零軸的一層，往外依序投信、自營
 const INVESTORS = [['f', '外資', '#4C6EF5'], ['t', '投信', '#F08C00'], ['dl', '自營', '#AE3EC9']];
 
@@ -51,16 +51,21 @@ window.renderStock = async function (code) {
        ['券資比', MG.sr == null ? '--' : fmt(MG.sr, 2) + '%', '', '資料 ' + md(MG.d)],
        ['融資使用率', MG.mu == null ? '--' : fmt(MG.mu, 2) + '%', '', mgNote ? '次一營業日' + mgNote : '資料 ' + md(MG.d)]];
 
-  // E2-4：主動 ETF 持有（統一、群益投信 8 檔；沒有任何一檔持有時不顯示）
-  const AC = data.active;
-  const acHTML = !AC ? '' : `<section class="sec card">
-      <div class="sec-h"><h2>主動 ETF 持有</h2><span class="muted small">目前只含統一、群益投信 8 檔主動 ETF</span></div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>張數</th><th>權重</th><th>1 日</th><th>5 日</th><th>持股日</th></tr></thead><tbody>` +
+  // E2-4：主動 ETF 持有（統一、群益投信 8 檔；沒有任何一檔持有、也沒有 act 時不顯示）
+  const AC = data.active, A = data.act;
+  // F8-1（B16）：投信買超中已收的國內主動 ETF 張數；全部 ETF 都出清的股票沒有 active，但仍顯示這一行
+  const actLine = !A ? '' : `<div class="num" style="margin-bottom:4px">${A.d === App.latest.date ? '今日' : md(A.d) + ' '}投信 <span class="${cls(A.t)}">${sgn(A.t, 0)}</span> 張，其中已收主動 ETF <span class="${cls(A.e)}">${sgn(A.e, 0)}</span> 張` +
+    (A.p != null ? `（${A.p}%）` : !A.t ? '（投信合計為 0）' : (A.t > 0) !== (A.e > 0) ? '（方向與投信合計相反）'
+      : `（超過投信合計：其他投信基金為${A.t > 0 ? '賣超' : '買超'}）`) +
+    '</div><div class="muted small" style="margin-bottom:8px">只含統一、群益已收的國內主動 ETF（持股日與法人資料日相同）；跨境 ETF 持股日晚一天，不計入。投信合計含所有投信基金與 ETF。</div>';
+  const acHTML = !AC && !A ? '' : `<section class="sec card">
+      <div class="sec-h"><h2>主動 ETF 持有</h2><span class="muted small">目前只含統一、群益投信 8 檔主動 ETF</span></div>${actLine}` + (!AC ? '</section>' :
+      `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>張數</th><th>權重</th><th>1 日</th><th>5 日</th><th>持股日</th></tr></thead><tbody>` +
       AC.map(a => `<tr><td class="nm"><a href="#/etf/${a.e}"><b>${esc(App.latest.holdings?.[a.e]?.n || a.e)}</b><span>${a.e}</span></a>${a.new ? '<i class="al al-new">新</i>' : ''}</td>
         <td class="num">${fmt(a.l)}</td><td class="num">${fmt(a.w, 2)}%</td>
         <td class="num ${cls(a.d1)}">${a.d1 == null ? '--' : sgn(a.d1, 0)}</td><td class="num ${cls(a.d5)}">${a.d5 == null ? '--' : sgn(a.d5, 0)}</td>
         <td class="num">${md(a.d)}</td></tr>`).join('') +
-      '</tbody></table></div><div class="muted small" style="margin-top:6px">張數增減為經理人買賣（現金申購買回，不會按比例被動增減）；權重為占該 ETF 淨資產 %，含股價漲跌影響。</div></section>';
+      '</tbody></table></div><div class="muted small" style="margin-top:6px">張數增減包含申購贖回的影響：申購多的日子，經理人會用申購資金加碼，不一定代表看好（可對照持股頁的「單位數 1 日」）。權重為占該 ETF 淨資產 %，含股價漲跌影響。</div></section>');
 
   $('#view').innerHTML = `
     <section class="sec card">
@@ -110,6 +115,8 @@ window.renderStock = async function (code) {
       <div id="vC" class="chart-box" style="height:80px"></div>
       <div class="ch-label">三大法人買賣超（張，未還原）<span id="iLegend" style="display:contents"></span></div>
       <div id="iC" class="chart-box" style="height:90px"></div>
+      ${data.mg ? `<div class="ch-label">融資／融券餘額<span id="gUnit"></span><span id="gLegend" style="display:contents"></span></div>
+      <div id="gC" class="chart-box" style="height:90px"></div>` : ''}
       <div class="ch-label">MACD (12, 26, 9)
         <span class="lg"><i style="background:#378ADD"></i>DIF</span><span class="lg"><i style="background:#EF9F27"></i>DEA</span></div>
       <div id="mC" class="chart-box" style="height:120px"></div>
@@ -131,13 +138,13 @@ window.renderStock = async function (code) {
   // 日／週／月與還原／原始切換都重畫；技術面訊號一律用還原價（P13）
   const draw = () => {
     const m = localStore('kmode', '日'), adj = localStore('kadj', '還原') === '還原';
-    buildCharts(aggregate(data, m, adj), m);
+    buildCharts(aggregate(data, m, adj), m, data.mg, adj);
     renderSignals(aggregate(data, m, true), m);
   };
   onSeg('kSeg', m => { localStore('kmode', null, m); document.querySelectorAll('#kSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === m)); draw(); });
   onSeg('adjSeg', v => { localStore('kadj', null, v); document.querySelectorAll('#adjSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); draw(); });
   $('#latestBtn').addEventListener('click', () => { syncLeader = charts[0]; charts[0]?.timeScale().scrollToRealTime(); });
-  CHART_IDS.forEach((id, idx) => ['mouseenter', 'pointerdown', 'touchstart', 'wheel'].forEach(t =>
+  CHART_IDS.filter(id => $('#' + id)).forEach((id, idx) => ['mouseenter', 'pointerdown', 'touchstart', 'wheel'].forEach(t =>
     $('#' + id).addEventListener(t, () => { syncLeader = charts[idx]; }, { passive: true })));
 
   renderRevenue(data.revenue);
@@ -158,8 +165,11 @@ const EV_LABEL = { '息': '除息', '權': '除權', '權息': '除權息', '減
 
 // ─── 日線 → 週線 / 月線（法人買賣超加總）；adj = 是否用還原價 ─────
 function aggregate(data, mode, adj) {
-  const P = data.prices, I = data.insti, ev = data.ev || [];
+  const P = data.prices, I = data.insti, ev = data.ev || [], G = data.mg;
   const af = adj ? adjFactors(P.d, ev) : P.d.map(() => 1);
+  // F8-3：融資融券餘額；還原時乘上該日之後所有官方換算的 k（面額變更、減資），原始為官方原值
+  const gk = d => adj && G?.k ? G.k.reduce((a, x) => x.d > d ? a * x.k : a, 1) : 1;
+  const mgAt = i => G ? { mb: G.mb[i] == null ? null : Math.round(G.mb[i] * gk(P.d[i])), sb: G.sb[i] == null ? null : Math.round(G.sb[i] * gk(P.d[i])) } : { mb: null, sb: null };
   const evAt = Object.fromEntries(ev.map(e => [e.d, e]));
   // 無成交的日子（開高低收為 --）以前一個收盤價畫一字線，時間軸保持連續；上市前的空值略過
   const rows = [];
@@ -177,10 +187,10 @@ function aggregate(data, mode, adj) {
       rows.push({ d, o: P.o[i] * k, h: P.h[i] * k, l: P.l[i] * k, c: P.c[i] * k, v: P.v[i],
         ch: ch == null ? null : ch * k,                                         // 還原後的漲跌（元）
         pc: ch == null || P.c[i] === ch ? null : ch / (P.c[i] - ch) * 100,       // 漲跌幅以原始價計算（不受係數影響）
-        rel, ev: e, ...inst, nt: false });
+        rel, ev: e, ...inst, ...mgAt(i), nt: false });
       prevC = P.c[i] * k; lastD = d;
     } else if (prevC != null) {
-      rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, ch: null, pc: null, rel: null, ev: e, ...inst, nt: true });
+      rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, ch: null, pc: null, rel: null, ev: e, ...inst, ...mgAt(i), nt: true });
     }
   });
   if (mode === '日') return rows;
@@ -198,6 +208,7 @@ function aggregate(data, mode, adj) {
       g.h = Math.max(g.h, r.h); g.l = Math.min(g.l, r.l); g.c = r.c; g.v += r.v; g.ev = g.ev.concat(r.ev);
       g.nt = g.nt && r.nt;   // 整週/整月都沒成交才算一字線
       for (const k of ['f', 't', 'dl', 'net']) if (r[k] != null) g[k] = (g[k] ?? 0) + r[k];
+      for (const k of ['mb', 'sb']) if (r[k] != null) g[k] = r[k];   // 融資融券：期間最後一個有值的餘額
     }
   }
   return [...out.values()];
@@ -213,7 +224,7 @@ function calcMACD(closes) {
   return { dif, dea, hist: dif.map((v, i) => v - dea[i]) };
 }
 
-function buildCharts(raw, mode) {
+function buildCharts(raw, mode, G, adj) {
   disposeKCharts();
   if (!raw.length || !window.LightweightCharts) return;
   const LC = window.LightweightCharts;
@@ -277,6 +288,22 @@ function buildCharts(raw, mode) {
     }
   }
 
+  // F8-3：融資（右軸）／融券（疊加軸、不顯示刻度）餘額；第三條序列（借券賣出餘額，B14）預留
+  const MB = raw.map(r => r.mb), SB = raw.map(r => r.sb);
+  let gc = null, mbSer = null;
+  if (G && $('#gC')) {
+    gc = mk('gC', false);
+    mbSer = gc.addLineSeries({ color: '#1C7ED6', lineWidth: 1, priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
+    mbSer.setData(MB.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
+    const sbSer = gc.addLineSeries({ color: '#AE3EC9', lineWidth: 1, priceScaleId: 'sb', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
+    gc.priceScale('sb').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+    sbSer.setData(SB.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
+    // 換算事件標在包含該日期的那一根（T 中 ≤ 事件日的最後一根）
+    mbSer.setMarkers((G.k || []).map(x => { let j = -1; T.forEach((t, i) => { if (t <= x.d) j = i; }); return [j, x]; }).filter(([j]) => j >= 0)
+      .sort((a, b) => a[0] - b[0]).map(([j, x]) => ({ time: T[j], position: 'aboveBar', shape: 'circle', color: css('--blue'), text: EV_LABEL[x.t] + (adj ? ' 已換算' : '') })));
+    $('#gUnit').textContent = adj ? '（張；面額變更、減資前的餘額依官方換算）' : '（張，官方原始）';
+  }
+
   const mc = mk('mC', true);
   const macdFmt = { type: 'price', precision: 2, minMove: 0.01 };
   const hSer = mc.addHistogramSeries({ priceFormat: macdFmt, priceLineVisible: false, lastValueVisible: false });
@@ -284,7 +311,7 @@ function buildCharts(raw, mode) {
   const difSer = line(mc, dif, '#378ADD', macdFmt);
   line(mc, dea, '#EF9F27', macdFmt);
 
-  charts = [kc, vc, ic, mc];
+  charts = [kc, vc, ic, ...(gc ? [gc] : []), mc];   // 順序與 CHART_IDS 中存在的圖一致
 
   // 同步：只讓滑鼠/手指所在的那張圖帶動其他圖；若每張都互相回寫，拖曳中的事件會彼此抵銷
   syncLeader = kc;
@@ -294,7 +321,7 @@ function buildCharts(raw, mode) {
   }));
 
   // 十字線同步 + 上方資訊列
-  const anchors = [[kc, kSer, i => C[i]], [vc, vSer, i => V[i]], [ic, iSer, i => N[i]], [mc, difSer, i => dif[i]]];
+  const anchors = [[kc, kSer, i => C[i]], [vc, vSer, i => V[i]], [ic, iSer, i => N[i]], ...(gc ? [[gc, mbSer, i => MB[i]]] : []), [mc, difSer, i => dif[i]]];
   const legend = $('#kLegend');
   const showLegend = i => {
     // 日線用匯出的漲跌（事件日相對參考價、前一日無成交相對最後成交）；找不到事件的不比價日為 null。週／月線用前一根收盤
@@ -321,6 +348,14 @@ function buildCharts(raw, mode) {
       INVESTORS.map(([key, name, color]) =>
         `<span class="lg"><i style="background:${color}"></i>${name} <b class="num ${cls(r[key])}">${v(r[key])}</b></span>`).join('') +
       `<span class="lg">合計 <b class="num ${cls(N[j])}">${v(N[j])}</b></span>`;
+    if (gc) {   // 融資融券比行情晚公布：最新一根還沒有時，改顯示最近有資料的那天
+      let g = i;
+      if (MB[g] == null && i === raw.length - 1) while (g > 0 && MB[g] == null) g--;
+      $('#gLegend').innerHTML = (g !== i && MB[g] != null ? `<span class="muted">${T[g]}</span>` : '') +
+        `<span class="lg"><i style="background:#1C7ED6"></i>融資 <b class="num">${fmt(MB[g])}</b></span>` +
+        `<span class="lg"><i style="background:#AE3EC9"></i>融券 <b class="num">${fmt(SB[g])}</b></span>` +
+        `<span class="lg">券資比 <b class="num">${MB[g] ? fmt(SB[g] / MB[g] * 100, 2) + '%' : '--'}</b></span>`;
+    }
   };
   let crossSyncing = false;
   anchors.forEach(([src]) => src.subscribeCrosshairMove(p => {

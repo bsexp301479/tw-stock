@@ -14,7 +14,7 @@
   python -m twstock history --start 2025-10-30 --only holdings    只補主動型 ETF 持股（統一、群益投信 8 檔；上市日之前自動略過）
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
   python -m twstock events --start 2025-10-30        補抓除權息／減資／面額變更事件（還原價格用）
-  python -m twstock export                           從資料庫匯出網站 JSON（site/data）
+  python -m twstock export                           從資料庫匯出網站 JSON（site/data：latest.json、screen.json、stocks/、etfs/）
   python -m twstock serve                            本機預覽網站 http://localhost:8000
   python -m twstock futures --start 2025-01-01       台指期日 K 與期貨三大法人未平倉
   python -m twstock chains                           更新產業鏈族群（櫃買產業價值鏈平台）
@@ -217,7 +217,7 @@ def main(argv=None):
     s.add_argument("--days", type=int, default=20, help="預設 20，至少 1")
     s.set_defaults(fn=cmd_check)
 
-    sub.add_parser("export", help="匯出網站 JSON 到 site/data").set_defaults(fn=cmd_export)
+    sub.add_parser("export", help="匯出網站 JSON 到 site/data（含條件選股用的 screen.json）").set_defaults(fn=cmd_export)
 
     s = sub.add_parser("serve", help="本機預覽網站")
     s.add_argument("--port", type=int, default=8000)

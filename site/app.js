@@ -60,7 +60,7 @@ function groupSeg() { return segHTML('grpSeg', [['industry', '類股'], ['chain'
 const routes = {
   today: renderToday,
   bubble: renderBubble,
-  rank: renderRank,
+  rank: arg => arg && arg.startsWith('screen') ? renderScreen(arg.slice(6)) : renderRank(arg),   // 第 8 輪：#/rank/screen 條件選股
   watch: renderWatch,
   etf: code => code === 'active' ? renderActive() : code ? renderHoldings(code) : renderEtf(),   // 第 7 輪：#/etf/active 彙總排行
   stock: code => window.renderStock(code),
@@ -257,14 +257,17 @@ function marginCard(L) {
   const mr = x => !x ? '--' : x.mr == null ? '資料不足' : `${fmt(x.mr, 1)}%（前日 ${x.mr0 == null ? '--' : fmt(x.mr0, 1) + '%'}）`;
   const amt = x => !x ? '--' : `${fmt(x.amt, 1)} 億 <span class="${cls(x.amt1)}">${x.amt1 > 0 ? '▲' : x.amt1 < 0 ? '▼' : ''}${fmt(Math.abs(x.amt1), 1)} 億</span>`;
   const E = T?.etf;
+  // P22：依上市股票口徑 1 日變動較大的一邊，連到融資融券排行
+  const X = T || O, rk = !X ? '' : Math.abs(X.sp ?? 0) >= Math.abs(X.mp ?? 0) ? (X.sp < 0 ? 's-' : 's+') : (X.mp < 0 ? 'm-' : 'm+');
   return `<div class="card stat idx margin">
-      <div class="l">信用交易 ${md(d)}（股票，不含 ETF）${d < L.date ? '<span class="muted">（尚未更新）</span>' : ''}</div>
+      <div class="l">信用交易 ${md(d)}（股票，不含 ETF）${d < L.date ? '<span class="muted">（尚未更新）</span>' : ''}${rk ? `　<a class="muted small" href="#/rank/${rk}">看排行 →</a>` : ''}</div>
       ${row(T, '上市')}${row(O, '上櫃')}
       <div class="s num">融資維持率（自算）上市 ${mr(T)}　上櫃 ${mr(O)}</div>
       <div class="s num">融資金額（官方，含 ETF）上市 ${amt(T)}　上櫃 ${amt(O)}</div>
       ${E ? `<div class="s num">ETF 另計（不計入上方）：上市 ETF 融資 ${wan(E.mb)} ${lots(E.m1)}、融券 ${wan(E.sb)} ${lots(E.s1)}</div>` : ''}
       ${T ? `${minibars(T.m20)}<div class="s">上市股票融資增減（張），近 ${T.m20.length} 日（${md(T.d20[0])}～${md(T.d20.at(-1))}）</div>` : ''}
       <div class="s">維持率 = Σ(融資張數 × 1,000 × 收盤) ÷ 官方融資金額，股票＋ETF，自算、非官方；涵蓋率不足 99% 時顯示「資料不足」</div>
+      <div class="s">參考（經驗值，非官方門檻）：大盤融資維持率跌到 140% 左右時，常伴隨融資斷頭賣壓。投資人整戶擔保維持率低於 130% 會被追繳，這是官方規定。</div>
     </div>`;
 }
 
@@ -613,7 +616,8 @@ function showGroup(g) {
 }
 
 // ─── 排行 / 自選 ────────────────────────────────────────
-// [代號, 名稱, 欄位, 排序方向]；欄位 '*' 會換成 1 或 5（依「1日 / 5日」切換）
+// [代號, 名稱, 欄位, 排序方向, 來源]；欄位 '*' 會換成 1 或 5（依「1日 / 5日」切換）
+// 來源（第 8 輪）：省略 = latest.json；'x' = 需要 screen.json；'v' = 估值（需要 screen.json 的 cap）；'m' = 融資融券
 const RANKS = [
   ['n+', '法人買超', 'n*', -1], ['n-', '法人賣超', 'n*', 1],
   ['f+', '外資買超', 'f*', -1], ['f-', '外資賣超', 'f*', 1],
@@ -621,8 +625,19 @@ const RANKS = [
   ['d+', '自營買超', 'd*', -1], ['d-', '自營賣超', 'd*', 1],
   ['fs', '外資連買', 'fs', -1], ['ts', '投信連買', 'ts', -1], ['s', '法人連買', 's', -1],
   ['p+', '漲幅', 'p', -1], ['p-', '跌幅', 'p', 1], ['tv', '成交額', 'tv', -1],
+  ['vr', '量比', 'vr', -1, 'x'], ['nh', '創新高（N 日）', 'nh', -1, 'x'], ['rs20', '20 日相對強勢', 'rs20', -1, 'x'],
+  ['ry', '營收年增', 'ry', -1, 'x'], ['dy', '殖利率', 'dy', -1, 'v'], ['pe', '本益比最低', 'pe', 1, 'v'],
+  ['m+', '融資增加', 'm*', -1, 'm'], ['m-', '融資減少', 'm*', 1, 'm'], ['mr', '融資增加率', 'mr*', -1, 'm'],
+  ['s+', '融券增加', 's*', -1, 'm'], ['s-', '融券減少', 's*', 1, 'm'], ['sr', '券資比', 'sr', -1, 'm'], ['mu', '融資使用率', 'mu', -1, 'm'],
 ];
+const RANK_GROUPS = [['法人', ['n+', 'n-', 'f+', 'f-', 't+', 't-', 'd+', 'd-', 'fs', 'ts', 's']], ['價量', ['p+', 'p-', 'tv', 'vr', 'nh', 'rs20']],
+  ['基本面', ['ry', 'dy', 'pe']], ['融資融券', ['m+', 'm-', 'mr', 's+', 's-', 'sr', 'mu']]];
+// screen.json 排行的額外篩選與表格欄位
+const RANK_FILTER = { nh: x => x.nh > 0, dy: x => isNum(x.pe) && x.pe > 0 && x.cap !== 1, pe: x => x.pe > 0 && x.cap !== 1, sr: x => isNum(x.mb) && x.mb >= MARGIN_BASE };
+const RANK_COLS = { vr: ['vr'], nh: ['nh'], rs20: ['rs20'], ry: ['ry'], dy: ['dy', 'pe', 'pb'], pe: ['pe', 'pb', 'dy'] };
 const streakTxt = v => v ? (v > 0 ? '買' : '賣') + Math.abs(v) : '--';
+const modeSeg = v => segHTML('modeSeg', [['rank', '排行'], ['screen', '選股']], v);
+const onModeSeg = () => onSeg('modeSeg', v => { location.hash = v === 'screen' ? '#/rank/screen' : '#/rank'; });
 
 function stockTable(list, span = '1') {
   const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
@@ -644,29 +659,309 @@ function stockTable(list, span = '1') {
 
 function spanSeg(span) { return segHTML('rspanSeg', [['1', '1日'], ['5', '5日']], span); }
 
-function renderRank() {
-  const by = localStore('rank2', 'n+'), mkt = localStore('mkt', 'all'), span = localStore('rspan', '1');
+async function renderRank(arg) {
+  // 第 8 輪：#/rank/{排行代號}（例如信用交易卡的 #/rank/s-）→ 記住排行後把網址改回 #/rank
+  if (arg && RANKS.some(r => r[0] === arg)) { localStore('rank2', null, arg); history.replaceState(null, '', '#/rank'); }
+  const S = await loadScreen();
+  const avail = RANKS.filter(r => !r[4] || S);          // screen.json 不存在時，需要它的排行不出現
+  const by0 = localStore('rank2', 'n+'), mkt = localStore('mkt', 'all'), span = localStore('rspan', '1');
   const minTv = localStore('rtv', '0.5');   // 成交額門檻（億），套用到所有排行
-  const [, , f, dir] = RANKS.find(r => r[0] === by) || RANKS[0];
-  const field = f.replace('*', span);
-  // 連買排行同天數再比較該法人的 5 日金額
-  const tie = { fs: 'f5', ts: 't5', s: 'n5' }[field];
-  const list = Object.entries(App.latest.stocks)
-    .filter(([, s]) => s[field] != null && (mkt === 'all' || s.m === mkt) && (s.tv ?? 0) >= Number(minTv))
-    .sort((a, b) => dir * (a[1][field] - b[1][field]) || (tie ? (b[1][tie] ?? 0) - (a[1][tie] ?? 0) : 0)).slice(0, 50);
+  const [by, , f, dir, src] = avail.find(r => r[0] === by0) || RANKS[0];
+  const unit = localStore('munit', 'amt'), byAmt = (by === 'm+' || by === 'm-') && unit === 'amt';
+  const field = (byAmt ? 'ma*' : f).replace('*', span);
+  let table, foot = '';
+  if (!src) {
+    // 連買排行同天數再比較該法人的 5 日金額
+    const tie = { fs: 'f5', ts: 't5', s: 'n5' }[field];
+    const list = Object.entries(App.latest.stocks)
+      .filter(([, s]) => s[field] != null && (mkt === 'all' || s.m === mkt) && (s.tv ?? 0) >= Number(minTv))
+      .sort((a, b) => dir * (a[1][field] - b[1][field]) || (tie ? (b[1][tie] ?? 0) - (a[1][tie] ?? 0) : 0)).slice(0, 50);
+    table = stockTable(list, span);
+  } else {
+    const inMkt = x => mkt === 'all' || x.m === mkt;
+    const list = screenRows().filter(x => isNum(x[field]) && (RANK_FILTER[by] || (() => true))(x) && inMkt(x) && (x.tv ?? 0) >= Number(minTv))
+      .sort((a, b) => dir * (a[field] - b[field]) || (src === 'm' ? (a.code < b.code ? -1 : 1) : b.tv - a.tv)).slice(0, 50);
+    if (src === 'm') {
+      const all = screenRows().filter(inMkt), cnt = (k, sg) => all.filter(x => isNum(x[k]) && sg * x[k] > 0).length;
+      const mds = [...new Set(Object.entries(S.md).filter(([m]) => mkt === 'all' || m === mkt).map(([, d]) => md(d)))].join('、');
+      table = `<div class="muted small tbl-cap">融資增加 ${fmt(cnt('m' + span, 1))} 家、減少 ${fmt(cnt('m' + span, -1))} 家；融券增加 ${fmt(cnt('s' + span, 1))} 家、減少 ${fmt(cnt('s' + span, -1))} 家（${span} 日，股票，融資融券 ${mds || '--'}）</div>` +
+        marginTable(list, span, by);
+      foot = `融資融券資料日：上市 ${S.md.TWSE ? md(S.md.TWSE) : '--'}、上櫃 ${S.md.TPEx ? md(S.md.TPEx) : '--'}。估算金額 = 張數 × 1,000 × 收盤，是估算，不是官方融資金額。5 日增減遇到面額變更、減資時，以官方換算後的 5 日前餘額計算。融資增加率的基期（1 日或 5 日前餘額）至少 1,000 張；券資比只列融資 1,000 張以上；使用率不列限額 0 或無限額的股票。不含 ETF。`;
+    } else table = screenTable(list, RANK_COLS[by]);
+  }
+  if (!foot) foot = '金額 = 買賣超張數 × 當日收盤，不含 ETF。成交額門檻以資料日成交額篩選，套用到所有排行。「1日／5日」只切換法人、外資、投信、自營買賣超排行與表格法人欄位的天數；漲幅、跌幅、成交額與連買排行不受影響。連買為連續買超天數，天數相同時以近 5 日金額排序。' +
+    (S ? '量比、創新高、相對強勢、營收、估值排行的資料日見「選股」頁；殖利率、本益比排行已排除虧損（官方本益比空白）與 90 天內股本變動的股票。' : '');
   $('#view').innerHTML = `<section class="sec">
-      <div class="sec-h"><h2>排行</h2><span class="sp"></span>
+      <div class="sec-h">${modeSeg('rank')}<span class="sp"></span>
         ${segHTML('mktSeg', [['all', '全部'], ['TWSE', '上市'], ['TPEx', '上櫃']], mkt)}
         ${spanSeg(span)}
+        ${by === 'm+' || by === 'm-' ? segHTML('munitSeg', [['amt', '估算金額'], ['lot', '張數']], unit) : ''}
         <select id="tvSel" class="sel" aria-label="成交額門檻">${[['0', '成交額不限'], ['0.5', '成交額 ≥ 0.5 億'], ['1', '成交額 ≥ 1 億'], ['5', '成交額 ≥ 5 億']]
           .map(([v, t]) => `<option value="${v}"${v === minTv ? ' selected' : ''}>${t}</option>`).join('')}</select>
-        <select id="rankSel" class="sel">${RANKS.map(r => `<option value="${r[0]}"${r[0] === by ? ' selected' : ''}>${r[1]}</option>`).join('')}</select></div>
-      <div class="card">${stockTable(list, span)}</div>
-      <div class="muted small" style="margin-top:6px">金額 = 買賣超張數 × 當日收盤，不含 ETF。成交額門檻以資料日成交額篩選，套用到所有排行。「1日／5日」只切換法人、外資、投信、自營買賣超排行與表格法人欄位的天數；漲幅、跌幅、成交額與連買排行不受影響。連買為連續買超天數，天數相同時以近 5 日金額排序。</div></section>`;
+        <select id="rankSel" class="sel">${RANK_GROUPS.map(([g, ids]) => { const rs = ids.map(id => avail.find(r => r[0] === id)).filter(Boolean);
+          return rs.length ? `<optgroup label="${g}">${rs.map(r => `<option value="${r[0]}"${r[0] === by ? ' selected' : ''}>${r[1]}</option>`).join('')}</optgroup>` : ''; }).join('')}</select></div>
+      <div class="card">${table}</div>
+      <div class="muted small" style="margin-top:6px">${foot}</div></section>`;
   $('#rankSel').addEventListener('change', e => { localStore('rank2', null, e.target.value); renderRank(); });
   $('#tvSel').addEventListener('change', e => { localStore('rtv', null, e.target.value); renderRank(); });
   onSeg('rspanSeg', v => { localStore('rspan', null, v); renderRank(); });
   onSeg('mktSeg', v => { localStore('mkt', null, v); renderRank(); });
+  if ($('#munitSeg')) onSeg('munitSeg', v => { localStore('munit', null, v); renderRank(); });
+  onModeSeg();
+  $('#view').addEventListener('click', onRowClick);
+}
+
+// F8-3：融資融券排行的表格（和 stockTable 分開）
+function marginTable(list, span, by) {
+  const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
+  const lots = v => `<td class="num ${cls(v)}">${isNum(v) ? sgn(v, 0) : '--'}</td>`;
+  const n0 = v => `<td class="num">${isNum(v) ? fmt(v) : '--'}</td>`;
+  const p2 = v => `<td class="num">${isNum(v) ? fmt(v, 2) + '%' : '--'}</td>`;
+  const sp = v => `<td class="num ${cls(v)}">${isNum(v) ? sgn(v) + '%' : '--'}</td>`;
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>5日漲跌</th><th>融資餘額</th><th>融資${lbl}</th><th>估算（億）</th>${by === 'mr' ? '<th>增加率</th>' : ''}
+      <th>融券餘額</th><th>融券${lbl}</th><th>券資比</th><th>使用率</th><th>成交額</th></tr></thead><tbody>` +
+    list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span></td>
+      <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}${sp(x.r5)}
+      ${n0(x.mb)}${lots(x['m' + k])}<td class="num ${cls(x['ma' + k])}">${isNum(x['ma' + k]) ? yi(x['ma' + k]) : '--'}</td>${by === 'mr' ? sp(x['mr' + k]) : ''}
+      ${n0(x.sb)}${lots(x['s' + k])}${p2(x.sr)}${p2(x.mu)}<td class="num">${fmt(x.tv, 1)}億</td></tr>`).join('') +
+    '</tbody></table></div>';
+}
+
+// ─── 第 8 輪 F8-2：條件選股（screen.json 與 latest.json stocks 合併）──────────
+const isNum = v => typeof v === 'number';       // null、undefined 一律不符合（null >= 0 在 JS 是 true）
+async function loadScreen() {
+  if (App.screen !== undefined) return App.screen;
+  try {
+    const S = await getJSON('data/screen.json');
+    const rows = {};
+    S.codes.forEach((c, i) => { const r = rows[c] = {}; for (const k in S) if (Array.isArray(S[k]) && k !== 'codes') r[k] = S[k][i]; });
+    S.rows = rows;
+    App.screen = S;
+  } catch (e) { App.screen = null; }           // 不 console.error：檔案不存在時排行照常、選股頁顯示尚未產生
+  return App.screen;
+}
+const MARGIN_BASE = 1000;
+function screenRow(code, st, S) {             // st = latest.json stocks 的一列
+  const x = Object.assign({ code }, st, (S && S.rows[code]) || {});
+  for (const n of [1, 5]) {
+    const v = x['m' + n];
+    x['ma' + n] = isNum(v) && isNum(x.c) ? v * 1000 * x.c / 1e8 : null;
+    x['mr' + n] = isNum(v) && isNum(x.mb) && x.mb - v >= MARGIN_BASE ? v / (x.mb - v) * 100 : null;
+  }
+  return x;
+}
+function screenRows() {
+  if (!App.rows) App.rows = Object.entries(App.latest.stocks).map(([c, s]) => screenRow(c, s, App.screen));
+  return App.rows;
+}
+// 營收欄名的月份：檔數最多的營收月份（YYYYMM）
+const revMonth = () => Object.entries(App.screen?.rmd || {}).sort((a, b) => b[1] - a[1])[0]?.[0];
+
+// 結果表的動態欄：[欄名, 取值, 格式, 預設方向（1 遞增）]
+const spct = v => v == null ? '--' : sgn(v) + '%';
+const int0 = v => v ? fmt(v) : '--';
+const SCR_COLS = {
+  a20: ['20日均額', x => x.a20, v => fmt(v, 2) + '億'],
+  r5: ['5日報酬', x => x.r5, spct], r20: ['20日報酬', x => x.r20, spct], r60: ['60日報酬', x => x.r60, spct],
+  b20: ['MA20乖離', x => x.b20, spct], b60: ['MA60乖離', x => x.b60, spct],
+  nh: ['新高(日)', x => x.nh, int0], nl: ['新低(日)', x => x.nl, int0],
+  hd: ['距52週高', x => isNum(x.h52) && x.h52 > 0 && isNum(x.c) ? (x.h52 - x.c) / x.h52 * 100 : null, v => v == null ? '--' : fmt(v, 2) + '%', 1],
+  vr: ['量比', x => x.vr, v => fmt(v, 2)],
+  rs20: ['20日相對', x => x.rs20, v => sgn(v)], rs60: ['60日相對', x => x.rs60, v => sgn(v)],
+  s: ['法人連', x => x.s, streakTxt], fs: ['外資連', x => x.fs, streakTxt], ts: ['投信連', x => x.ts, streakTxt],
+  f5: ['外資5日', x => x.f5, yi], t5: ['投信5日', x => x.t5, yi], n5: ['法人5日', x => x.n5, yi], n20: ['法人20日', x => x.n20, yi],
+  t5r: ['投信5日/額', x => isNum(x.t5) && x.a20 > 0 ? x.t5 / (x.a20 * 5) * 100 : null, spct],
+  n5r: ['法人5日/額', x => isNum(x.n5) && x.a20 > 0 ? x.n5 / (x.a20 * 5) * 100 : null, spct],
+  m5: ['融資5日', x => x.m5, v => sgn(v, 0)],
+  m5p: ['融資5日%', x => isNum(x.m5) && isNum(x.mb) && x.mb - x.m5 > 0 ? x.m5 / (x.mb - x.m5) * 100 : null, spct],
+  sr: ['券資比', x => x.sr, v => v == null ? '--' : fmt(v, 2) + '%'], mu: ['使用率', x => x.mu, v => v == null ? '--' : fmt(v, 2) + '%'],
+  ry: ['營收年增', x => x.ry, (v, x) => spct(v) + (x.rm && String(x.rm) !== revMonth() ? `<span class="muted small">（${x.rm % 100}月）</span>` : '')],
+  rc: ['累計年增', x => x.rc, spct], rh: ['營收新高(年)', x => x.rh, int0], r3: ['連3月年增', x => x.r3, v => v === 1 ? '✓' : '--'],
+  pe: ['本益比', x => x.pe, v => fmt(v, 2), 1], dy: ['殖利率', x => x.dy, spct], pb: ['淨值比', x => x.pb, v => fmt(v, 2), 1],
+};
+const CAP_TAG = '<i class="al al-c" title="90 天內有除權、減資或面額變更，官方本益比、殖利率可能尚未調整">股本變動</i>';
+// 固定欄（股票｜收盤｜漲跌｜成交額）＋ cols；o = {sort: 目前排序欄, cap: 是否標示股本變動}；sort 有值時欄名可點排序
+function screenTable(list, cols, o = {}) {
+  const head = k => { const c = SCR_COLS[k], M = revMonth();
+    return k === 'ry' && M ? `營收年增（${Number(M.slice(4))} 月）` : c[0]; };
+  const th = (k, t) => o.sort ? `<th class="sort" data-k="${k}">${t}</th>` : `<th>${t}</th>`;
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th>${th('p', '漲跌')}${th('tv', '成交額')}${cols.map(k => th(k, head(k))).join('')}</tr></thead><tbody>` +
+    list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
+      <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.tv, 1)}億</td>` +
+      cols.map(k => { const [, get, f] = SCR_COLS[k], v = get(x);
+        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd'].includes(k) ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
+    '</tbody></table></div>';
+}
+
+const scrGe = k => (x, v) => isNum(x[k]) && x[k] >= v;
+const scrPos = k => x => isNum(x[k]) && x[k] > 0;
+const valGuard = (x, st) => !st.xc || x.cap !== 1;
+const m5Base = x => isNum(x.m5) && isNum(x.mb) ? x.mb - x.m5 : null;
+// opts：數字陣列或 [值, 文字]（下拉）、'num'（數字欄）；sw = 開關；val = 估值條件（受 xc 影響）
+const SCREEN_CONDS = [
+  { id: 'tv', g: '流動性', label: '成交額 ≥ {v} 億', opts: [0.5, 1, 3, 5, 10], def: 0.5, f: scrGe('tv') },
+  { id: 'a20', g: '流動性', label: '20 日均成交額 ≥ {v} 億', opts: [0.5, 1, 3, 5], def: 1, f: scrGe('a20'), cols: ['a20'] },
+  { id: 'p', g: '價量', label: '今日漲幅 ≥ {v}%', opts: 'num', def: 3, f: scrGe('p') },
+  { id: 'r5', g: '價量', label: '5 日報酬 ≥ {v}%', opts: 'num', def: 10, f: scrGe('r5'), cols: ['r5'] },
+  { id: 'r20', g: '價量', label: '20 日報酬 ≥ {v}%', opts: 'num', def: 10, f: scrGe('r20'), cols: ['r20'] },
+  { id: 'r60', g: '價量', label: '60 日報酬 ≥ {v}%', opts: 'num', def: 20, f: scrGe('r60'), cols: ['r60'] },
+  { id: 'ma', g: '價量', label: '均線 {v}', opts: [[1, '收盤 > MA20'], [2, '收盤 > MA60'], [3, '收盤 > MA20 > MA60']], def: 1, cols: ['b20', 'b60'],
+    f: (x, v) => v === 1 ? isNum(x.b20) && x.b20 > 0 : v === 2 ? isNum(x.b60) && x.b60 > 0 : isNum(x.b20) && isNum(x.b60) && x.b20 > 0 && x.b60 > x.b20 },
+  { id: 'bx', g: '價量', label: 'MA20 乖離 ≤ {v}%', opts: 'num', def: 10, f: (x, v) => isNum(x.b20) && x.b20 <= v, cols: ['b20'] },
+  { id: 'nh', g: '價量', label: '創 {v} 日新高', opts: [20, 60, 120, 240], def: 60, f: scrGe('nh'), cols: ['nh'] },
+  { id: 'nl', g: '價量', label: '創 {v} 日新低', opts: [20, 60, 120, 240], def: 20, f: scrGe('nl'), cols: ['nl'] },
+  { id: 'hd', g: '價量', label: '距 52 週高 ≤ {v}%', opts: 'num', def: 10, f: (x, v) => { const h = SCR_COLS.hd[1](x); return isNum(h) && h <= v; }, cols: ['hd'] },
+  { id: 'vr', g: '價量', label: '量比 ≥ {v} 倍', opts: [1.5, 2, 3], def: 1.5, f: scrGe('vr'), cols: ['vr'] },
+  { id: 'rs20', g: '價量', label: '20 日相對大盤 > {v} 百分點', opts: 'num', def: 0, f: (x, v) => isNum(x.rs20) && x.rs20 > v, cols: ['rs20'] },
+  { id: 'rs60', g: '價量', label: '60 日相對大盤 > {v} 百分點', opts: 'num', def: 0, f: (x, v) => isNum(x.rs60) && x.rs60 > v, cols: ['rs60'] },
+  { id: 's', g: '法人', label: '法人連買 ≥ {v} 日', opts: [3, 5, 10], def: 3, f: scrGe('s'), cols: ['s'] },
+  { id: 'fs', g: '法人', label: '外資連買 ≥ {v} 日', opts: [3, 5, 10], def: 3, f: scrGe('fs'), cols: ['fs'] },
+  { id: 'ts', g: '法人', label: '投信連買 ≥ {v} 日', opts: [3, 5, 10], def: 3, f: scrGe('ts'), cols: ['ts'] },
+  { id: 'f5', g: '法人', label: '外資 5 日買超', sw: true, f: scrPos('f5'), cols: ['f5'] },
+  { id: 't5', g: '法人', label: '投信 5 日買超', sw: true, f: scrPos('t5'), cols: ['t5'] },
+  { id: 'n5', g: '法人', label: '法人 5 日買超', sw: true, f: scrPos('n5'), cols: ['n5'] },
+  { id: 't5r', g: '法人', label: '投信 5 日買超 ≥ 成交額 {v}%', opts: [3, 5, 10], def: 5, title: '5 日成交額以 20 日均額 × 5 估計',
+    f: (x, v) => isNum(x.t5) && isNum(x.a20) && x.a20 > 0 && x.t5 >= x.a20 * 5 * v / 100, cols: ['t5r'] },
+  { id: 'n5r', g: '法人', label: '法人 5 日買超 ≥ 成交額 {v}%', opts: [3, 5, 10], def: 3, title: '5 日成交額以 20 日均額 × 5 估計',
+    f: (x, v) => isNum(x.n5) && isNum(x.a20) && x.a20 > 0 && x.n5 >= x.a20 * 5 * v / 100, cols: ['n5r'] },
+  { id: 'n20', g: '法人', label: '法人 20 日買超', sw: true, f: scrPos('n20'), cols: ['n20'] },
+  { id: 'm5d', g: '信用', label: '融資 5 日減少 ≥ {v}%', opts: [2, 5, 10], def: 2, f: (x, v) => { const b = m5Base(x); return b > 0 && -x.m5 / b * 100 >= v; }, cols: ['m5', 'm5p'] },
+  { id: 'm5u', g: '信用', label: '融資 5 日增加 ≥ {v}%（5 日前 ≥ 1,000 張）', opts: [5, 10, 20], def: 10,
+    f: (x, v) => { const b = m5Base(x); return isNum(b) && b >= MARGIN_BASE && x.m5 / b * 100 >= v; }, cols: ['m5', 'm5p'] },
+  { id: 'sr', g: '信用', label: '券資比 ≥ {v}%（融資 ≥ 1,000 張）', opts: [10, 20, 30], def: 20, f: (x, v) => isNum(x.mb) && x.mb >= MARGIN_BASE && isNum(x.sr) && x.sr >= v, cols: ['sr'] },
+  { id: 'mu', g: '信用', label: '融資使用率 ≥ {v}%', opts: [20, 30, 50], def: 30, f: scrGe('mu'), cols: ['mu'] },
+  { id: 'ry', g: '基本面', label: '營收年增 ≥ {v}%', opts: [20, 30, 50], def: 30, f: scrGe('ry'), cols: ['ry'] },
+  { id: 'rc', g: '基本面', label: '累計年增 ≥ {v}%', opts: [20, 30, 50], def: 30, f: scrGe('rc'), cols: ['rc'] },
+  { id: 'rh', g: '基本面', label: '營收創新高', sw: true, f: scrPos('rh'), cols: ['rh'] },
+  { id: 'r3', g: '基本面', label: '連續 3 個月年增', sw: true, f: x => x.r3 === 1, cols: ['r3'] },
+  { id: 'pe', g: '基本面', label: '0 < 本益比 ≤ {v}', opts: [10, 15, 20], def: 15, val: true, f: (x, v, st) => isNum(x.pe) && x.pe > 0 && x.pe <= v && valGuard(x, st), cols: ['pe'] },
+  { id: 'dy', g: '基本面', label: '殖利率 ≥ {v}%', opts: [3, 4, 5, 6], def: 5, val: true, f: (x, v, st) => isNum(x.dy) && x.dy >= v && valGuard(x, st), cols: ['dy'] },
+  { id: 'pb', g: '基本面', label: '淨值比 ≤ {v}', opts: [1, 1.5, 2], def: 1, val: true, f: (x, v, st) => isNum(x.pb) && x.pb > 0 && x.pb <= v && valGuard(x, st), cols: ['pb'] },
+  { id: 'mk', g: '排除', label: '只看 {v}', opts: [[1, '上市'], [2, '上櫃']], def: 1, f: (x, v) => x.m === (v === 1 ? 'TWSE' : 'TPEx') },
+  { id: 'xd', g: '排除', label: '排除處置股（含即將處置）', sw: true, f: x => !x.dsp },
+  { id: 'xn', g: '排除', label: '排除今日無成交', sw: true, f: x => !x.nt },
+  { id: 'xt', g: '排除', label: '排除注意股', sw: true, f: x => !x.ntc },
+  { id: 'xc', g: '排除', label: '估值條件排除 90 天內股本變動', sw: true, f: null, n: x => x.cap === 1 },   // 不單獨篩選
+  { id: 'xm', g: '排除', label: '排除停資停券（上市註記 O、X）', sw: true, f: x => !(x.mnt && /[OX]/.test(x.mnt)) },
+];
+const SCREEN_GROUPS = ['流動性', '價量', '法人', '信用', '基本面', '排除'];
+// [id, 按鈕, 條件]；套用時取代全部條件並加上 xd、xn、xc；r1、r2 為參考組（風險檢查）
+const SCREEN_PRESETS = [
+  ['1', '法人連買＋營收創新高', 's=3&rh=1&tv=0.5'], ['2', '投信認養', 'ts=3&t5=1&t5r=5&tv=0.5'], ['3', '帶量突破', 'nh=60&vr=1.5&tv=1'],
+  ['4', '多頭排列＋相對強勢', 'ma=3&rs20=0&f5=1&tv=3'], ['5', '價值高息', 'pe=15&dy=5&tv=0.5'], ['6', '營收高成長', 'ry=30&rc=30&rh=1&tv=1'],
+  ['7', '籌碼換手', 'n5r=3&m5d=2&ma=1&tv=0.5'], ['r1', '融資追價', 'm5u=10&r5=10&tv=0.5'], ['r2', '軋空觀察', 'sr=20&ma=1&tv=0.5'],
+];
+const SCREEN_DEFAULT = { xd: 1, xn: 1, xc: 1, o: 'tv' };
+// 條件狀態 = {條件 id: 門檻, o: 排序欄, od: 'a' 遞增／'d' 遞減（省略 = 預設方向）, ps: 套用中的預設}
+function scrParse(q) {
+  const st = {};
+  for (const [k, v] of new URLSearchParams(q)) {
+    if (SCREEN_CONDS.some(c => c.id === k)) { if (v !== '' && !isNaN(v)) st[k] = Number(v); }
+    else if (k === 'o' || k === 'ps' || (k === 'od' && (v === 'a' || v === 'd'))) st[k] = v;
+  }
+  return st;
+}
+const scrQuery = st => [...SCREEN_CONDS.map(c => c.id), 'o', 'od', 'ps'].filter(k => k in st).map(k => `${k}=${encodeURIComponent(st[k])}`).join('&');
+
+async function renderScreen(q) {
+  const S = await loadScreen(), L = App.latest;
+  if (!S) {
+    $('#view').innerHTML = `<section class="sec"><div class="sec-h">${modeSeg('screen')}</div>
+      <div class="empty">選股資料尚未產生：請在收集資料的電腦執行 python3 -m twstock export</div></section>`;
+    onModeSeg();
+    return;
+  }
+  let st;
+  if (q.startsWith('?')) st = scrParse(q.slice(1));                  // 網址有條件：只用網址的條件（不和預設合併）
+  else { try { st = JSON.parse(localStore('screen', 'null')); } catch (e) { st = null; } }
+  if (!st || typeof st !== 'object') st = { ...SCREEN_DEFAULT };
+  let open = matchMedia('(min-width:721px)').matches;                 // 桌面預設展開、手機收合
+  const X = screenRows(), M = revMonth();
+  const mon = k => k.slice(0, 4) === S.d.slice(0, 4) ? `${Number(k.slice(4))} 月` : `${k.slice(0, 4)}/${k.slice(4)} 月`;
+  const mdx = d => d ? md(d) : '--';
+  const notes = [S.d !== L.date || S.fd !== L.flow_date
+    ? `<div class="flow-note">選股資料（行情 ${md(S.d)}）與網站資料（${md(L.date)}）不同步，請在收集資料的電腦執行 python3 -m twstock export</div>` : '',
+    flowNote(),
+    ...[...new Set(Object.values(S.md).filter(d => d < S.d))].map(d => `<div class="flow-note">融資融券尚未更新：信用條件與欄位為 ${md(d)} 的資料</div>`)].join('');
+  const save = () => localStore('screen', null, JSON.stringify(st));
+  const pass = (c, x) => !c.f || c.f(x, st[c.id], st);
+
+  const draw = () => {
+    history.replaceState(null, '', '#/rank/screen?' + scrQuery(st));
+    const conds = SCREEN_CONDS.filter(c => c.id in st);
+    const hits = X.filter(x => conds.every(c => pass(c, x)));
+    const cols = [...new Set(conds.flatMap(c => c.cols || []))];
+    const o = st.o && (st.o === 'p' || st.o === 'tv' || SCR_COLS[st.o]) ? st.o : 'tv';
+    const get = o === 'p' || o === 'tv' ? x => x[o] : SCR_COLS[o][1];
+    const dir = st.od === 'a' ? 1 : st.od === 'd' ? -1 : SCR_COLS[o]?.[3] || -1;
+    const vals = new Map(hits.map(x => [x, get(x)]));
+    hits.sort((a, b) => { const va = vals.get(a), vb = vals.get(b);
+      return (!isNum(va)) - (!isNum(vb)) || (isNum(va) && isNum(vb) ? dir * (va - vb) : 0) || (b.tv ?? 0) - (a.tv ?? 0); });
+    const oName = o === 'p' ? '漲跌' : o === 'tv' ? '成交額' : o === 'ry' && M ? `營收年增（${Number(M.slice(4))} 月）` : SCR_COLS[o][0];
+    const cnt = c => {                                              // 單獨符合（排除類為排除檔數）；目前門檻、對全體計算
+      const v = c.id in st ? st[c.id] : c.def;
+      if (c.n) return X.filter(c.n).length;
+      return c.g === '排除' ? X.filter(x => !c.f(x, v, st)).length : X.filter(x => c.f(x, v, st)).length;
+    };
+    const ctl = c => {
+      const v = c.id in st ? st[c.id] : c.def;
+      if (c.sw) return '';
+      if (c.opts === 'num') return `<input type="number" step="any" data-v="${c.id}" value="${v}">`;
+      return `<select class="sel" data-v="${c.id}">${c.opts.map(x => { const [ov, ol] = Array.isArray(x) ? x : [x, x];
+        return `<option value="${ov}"${ov === v ? ' selected' : ''}>${ol}</option>`; }).join('')}</select>`;
+    };
+    const condHTML = c => { const [pre, post = ''] = c.label.split('{v}');
+      return `<label class="scr-c"${c.title ? ` title="${c.title}"` : ''}><input type="checkbox" data-c="${c.id}"${c.id in st ? ' checked' : ''}>${pre}${ctl(c)}${post}` +
+        `<span class="scr-n">${c.g === '排除' ? '排除' : '單獨'} ${fmt(cnt(c))}</span></label>`; };
+    const chip = ([id, name], ref) => `<button class="chip${ref ? ' ref' : ''}${st.ps === id ? ' on' : ''}" data-ps="${id}"${ref ? ' title="風險檢查，不是買進訊號"' : ''}>${name}</button>`;
+    $('#view').innerHTML = `<section class="sec">
+      <div class="sec-h">${modeSeg('screen')}</div>
+      <div class="muted small">行情 ${md(S.d)}｜法人 ${md(S.fd)}｜融資融券 上市 ${mdx(S.md.TWSE)}、上櫃 ${mdx(S.md.TPEx)}｜營收 ${Object.entries(S.rmd).sort((a, b) => b[0].localeCompare(a[0])).map(([k, n]) => `${mon(k)} ${fmt(n)} 檔`).join('、') || '--'}</div>
+      <div style="margin-top:8px">${notes}</div>
+      <div class="sec-h" style="margin:8px 0 0;gap:6px"><span class="muted small">預設：</span>${SCREEN_PRESETS.slice(0, 7).map(p => chip(p)).join('')}
+        <span class="muted small">參考：</span>${SCREEN_PRESETS.slice(7).map(p => chip(p, true)).join('')}</div>
+      <details class="scr-panel card"${open ? ' open' : ''}><summary>條件（已選 ${conds.length} 個）
+        <button class="chip" id="scrClear">清除</button> <button class="chip" id="scrCopy">複製條件連結</button></summary>
+        ${SCREEN_GROUPS.map(g => `<div class="scr-grp"><b>${g}</b><div>${SCREEN_CONDS.filter(c => c.g === g).map(condHTML).join('')}</div></div>`).join('')}
+      </details>
+      <div class="sec-h" style="margin:8px 0"><h2>符合 ${fmt(hits.length)} 檔</h2>${hits.length > 100 ? `<span class="muted small">依「${oName}」排序顯示前 100 檔</span>` : ''}</div>
+      <div class="card">${hits.length ? screenTable(hits.slice(0, 100), cols, { sort: o, cap: conds.some(c => c.val) })
+        : '<div class="empty">沒有同時符合所有條件的股票。參考各條件的「單獨」檔數，放寬最少的那一個。</div>'}</div>
+      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收以各股最新公布的月份計算，每月 1～10 日新舊月份混雜。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。</div></section>`;
+    const changed = () => { delete st.ps; save(); draw(); };
+    onModeSeg();
+    $('#view').querySelectorAll('[data-ps]').forEach(b => b.addEventListener('click', () => {
+      st = { ...scrParse(SCREEN_PRESETS.find(p => p[0] === b.dataset.ps)[2]), xd: 1, xn: 1, xc: 1, o: 'tv', ps: b.dataset.ps };
+      save(); draw();
+    }));
+    $('#view').querySelectorAll('[data-c]').forEach(el => el.addEventListener('change', () => {
+      const c = SCREEN_CONDS.find(x => x.id === el.dataset.c);
+      if (!el.checked) delete st[c.id];
+      else { const v = $(`[data-v="${c.id}"]`)?.value; st[c.id] = c.sw ? 1 : v !== undefined && v !== '' && !isNaN(v) ? Number(v) : c.def; }
+      changed();
+    }));
+    $('#view').querySelectorAll('[data-v]').forEach(el => el.addEventListener('change', () => {
+      if (el.value === '' || isNaN(el.value)) return;
+      st[el.dataset.v] = Number(el.value);                              // 改門檻即啟用該條件
+      changed();
+    }));
+    $('#view').querySelectorAll('th.sort').forEach(el => el.addEventListener('click', () => {
+      const k = el.dataset.k;
+      if (k === o) st.od = dir === 1 ? 'd' : 'a';
+      else { st.o = k; delete st.od; }
+      save(); draw();
+    }));
+    const det = $('#view details.scr-panel');
+    det.addEventListener('toggle', () => { open = det.open; });
+    $('#scrClear').addEventListener('click', e => { e.preventDefault(); st = { o: 'tv' }; save(); draw(); });
+    $('#scrCopy').addEventListener('click', e => {
+      e.preventDefault();
+      const b = e.currentTarget;
+      navigator.clipboard?.writeText(location.href).then(() => { b.textContent = '已複製'; setTimeout(() => { b.textContent = '複製條件連結'; }, 1500); })
+        .catch(() => prompt('複製這個連結', location.href)) ?? prompt('複製這個連結', location.href);
+    });
+  };
+  draw();
   $('#view').addEventListener('click', onRowClick);
 }
 
@@ -714,14 +1009,29 @@ const actRows = (list, full) => list.map(r => `<tr data-code="${r.c}"><td class=
     <td class="num ${cls(r.a)}">${sgn(r.a, 2)}</td><td class="num ${cls(r.l1)}">${sgn(r.l1, 0)}</td>` +
   (full ? `<td class="num ${cls(r.l5)}">${r.l5 == null ? '--' : sgn(r.l5, 0)}</td><td class="small">${actEtfs(r)}</td>` : '') + '</tr>').join('');
 
+// F8-1：標題的投信與檔數、各檔單位數 1 日變化（申購影響）
+const actTitle = R => `${[...new Set([...R.etfs, ...R.stale].map(x => x.t))].join('、')} ${Object.keys(App.latest.holdings || {}).length} 檔`;
+function unitsLine(L) {
+  const H = Object.entries(L.holdings || {});
+  if (!H.length) return '';
+  const top = H.map(([, h]) => h.d).sort().at(-1);
+  const part = list => list.sort((a, b) => (a[1].u1 == null) - (b[1].u1 == null) || (b[1].u1 ?? 0) - (a[1].u1 ?? 0))
+    .map(([c, h]) => `<a href="#/etf/${c}">${c}</a> <span class="${cls(h.u1)}">${h.u1 == null ? '--' : sgn(h.u1) + '%'}</span>`).join('、');
+  const cur = H.filter(([, h]) => h.d === top), other = H.filter(([, h]) => h.d !== top);
+  const od = [...new Set(other.map(([, h]) => md(h.d)))].join('、');
+  return `<div class="small num" style="margin-top:4px">單位數 1 日：${part(cur)}${other.length ? `；跨境（${od}）：${part(other)}` : ''}</div>
+    <div class="muted small">單位數增加 = 淨申購。申購的資金會由經理人買進股票，所以多檔單位數同時增加的日子，「合計加碼」會偏多，不全是看好。</div>`;
+}
+
 // 今日頁小卡：買超、賣超各 5 名
 function activeCard(R) {
   if (!R || !R.etfs.length) return '';
   const tbl = (t, list) => `<div class="card"><div class="sec-h"><h2>${t}</h2><span class="muted small">億，估算</span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>估算金額</th><th>張數</th></tr></thead><tbody>${actRows(list.slice(0, 5)) ||
     '<tr><td colspan="3" class="muted">無</td></tr>'}</tbody></table></div></div>`;
-  return `<section class="sec"><div class="sec-h"><h2>主動 ETF 一起買了什麼</h2><span class="muted small">${R.etfs.length} 檔合計</span>
+  return `<section class="sec"><div class="sec-h"><h2>${actTitle(R)}主動 ETF 一起買了什麼</h2><span class="muted small">${R.etfs.length} 檔合計</span>
       <span class="sp"></span><a class="muted small" href="#/etf/active">完整排行 →</a></div>
+    <div style="margin:-6px 0 10px">${unitsLine(App.latest)}</div>
     <div class="grid g2">${tbl('主動 ETF 合計加碼', R.buy)}${tbl('主動 ETF 合計減碼', R.sell)}</div></section>`;
 }
 
@@ -730,8 +1040,8 @@ function renderActive() {
   if (!R || !R.etfs.length) { $('#view').innerHTML = '<div class="empty">尚無主動 ETF 持股資料</div>'; return; }
   const head = '<thead><tr><th>股票</th><th>估算金額（億）</th><th>1 日張數</th><th>5 日張數</th><th>參與 ETF（張數增減）</th></tr></thead>';
   $('#view').innerHTML = `<section class="sec card">
-      <div class="sec-h"><h2>主動 ETF 彙總</h2><span class="muted small">${R.etfs.length} 檔</span><span class="sp"></span><a class="muted small" href="#/etf">← ETF 列表</a></div>
-      <div class="muted small">持股日：${actDates(R)}</div></section>
+      <div class="sec-h"><h2>主動 ETF 彙總（${actTitle(R)}）</h2><span class="muted small">${R.etfs.length} 檔</span><span class="sp"></span><a class="muted small" href="#/etf">← ETF 列表</a></div>
+      <div class="muted small">持股日：${actDates(R)}</div>${unitsLine(App.latest)}</section>
     ${[['合計加碼', R.buy], ['合計減碼', R.sell]].map(([t, list]) => `<section class="sec card"><div class="sec-h"><h2>${t}</h2></div>
       <div class="tbl-wrap"><table class="tbl">${head}<tbody>${actRows(list, true) || '<tr><td colspan="5" class="muted">無</td></tr>'}</tbody></table></div></section>`).join('')}
     <section class="sec card"><div class="sec-h"><h2>最多檔持有</h2><span class="muted small">市值為估算（億）</span></div>
@@ -764,7 +1074,8 @@ async function renderHoldings(code) {
         <span class="sp"></span><a class="muted small" href="#/etf">← ETF 列表</a></div>
       <div class="grid g-stats">
         ${[['淨資產', fmt(S.nav, 1) + ' 億'], ['每單位淨值', fmt(S.nu, 2) + ' 元'], ['股票權重合計', fmt(S.sw, 2) + '%'], ['持股檔數', fmt(S.n) + ' 檔'],
-           ['期貨', S.fl ? `${fmt(S.fl)} 口（${fmt(S.fa, 1)} 億）` : '無']].map(([l, v]) => `<div class="card stat"><div class="l">${l}</div><div class="v num" style="font-size:16px">${v}</div></div>`).join('')}
+           ['單位數 1 日', S.u1 == null ? '--' : sgn(S.u1) + '%', prev ? `相對 ${md(prev)}` : ''],
+           ['期貨', S.fl ? `${fmt(S.fl)} 口（${fmt(S.fa, 1)} 億）` : '無']].map(([l, v, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
       </div></section>
     <section class="sec card">
       <div class="sec-h"><h2>持股</h2><span class="muted small">${prev ? `1 日：相對 ${md(prev)}` : '只有一個持股日'}${d5 ? `；5 日：相對 ${md(d5)}` : ''}</span><span class="sp"></span>${segHTML('holdSeg', HOLD_SORT, by)}</div>
@@ -777,7 +1088,7 @@ async function renderHoldings(code) {
         H.out.map(r => `<tr${r.tw ? ` data-code="${esc(r.c)}"` : ''}><td class="nm">${name(r)}</td><td class="num">${fmt(r.l)} ${unit(r)}</td><td class="num">${fmt(r.pw, 2)}%</td></tr>`).join('') +
         '</tbody></table></div>' : ''}
       <div class="muted small" style="margin-top:6px">資料來源：${esc(H.trust || '統一')}投信每日申購買回清單。台股為張、海外為股；權重為占基金淨資產 %，權重變化為百分點。
-        本基金為現金申購買回，持股不會隨申購按比例增減：<b>張數增減就是經理人的買賣</b>；權重變化另含股價漲跌的影響（張數不變、權重也會變）。標「新」= 前一持股日沒有持有。</div></section>`;
+        本基金為現金申購買回：申購進來的資金由經理人買進股票，所以<b>申購多的日子加碼會偏多</b>、贖回多的日子減碼會偏多。${S.u1 == null ? '' : `今天單位數 1 日 ${sgn(S.u1)}%，張數增幅接近這個比例的持股，多半是跟著申購買進；明顯超過的才比較像經理人的判斷。`}權重變化另含股價漲跌的影響（張數不變、權重也會變）。標「新」= 前一持股日沒有持有。</div></section>`;
   onSeg('holdSeg', v => { localStore('holdSort', null, v); renderHoldings(code); });
   $('#view').addEventListener('click', onRowClick);
 }

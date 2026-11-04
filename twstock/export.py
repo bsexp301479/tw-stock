@@ -4,14 +4,16 @@
   latest.json        今日總覽：大盤統計、台指期日 K、類股/產業鏈/概念股資金流（含回放用的每日座標）、
                      每檔股票最新指標、融資融券（margin）、ETF（etfs，與股票完全分開）、
                      已支援持股的主動 ETF（holdings）、市場寬度（breadth）
-  stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈、最新融資融券、主動 ETF 持有（active）
+  screen.json        條件選股與排行擴充：每檔股票的價量、營收、融資融券欄位（欄式，和 latest.json stocks 合併使用）
+  stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈、最新融資融券、主動 ETF 持有（active）、
+                     融資融券序列（mg）、投信買超中的主動 ETF（act）
   etfs/{代號}.json   主動 ETF 持股：近 HOLD_DAYS 個持股日的張數與權重、最新一天的增減
 """
 import json
 import os
 import time
 from bisect import bisect_left
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -39,6 +41,10 @@ COVER_MIN = 99.0               # 維持率分子涵蓋的融資張數 ÷ 官方�
 HOLD_DAYS = 60                 # ETF 持股 JSON 的持股日數
 ACTIVE_TOP = 20                # 主動 ETF 彙總排行（第 7 輪 F7-2）各區塊的列數
 BREADTH_DAYS = 60              # 市場寬度走勢天數
+NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到小，取符合的最大 N）
+CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
+SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
+               "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt")
 _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
 
@@ -249,6 +255,58 @@ def stock_margin(rows: dict, mdate, d5):
     return out
 
 
+def margin_conv(rows, ev):
+    """
+    融資融券的官方換算（面額變更、減資等）。rows：{日期: (融資前日, 融資餘額, 限額, 融券前日, 融券餘額, 註記)}（該股全部日期）；
+    ev：_price_events 的事件。股本事件（CAP_TYPES、參考價變動 ≥ 10%）生效後第一個融資融券日 d：
+    k = d 的融資前日餘額 ÷ 前一個融資融券日的融資餘額（融資為 0 改用融券）；|k − 1| ≥ CONV_MIN 才算換算。
+    回傳 [{"d", "k"（4 位）, "t"}]（舊到新）；d 之前的餘額乘上 k 即與 d 之後同一單位。
+    """
+    ds, out = sorted(rows), []
+    for e in ev:
+        if e["t"] not in CAP_TYPES or abs(e["r"] / e["p"] - 1) < 0.1:
+            continue
+        j = next((i for i, d in enumerate(ds) if str(d) >= e["d"]), None)
+        if not j:                                   # 找不到，或事件在第一筆融資融券之前
+            continue
+        cur, prev = rows[ds[j]], rows[ds[j - 1]]
+        k = cur[0] / prev[1] if prev[1] else cur[3] / prev[4] if prev[4] else None
+        if k is not None and abs(k - 1) >= CONV_MIN:
+            out.append({"d": str(ds[j]), "k": round(k, 4), "t": e["t"]})
+    return out
+
+
+def conv_k(conv, day):
+    """day 的餘額換算到最新單位要乘上的係數 = day 之後所有換算的 k 相乘。"""
+    k = 1.0
+    for c in conv:
+        if c["d"] > str(day):
+            k *= c["k"]
+    return k
+
+
+def screen_margin(rows, mdate, d5, conv, market):
+    """C3／F8-3 的融資融券欄位（張、%）；5 日增減以換算後的 5 日前餘額計算。該市場沒有資料或該股不在清單 → 全部 None。"""
+    r = stock_margin(rows, mdate, d5) if mdate else None
+    if r is None:
+        return dict.fromkeys(("mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt"))
+    old = rows.get(d5) if d5 else None
+    k = conv_k(conv, d5) if old else 1.0
+    return {"mb": r["mb"], "m1": r["m1"], "m5": round(r["mb"] - old[1] * k) if old else None,
+            "sb": r["sb"], "s1": r["s1"], "s5": round(r["sb"] - old[4] * k) if old else None,
+            "sr": r["sr"], "mu": r["mu"], "mnt": (r.get("nt") or None) if market == "TWSE" else None}
+
+
+def margin_series(d_, rows, conv):
+    """個股 JSON 的 mg：與 prices.d 對齊的官方原始餘額（張），沒有資料的日期 null；k = 換算紀錄（沒有就不放）。該股沒有任何融資融券列 → None。"""
+    if not rows:
+        return None
+    mg = {"mb": [rows[d][1] if d in rows else None for d in d_], "sb": [rows[d][4] if d in rows else None for d in d_]}
+    if conv:
+        mg["k"] = conv
+    return mg
+
+
 def market_margin(dates, official, stocks, etfs, close):
     """
     一個市場的融資融券區塊（latest.json 的 margin.TWSE／margin.TPEx）。
@@ -279,7 +337,7 @@ def market_margin(dates, official, stocks, etfs, close):
 
 
 def _load_margin(cur):
-    """回傳 (各市場日期, 官方合計, 股票列, ETF 列, 個股 rows)；沒有融資融券資料時日期為空。"""
+    """回傳 (各市場日期, 官方合計, 股票列, ETF 列, 個股 rows（完整歷史）)；沒有融資融券資料時日期為空。"""
     mdates = [r[0] for r in cur.execute("SELECT DISTINCT TOP 25 trade_date FROM margin_market ORDER BY trade_date DESC")][::-1]
     dates, official = defaultdict(list), defaultdict(dict)
     stocks, etfs = defaultdict(lambda: defaultdict(list)), defaultdict(lambda: defaultdict(list))
@@ -293,8 +351,9 @@ def _load_margin(cur):
     for code, m, d, mp, mb, ml, sp, sb, nt in cur.execute("""
         SELECT s.stock_code, s.market_type, x.trade_date, x.margin_prev, x.margin_balance, x.margin_limit,
                x.short_prev, x.short_balance, x.note
-        FROM margin_trades x JOIN stocks s ON s.stock_id = x.stock_id WHERE x.trade_date >= ?""", mdates[0]):
-        stocks[m][d].append((code, mp, mb, sp, sb))
+        FROM margin_trades x JOIN stocks s ON s.stock_id = x.stock_id"""):     # 個股完整歷史（融資融券圖、換算）
+        if d >= mdates[0]:                                                  # 市場彙總仍只用最近 25 天
+            stocks[m][d].append((code, mp, mb, sp, sb))
         per_stock[code][d] = (mp, mb, ml, sp, sb, nt)
     for code, m, d, mp, mb, sp, sb in cur.execute("""
         SELECT e.etf_code, e.market_type, x.trade_date, x.margin_prev, x.margin_balance, x.short_prev, x.short_balance
@@ -341,7 +400,7 @@ def _load_holdings(cur):
     """{ETF 代號: (持股日 [舊到新], {持股日: 彙總列}, {持股日: {(類別, 代號): (名稱, 股數, 權重)}})}，各取最近 HOLD_DAYS 個持股日。"""
     summary = defaultdict(dict)
     for code, d, *v in cur.execute("""
-        SELECT e.etf_code, s.hold_date, s.nav, s.nav_unit, s.n_stocks, s.stock_weight, s.futures_lots, s.futures_amount
+        SELECT e.etf_code, s.hold_date, s.nav, s.nav_unit, s.n_stocks, s.stock_weight, s.futures_lots, s.futures_amount, s.units
         FROM etf_holding_summary s JOIN etfs e ON e.etf_id = s.etf_id ORDER BY s.hold_date"""):
         summary[code][d] = v
     if not summary:
@@ -392,13 +451,40 @@ def holding_table(dates, held, tw):
 
 def holding_export(code, dates, summary, held, tw, name, market):
     """etfs/{代號}.json。金額單位：億元；nu 每單位淨值（元）；sw 股票權重合計（%）；fl 期貨口數。"""
-    nav, nu, n, sw, fl, fa = summary[dates[-1]]
+    nav, nu, n, sw, fl, fa = summary[dates[-1]][:6]
     rows, out = holding_table(dates, held, tw)
     f = HOLDINGS[code]
     return {"code": code, "n": name, "m": market, "fund": f.fund, "delay": f.delay, "trust": f.trust, "dates": [str(d) for d in dates],
             "sum": {"d": str(dates[-1]), "nav": _f(float(nav) / YI), "nu": _f(nu), "n": n, "sw": _f(sw),
-                    "fl": fl, "fa": _f(float(fa) / YI)},
+                    "fl": fl, "fa": _f(float(fa) / YI), **({"u1": u} if (u := unit_change(summary, dates)) is not None else {})},
             "rows": rows, "out": out}
+
+
+def unit_change(summary, dates):
+    """P21：單位數 1 日變化（%）= 最新持股日 ÷ 前一持股日 − 1；只有一個持股日、任一天沒有單位數或為 0 → None。"""
+    if len(dates) < 2:
+        return None
+    a, b = (summary[d][6] if d in summary and len(summary[d]) > 6 else None for d in (dates[-1], dates[-2]))
+    return round((a / b - 1) * 100, 2) if a and b else None
+
+
+def active_trust(holdings, tw, flow_date):
+    """B16：{股票代號: 國內主動 ETF 在法人資料日的張數增減合計}（含新進、出清；合計 0 不列）。
+    只取 delay 0、最新持股日 = flow_date、且有前一持股日的 ETF；跨境 ETF（delay 1）不計入。"""
+    out = defaultdict(int)
+    for code, (dates, _, held) in holdings.items():
+        if HOLDINGS[code].delay or dates[-1] != flow_date or len(dates) < 2:
+            continue
+        last, prev = dates[-1], dates[-2]
+        lots = lambda c, d: round(held[d][("ST", c)][1] / 1000) if ("ST", c) in held[d] else 0
+        for c in {c for d in (last, prev) for (kind, c) in held[d] if kind == "ST" and c in tw}:
+            out[c] += lots(c, last) - lots(c, prev)
+    return {c: v for c, v in out.items() if v}
+
+
+def trust_share(t, e):
+    """B16：主動 ETF 占投信買賣超的 %（四捨五入整數）；同向且 |e| ≤ |t| 才有，其他（投信 0、反向、超過）→ None。"""
+    return round(e / t * 100) if t and e and (t > 0) == (e > 0) and abs(e) <= abs(t) else None
 
 
 def stock_active(holdings, tw):
@@ -505,6 +591,55 @@ def breadth_calc(series, days, turnover):
                   "vr": round(tv[-1] / (sum(prior) / len(prior)), 2) if tv[-1] and len(prior) == 20 and all(prior) else None,
                   "s20": [pct(a, n) for a, n in zip(cnt["a20"], cnt["n20"])], "from": str(out_days[0])}
     return out
+
+
+# ─── 條件選股（第 8 輪 F8-2）────────────────────────────
+def price_stats(d_, adj, tv, days, idx):
+    """
+    C3 價量欄位。d_：該股日線日期（舊到新，最後一列 = 資料日）；adj：還原收盤（無成交 None）；tv：成交額（元，None 當 0）；
+    days：全市場交易日（舊到新，最後一天 = 資料日）；idx：{日期: 該市場指數收盤}。
+    """
+    yi = [float(x or 0) / YI for x in tv]
+    px = [x for x in adj if x is not None]
+    lc = px[-1] if px else None                          # 最後成交的還原收盤（今天無成交時是之前的收盤）
+    traded = adj[-1] is not None
+    out = {"a20": _f(sum(yi[-20:]) / 20) if len(yi) >= 20 else None}
+    prior = yi[-21:-1]
+    out["vr"] = _f(yi[-1] / (sum(prior) / 20)) if len(prior) == 20 and sum(prior) > 0 else None
+    raw = {}
+    for n in (5, 20, 60):
+        b = days[-1 - n] if len(days) > n else None
+        base = next((a for d, a in zip(reversed(d_), reversed(adj)) if d <= b and a is not None), None) \
+            if b is not None and d_[0] <= b else None
+        raw[n] = (lc / base - 1) * 100 if base and lc else None
+        out[f"r{n}"] = _f(raw[n])
+    for n in (20, 60):
+        b = days[-1 - n] if len(days) > n else None
+        ir = (float(idx[days[-1]]) / float(idx[b]) - 1) * 100 if b in idx and days[-1] in idx else None
+        out[f"rs{n}"] = _f(raw[n] - ir) if raw[n] is not None and ir is not None else None
+    for n in (20, 60):
+        out[f"b{n}"] = _f((lc / (sum(px[-n:]) / n) - 1) * 100) if len(px) >= n else None
+    out["nh"] = next((n for n in NH_DAYS if traded and len(px) > n and px[-1] > max(px[-n - 1:-1])), 0)
+    out["nl"] = next((n for n in NH_DAYS if traded and len(px) > n and px[-1] < min(px[-n - 1:-1])), 0)
+    return out
+
+
+def revenue_stats(rows):
+    """C3 營收欄位。rows：_revenue_rows 的輸出（舊到新）；取該股最新一個月。r3 = 最近 3 個月連續且年增都 > 0。"""
+    if not rows:
+        return dict.fromkeys(("rm", "ry", "rc", "rh", "r3"))
+    y, m, _, _, yoy, cum, hi = rows[-1]
+    l3 = rows[-3:]
+    r3 = len(l3) == 3 and l3[0][0] * 12 + l3[0][1] + 2 == y * 12 + m and all(r[4] is not None and r[4] > 0 for r in l3)
+    return {"rm": y * 100 + m, "ry": yoy, "rc": cum, "rh": hi, "r3": int(r3)}
+
+
+def screen_build(rows, head):
+    """screen.json：欄式。rows：{代號: {SCREEN_KEYS…}}（依代號排序）；head：d、fd、md。rmd = 各營收月份的檔數。"""
+    codes = sorted(rows)
+    rmd = Counter(rows[c]["rm"] for c in codes if rows[c]["rm"] is not None)
+    return {**head, "rmd": {str(k): v for k, v in sorted(rmd.items(), reverse=True)}, "codes": codes,
+            **{k: [rows[c][k] for c in codes] for k in SCREEN_KEYS}}
 
 
 def _load_breadth(cur, d):
@@ -672,6 +807,10 @@ def export_all() -> float:
     for code, (hdates, summary, held) in holdings.items():
         _write(SITE_DATA_DIR / "etfs" / f"{code}.json", holding_export(code, hdates, summary, held, tw, *etf_names[code]))
     active = stock_active(holdings, tw)
+    act_lots = active_trust(holdings, tw, dates[-1])            # B16（第 8 輪 F8-1）
+    idx_close = {m: {d: c for d, c, _ in index_rows.get(code, []) if c is not None}
+                 for m, code in (("TWSE", "TAIEX"), ("TPEx", "TPEX"))}
+    screen = {}           # 條件選股：{代號: SCREEN_KEYS 欄位}
 
     # ── 個股檔 + 最新指標 ──
     window = set(dates)
@@ -700,6 +839,15 @@ def export_all() -> float:
         miss_all += [(code, x) for x in miss]
         n_ev += len(ev)
         n_inferred += sum(e["t"] == "調" for e in ev)
+        cap = _cap_event(ev, latest_date)
+        rev_rows = _revenue_rows(revenue.get(code, []))
+        mrows = mper.get(code, {})
+        conv = margin_conv(mrows, ev)
+        mg = margin_series(d_, mrows, conv)
+        act = None
+        if code in act_lots and dates[-1] in d_ and tn[d_.index(dates[-1])] is not None:
+            t_lots = round(tn[d_.index(dates[-1])] / 1000)
+            act = {"d": str(dates[-1]), "t": t_lots, "e": act_lots[code], "p": trust_share(t_lots, act_lots[code])}
 
         _write(SITE_DATA_DIR / "stocks" / f"{code}.json", {
             "code": code, **info, "concepts": concept_of.get(code, []), "chains": chain_of.get(code, []),
@@ -710,15 +858,17 @@ def export_all() -> float:
             "insti": {"f": [round(x / 1000) if x is not None else None for x in fn],   # 張
                       "t": [round(x / 1000) if x is not None else None for x in tn],
                       "dl": [round(x / 1000) if x is not None else None for x in dn]},
-            "revenue": _revenue_rows(revenue.get(code, []))[-REVENUE_MONTHS:],
+            "revenue": rev_rows[-REVENUE_MONTHS:],
             "fund": dict(zip(("pe", "pb", "dy"), map(_f, fund[code][:3])), date=str(fund[code][3]))
                     if code in fund else None,
-            **({"capchg": cap} if (cap := _cap_event(ev, latest_date)) else {}),
+            **({"capchg": cap} if cap else {}),
             **({"alerts": alerts[code]} if code in alerts else {}),
             # 該市場有融資融券資料時才有 margin；null = 不在信用交易清單（無信用交易）
             **({"margin": stock_margin(mper.get(code, {}), mlast[info["market"]], m5[info["market"]])}
                if info["market"] in mlast else {}),
             **({"active": active[code]} if code in active else {}),
+            **({"mg": mg} if mg else {}),
+            **({"act": act} if act else {}),
         })
         # 市場寬度：還原收盤（無成交日不列入）、成交額
         b_series[info["market"]].append({d_[i]: float(c[i]) * af[i] for i in range(len(d_)) if d_[i] >= b_from and c[i] is not None})
@@ -790,6 +940,11 @@ def export_all() -> float:
             **({"pe": _f(fund[code][0]), "pb": _f(fund[code][1]), "dy": _f(fund[code][2])}
                if code in fund else {}),
         }
+        mkt = info["market"]
+        screen[code] = {**price_stats(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))],
+                                      tv, b_days, idx_close[mkt]),
+                        **revenue_stats(rev_rows), "cap": int(cap is not None),
+                        **screen_margin(mrows, mlast.get(mkt), m5.get(mkt), conv, mkt)}
 
     industries = defaultdict(list)
     for code in snapshot:
@@ -824,7 +979,9 @@ def export_all() -> float:
         "forecast": forecast,
         "margin": margin,
         "etfs": etf_block(etf_latest, etf_margin_rows),
-        "holdings": {code: {"d": str(hd[-1]), "n": etf_names[code][0]} for code, (hd, _, _) in holdings.items()},
+        "holdings": {code: {"d": str(hd[-1]), "n": etf_names[code][0],
+                            **({"u1": u} if (u := unit_change(hs, hd)) is not None else {})}
+                     for code, (hd, hs, _) in holdings.items()},
         "active_rank": active_rank(holdings, tw, lambda c, d: close(c, d, False)) if holdings else None,   # 第 7 輪 F7-2
         # o：官方家數（資料日當天沒有為 null）；其餘為自算
         "breadth": {m: {"o": official_breadth.get(m), **b} for m, b in breadth_calc(b_series, b_days, b_turnover).items()},
@@ -835,8 +992,13 @@ def export_all() -> float:
         },
         "stocks": snapshot,
     }
+    # screen.json 在 latest.json 之前寫：中途失敗時前端比對 d／fd 會顯示不同步
+    S = screen_build(screen, {"d": str(latest_date), "fd": str(dates[-1]), "md": {m: str(d) for m, d in mlast.items()}})
+    _write(SITE_DATA_DIR / "screen.json", S)
     _write(SITE_DATA_DIR / "latest.json", latest)
     size = (SITE_DATA_DIR / "latest.json").stat().st_size / 1024
+    print(f"  📌 screen.json {(SITE_DATA_DIR / 'screen.json').stat().st_size / 1024:.0f} KB（營收月份 " +
+          "、".join(f"{k[:4]}/{k[4:]} {v:,} 檔" for k, v in S["rmd"].items()) + "）")
     print(f"  📌 還原事件 {n_ev} 筆（上櫃反推 {n_inferred} 筆）")
     if bad_all:
         print(f"⚠️  還原係數超出 {ADJ_MIN}～{ADJ_MAX}，未採用 {len(bad_all)} 筆：" +

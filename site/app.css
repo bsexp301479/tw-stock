@@ -201,3 +201,16 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .al-new{background:var(--blue)}                                  /* E2-4：新建倉 */
 .pill.hold{margin-left:6px;border-color:var(--blue);color:var(--blue)}
 .tbl .nm .pill{font-size:10px;margin-left:6px}
+/* 第 8 輪 F8-2：條件選股 */
+.al-c{background:var(--violet)}                                    /* 90 天內股本變動 */
+.chip{border:1px solid var(--border2);background:var(--card);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--text)}
+.chip.ref{color:var(--text2);border-style:dashed}
+.chip.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+.scr-panel{margin:8px 0}
+.scr-panel summary{cursor:pointer;font-weight:600;font-size:13px;padding:4px 0}
+.scr-grp{display:grid;grid-template-columns:64px minmax(0,1fr);gap:4px 8px;padding:6px 0;border-top:1px solid var(--border)}
+.scr-grp>b{font-size:12px;color:var(--text2);font-weight:500;padding-top:3px}
+.scr-c{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}
+.scr-c input[type=number]{width:64px;padding:2px 6px;border:1px solid var(--border);border-radius:6px;background:var(--card2);color:var(--text);font-size:12px}
+.scr-n{font-size:11px;color:var(--text3)}
+.tbl th.sort{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
