@@ -11,6 +11,7 @@
 """
 import json
 import os
+import statistics
 import time
 from bisect import bisect_left
 from collections import Counter, defaultdict
@@ -44,7 +45,10 @@ BREADTH_DAYS = 60              # 市場寬度走勢天數
 NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到小，取符合的最大 N）
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
-               "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt")
+               "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp")
+VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
+VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
+VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
 _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
 
@@ -195,6 +199,14 @@ def _cap_event(ev, today):
     return None
 
 
+def amount_by_market(rows):
+    """F9-1：rows = [(日期, 市場, 單位, 買賣差額)] → {"TWSE": {日期: {單位: 差額}}, "TPEx": {…}}；insti_official 只用 TWSE。"""
+    out = {"TWSE": defaultdict(dict), "TPEx": defaultdict(dict)}
+    for d, m, unit, net in rows:
+        out[m][d][unit] = net
+    return out
+
+
 def _insti_official(amount):
     """A2：amount = {日期: {單位: 買賣差額(元)}}；有「合計」的最後一天為資料日。外資 = 外資及陸資（外資自營商已含在自營商）。"""
     days = [d for d in sorted(amount) if amount[d].get("total") is not None]
@@ -207,6 +219,82 @@ def _insti_official(amount):
             "dealer": yi((a.get("dealer_self") or 0) + (a.get("dealer_hedge") or 0)), "total": yi(a["total"]),
             "d": [str(d) for d in recent], "f": [yi(v) for v in foreign[-INSTI_DAYS:]],
             "t": [yi(amount[d]["total"]) for d in recent], "fs": streak(foreign)}
+
+
+# ─── 估值的一年位置（第 9 輪 F9-4，A10＋B7）────────────────────
+def position(series, today):
+    """位置 % = series 中 ≤ today 的筆數 ÷ 筆數 × 100（series 含 today 當天）；series 空或 today 為 None → None。"""
+    if today is None or not series:
+        return None
+    return sum(v <= today for v in series) / len(series) * 100
+
+
+def market_valuation(rows, days):
+    """
+    A10：rows = [(日期, 市場, 本益比, 淨值比, 殖利率)]（float 或 None）；days = 窗口日期（舊到新）。
+    每天、分市場取中位數：本益比、淨值比只計入 > 0，殖利率計入非 null（含 0）。
+    回傳 {市場: {d, from, days, n, pe, pb, dy, s, sf}}；pe／pb／dy = {v 中位數, p 位置 %（1 位）, lo, hi}；
+    s = 最近 VAL_SPARK 天本益比中位數，sf = s 的第一天。
+    """
+    per = defaultdict(lambda: defaultdict(lambda: ([], [], [])))
+    window = set(days)
+    for d, m, pe, pb, dy in rows:
+        if d not in window:
+            continue
+        b = per[m][d]
+        if pe is not None and pe > 0:
+            b[0].append(pe)
+        if pb is not None and pb > 0:
+            b[1].append(pb)
+        if dy is not None:
+            b[2].append(dy)
+    out = {}
+    for m, by_day in per.items():
+        ds = [d for d in days if by_day.get(d) and by_day[d][0]]
+        if not ds:
+            continue
+        r = {"d": str(ds[-1]), "from": str(ds[0]), "days": len(ds), "n": len(by_day[ds[-1]][0])}
+        for i, k in enumerate(("pe", "pb", "dy")):
+            s = [statistics.median(by_day[d][i]) for d in ds if by_day[d][i]]
+            v = statistics.median(by_day[ds[-1]][i]) if by_day[ds[-1]][i] else None
+            r[k] = None if v is None else {"v": round(v, 2), "p": round(position(s, v), 1), "lo": round(min(s), 2), "hi": round(max(s), 2)}
+        r["s"], r["sf"] = [round(statistics.median(by_day[d][0]), 2) for d in ds[-VAL_SPARK:]], str(ds[-VAL_SPARK:][0])
+        out[m] = r
+    return out
+
+
+def stock_valuation(series, today):
+    """
+    B7：series = {"pe"|"pb"|"dy": [窗口內 > 0 的值]}；today = {"pe", "pb", "dy": 窗口最後一天的值（可為 None）}。
+    今天值 None 或 ≤ 0（虧損、無股利）或有效天數 < VAL_MIN → 不輸出該欄。回傳 {欄: [位置 %（整數）, lo, hi]}；全部不輸出 → None。
+    """
+    out = {}
+    for k in ("pe", "pb", "dy"):
+        s, v = series.get(k, []), today.get(k)
+        if v is None or v <= 0 or len(s) < VAL_MIN:
+            continue
+        out[k] = [round(position(s, v)), round(min(s), 2), round(max(s), 2)]
+    return out or None
+
+
+def _load_valuation(cur):
+    """讀窗口內的 stock_fundamentals（約 47 萬列）→ (市場估值, {代號: 個股估值}, 窗口最後一天)。"""
+    days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {VAL_DAYS} trade_date FROM stock_fundamentals ORDER BY trade_date DESC")][::-1]
+    if not days:
+        return None, {}, None
+    f = lambda x: None if x is None else float(x)
+    mrows, series, today = [], defaultdict(lambda: {"pe": [], "pb": [], "dy": []}), {}
+    for d, m, code, pe, pb, dy in cur.execute("""
+        SELECT f.trade_date, s.market_type, s.stock_code, f.pe_ratio, f.pb_ratio, f.dividend_yield
+        FROM stock_fundamentals f JOIN stocks s ON s.stock_id = f.stock_id WHERE f.trade_date BETWEEN ? AND ?""", days[0], days[-1]):
+        pe, pb, dy = f(pe), f(pb), f(dy)
+        mrows.append((d, m, pe, pb, dy))
+        for k, v in (("pe", pe), ("pb", pb), ("dy", dy)):
+            if v is not None and v > 0:
+                series[code][k].append(v)
+        if d == days[-1]:
+            today[code] = {"pe": pe, "pb": pb, "dy": dy}
+    return market_valuation(mrows, days) or None, {c: stock_valuation(series[c], today.get(c, {})) for c in series}, days[-1]
 
 
 # ─── 融資融券（B2＋A4）與 ETF（E1）────────────────────────
@@ -238,17 +326,18 @@ def maint_ratio(items, official_lots, amount_k):
     return round(sum(n * c for n, c in items if c is not None) / amount_k * 100, 2), cov
 
 
-def stock_margin(rows: dict, mdate, d5):
+def stock_margin(rows: dict, mdate, d5, conv=()):
     """
     個股 JSON 的 margin。rows：{日期: (融資前日, 融資餘額, 融資限額, 融券前日, 融券餘額, 註記)}；
     mdate：該市場最新融資融券日；d5：往前第 5 個融資融券日（不足 6 天為 None）。該股當天沒有列 → None（無信用交易）。
+    conv：margin_conv 的換算紀錄；m5 以換算後的 5 日前餘額計算（第 9 輪 P23，與 screen_margin 相同）。
     """
     r = rows.get(mdate)
     if r is None:
         return None
     mp, mb, ml, sp, sb, nt = r
     old = rows.get(d5) if d5 else None
-    out = {"d": str(mdate), "mb": mb, "m1": mb - mp, "m5": mb - old[1] if old else None,
+    out = {"d": str(mdate), "mb": mb, "m1": mb - mp, "m5": round(mb - old[1] * conv_k(conv, d5)) if old else None,
            "sb": sb, "s1": sb - sp, "sr": short_ratio(sb, mb), "mu": usage(mb, ml)}
     if nt:
         out["nt"] = nt
@@ -287,12 +376,12 @@ def conv_k(conv, day):
 
 def screen_margin(rows, mdate, d5, conv, market):
     """C3／F8-3 的融資融券欄位（張、%）；5 日增減以換算後的 5 日前餘額計算。該市場沒有資料或該股不在清單 → 全部 None。"""
-    r = stock_margin(rows, mdate, d5) if mdate else None
+    r = stock_margin(rows, mdate, d5, conv) if mdate else None
     if r is None:
         return dict.fromkeys(("mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt"))
     old = rows.get(d5) if d5 else None
     k = conv_k(conv, d5) if old else 1.0
-    return {"mb": r["mb"], "m1": r["m1"], "m5": round(r["mb"] - old[1] * k) if old else None,
+    return {"mb": r["mb"], "m1": r["m1"], "m5": r["m5"],
             "sb": r["sb"], "s1": r["s1"], "s5": round(r["sb"] - old[4] * k) if old else None,
             "sr": r["sr"], "mu": r["mu"], "mnt": (r.get("nt") or None) if market == "TWSE" else None}
 
@@ -765,9 +854,7 @@ def export_all() -> float:
     for code, d, c, ch in cur.execute(
             "SELECT index_code, trade_date, close_price, change FROM market_index ORDER BY index_code, trade_date"):
         index_rows[code].append((d, c, ch))
-    amount = defaultdict(dict)
-    for d, unit, net in cur.execute("SELECT trade_date, unit, net_amount FROM insti_amount"):
-        amount[d][unit] = net
+    amount = amount_by_market(cur.execute("SELECT trade_date, market, unit, net_amount FROM insti_amount"))
     alerts = defaultdict(list)
     for code, kind, ann, start, end, reason, measure in cur.execute("""
         SELECT s.stock_code, a.alert_type, a.announce_date, a.start_date, a.end_date, a.reason, a.measure
@@ -792,6 +879,7 @@ def export_all() -> float:
     # 寬度輸出 BREADTH_DAYS 天，前面多 60 天給 MA60
     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
     status = build_status(cur, latest_date, now)
+    valuation, stock_val, val_date = _load_valuation(cur)      # F9-4
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
@@ -862,9 +950,11 @@ def export_all() -> float:
             "fund": dict(zip(("pe", "pb", "dy"), map(_f, fund[code][:3])), date=str(fund[code][3]))
                     if code in fund else None,
             **({"capchg": cap} if cap else {}),
+            # F9-4：估值一年位置；股本變動（cap）時官方值可能尚未調整，不輸出；只有窗口最後一天有官方值的股票才有
+            **({"val": {"d": str(val_date), **stock_val[code]}} if stock_val.get(code) and not cap else {}),
             **({"alerts": alerts[code]} if code in alerts else {}),
             # 該市場有融資融券資料時才有 margin；null = 不在信用交易清單（無信用交易）
-            **({"margin": stock_margin(mper.get(code, {}), mlast[info["market"]], m5[info["market"]])}
+            **({"margin": stock_margin(mrows, mlast[info["market"]], m5[info["market"]], conv)}
                if info["market"] in mlast else {}),
             **({"active": active[code]} if code in active else {}),
             **({"mg": mg} if mg else {}),
@@ -944,7 +1034,8 @@ def export_all() -> float:
         screen[code] = {**price_stats(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))],
                                       tv, b_days, idx_close[mkt]),
                         **revenue_stats(rev_rows), "cap": int(cap is not None),
-                        **screen_margin(mrows, mlast.get(mkt), m5.get(mkt), conv, mkt)}
+                        **screen_margin(mrows, mlast.get(mkt), m5.get(mkt), conv, mkt),
+                        "pbp": (stock_val.get(code) or {}).get("pb", [None])[0]}     # F9-4：淨值比一年位置（cap 由前端估值規則排除）
 
     industries = defaultdict(list)
     for code in snapshot:
@@ -966,7 +1057,9 @@ def export_all() -> float:
         "dates": replay_dates,
         "market": {k: {**v, "turnover": round(v["turnover"], 1)} for k, v in market.items()},
         "insti": {k: round(v, 1) for k, v in insti_total.items()},
-        "insti_official": _insti_official(amount),
+        "insti_official": _insti_official(amount["TWSE"]),
+        "insti_official_tpex": _insti_official(amount["TPEx"]),      # 第 9 輪 F9-1：上櫃官方（結構同 insti_official）
+        "valuation": valuation,                                      # 第 9 輪 F9-4：市場估值一年位置
         "insti_otc": {k: round(v, 1) for k, v in insti_otc.items()},
         "index": {code: {"date": str(rows[-1][0]), "c": _f(rows[-1][1]), "ch": _f(rows[-1][2]),
                          "p": _f(_pct(rows[-1][1], rows[-1][2])), "from": str(rows[-INDEX_DAYS:][0][0]),

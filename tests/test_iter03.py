@@ -100,7 +100,7 @@ def test_assess():
 
 def _full_snapshot(days, skip=()):
     ok = {"prices.TWSE": Row(1086), "prices.TPEx": Row(889), "pe.TWSE": Row(1082, 870, 1082, 1082),
-          "pe.TPEx": Row(888, 675, 888, 888), "insti.TWSE": Row(1077), "insti.TPEx": Row(784), "amount": Row(6),
+          "pe.TPEx": Row(888, 675, 888, 888), "insti.TWSE": Row(1077), "insti.TPEx": Row(784), "amount": Row(6), "amount.TPEx": Row(6),
           "index.TAIEX": Row(1), "index.TPEX": Row(1), "futures": Row(6), "futures_oi": Row(9),
           "etf.TWSE": Row(250), "etf.TPEx": Row(120), "margin.TWSE": Row(1100), "margin.TPEx": Row(900),   # 第 4 輪
           "breadth.TWSE": Row(1), "breadth.TPEx": Row(1), **{f"holdings.{c}": Row(50) for c in health.HOLDINGS}}   # 第 5 輪
@@ -360,7 +360,8 @@ FUT_HEAD = "交易日期,契約,到期月份(週別),開盤價,最高價,最低�
 OI_HEAD = "日期,商品名稱,身份別,多方交易口數,多方交易契約金額(千元),空方交易口數,空方交易契約金額(千元),多空交易口數淨額,多空交易契約金額淨額(千元),多方未平倉口數,多方未平倉契約金額(千元),空方未平倉口數,空方未平倉契約金額(千元),多空未平倉口數淨額,多空未平倉契約金額淨額(千元)\r\n"
 ALL_EP = ("MI_INDEX", "BWIBBU_d", "fund/T86", "BFI82U", "dailyQuotes", "peQryDate", "dailyTrade", "futDataDown", "futContractsDateDown",
           "MI_MARGN", "margin/balance", "highlight", "GetPCF",     # 第 5 輪：GetPCF 的日期是持股日
-          "etf/buyback")                                            # 第 7 輪群益：和 GetPCF 共用已公布的持股日（down 才用得到）
+          "etf/buyback",                                            # 第 7 輪群益：和 GetPCF 共用已公布的持股日（down 才用得到）
+          "insti/summary")                                          # 第 9 輪：上櫃官方法人金額
 # 第 4 輪：行情回應含 ETF 列（另有權證、TDR 等其他證券，兩邊都不可寫入）；融資融券回應含股票與 ETF
 TWSE_ETFS = [f"00{n:03d}" for n in range(100, 350)]          # 250 檔，如 00100
 TPEX_ETFS = [f"00{n:03d}B" for n in range(700, 820)]         # 120 檔，如 00700B
@@ -415,7 +416,7 @@ class World:
                         ("dailyQuotes", self._quotes), ("peQryDate", self._pe), ("dailyTrade", self._tpex_insti),
                         ("indexInfo/inx", self._inx), ("futDataDown", self._fut), ("futContractsDateDown", self._oi),
                         ("MI_MARGN", self._mgn), ("margin/balance", self._tpex_mgn), ("highlight", self._hl), ("GetPCF", self._pcf),
-                        ("etf/buyback", self._cap)):
+                        ("etf/buyback", self._cap), ("insti/summary", self._tpex_amount)):
             if key in url:
                 return fn(form)
         return Resp([]) if "openapi" in url else Resp({"stat": "沒有資料", "tables": []})
@@ -492,6 +493,13 @@ class World:
             return Resp({"stat": "很抱歉，沒有符合條件的資料!"})
         names = ["自營商(自行買賣)", "自營商(避險)", "投信", "外資及陸資(不含外資自營商)", "外資自營商", "合計"]
         return Resp({"stat": "OK", "fields": ["單位名稱", "買進金額", "賣出金額", "買賣差額"], "data": [[n, "1", "1", "0"] for n in names]})
+
+    def _tpex_amount(self, form):                                   # 第 9 輪
+        if self._no("insti/summary", form):
+            return Resp({"stat": "ok", "date": f"{self._date(form):%Y%m%d}", "tables": [{"fields": [], "data": []}]})
+        names = ["外資及陸資合計", "　外資及陸資(不含自營商)", "　外資自營商", "投信", "自營商合計", "　自營商(自行買賣)", "　自營商(避險)", "三大法人合計*"]
+        return Resp({"stat": "ok", "date": f"{self._date(form):%Y%m%d}", "tables": [
+            {"fields": ["單位名稱", "買進金額(元)", "賣出金額(元)", "買賣超(元)"], "data": [[n, "1", "1", "0"] for n in names]}]})
 
     def _empty_tables(self, fields):
         return Resp({"stat": "ok", "tables": [{"fields": fields, "data": []}]})
@@ -587,7 +595,8 @@ class World:
             for r in rows:
                 self.rows[f"index.{r['index_code']}"][date.fromisoformat(r["trade_date"])] = Row(1)
         elif table == "insti_amount":
-            self.rows["amount"][date.fromisoformat(rows[0]["trade_date"])] = Row(len(rows))
+            key = "amount" if rows[0]["market"] == "TWSE" else "amount.TPEx"      # 第 9 輪
+            self.rows[key][date.fromisoformat(rows[0]["trade_date"])] = Row(len(rows))
         elif table == "futures_daily_prices":
             for d in {r["trade_date"] for r in rows}:
                 self.rows["futures"][date.fromisoformat(d)] = Row(sum(r["trade_date"] == d for r in rows))

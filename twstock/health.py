@@ -35,12 +35,15 @@ HOLDINGS = {"00981A": Fund("49YTW", 0, None, "統一"), "00403A": Fund("63YTW", 
             "00982A": Fund("399", 0, None, "群益"), "00992A": Fund("500", 0, date(2025, 12, 30), "群益"),
             "00415A": Fund("504", 0, date(2026, 10, 20), "群益"), "00997A": Fund("502", 1, date(2026, 4, 14), "群益")}
 BREADTH_FROM = date(2026, 11, 3)        # 官方漲跌家數不補歷史，從這天開始收集
+AMOUNT_TPEX_FROM = date(2026, 7, 31)    # 上櫃官方法人金額（第 9 輪）：和上市 insti_amount 同一個起點
+REVENUE_DONE_RATIO = 0.98               # 月營收：該月家數 ≥ 前一月 × 98% 視為公布完成（catchup 共用）
+REVENUE_DUE_DAY = 10                    # 月營收法定公布期限：每月 10 日
 
 SPECS = (
     Spec("prices.TWSE", "上市行情", 800, False), Spec("prices.TPEx", "上櫃行情", 650, False),
     Spec("pe.TWSE", "上市本益比", 800, True), Spec("pe.TPEx", "上櫃本益比", 650, True),
     Spec("insti.TWSE", "上市法人", 800, False), Spec("insti.TPEx", "上櫃法人", 550, False),
-    Spec("amount", "上市法人金額", 6, False),
+    Spec("amount", "上市法人金額", 6, False), Spec("amount.TPEx", "上櫃法人金額", 6, False, AMOUNT_TPEX_FROM),
     Spec("index.TAIEX", "加權指數", 1, False), Spec("index.TPEX", "櫃買指數", 1, False),
     Spec("futures", "台指期", 1, False), Spec("futures_oi", "期貨法人", 9, False),
     Spec("etf.TWSE", "上市ETF", 150, False), Spec("etf.TPEx", "上櫃ETF", 80, False),
@@ -85,7 +88,8 @@ def load_snapshot(cur, start: date, end: date) -> dict:
     for d, market, n in cur.execute("SELECT trade_date, market, COUNT(*) FROM market_breadth WHERE trade_date BETWEEN ? AND ? "
                                     "GROUP BY trade_date, market", start, end).fetchall():
         snap[f"breadth.{market}"][d] = Row(n)
-    for key, sql in (("amount", "SELECT trade_date, COUNT(*) FROM insti_amount WHERE trade_date BETWEEN ? AND ? GROUP BY trade_date"),
+    for key, sql in (("amount", "SELECT trade_date, COUNT(*) FROM insti_amount WHERE market = 'TWSE' AND trade_date BETWEEN ? AND ? GROUP BY trade_date"),
+                     ("amount.TPEx", "SELECT trade_date, COUNT(*) FROM insti_amount WHERE market = 'TPEx' AND trade_date BETWEEN ? AND ? GROUP BY trade_date"),
                      # 只看日盤：夜盤的日期是歸屬日，不代表該日資料已齊
                      ("futures", "SELECT trade_date, COUNT(*) FROM futures_daily_prices WHERE commodity_id = 'TX' AND session = 'DAY' "
                                  "AND trade_date BETWEEN ? AND ? GROUP BY trade_date"),
@@ -308,8 +312,28 @@ def suggest(items, days, stale_alerts) -> str:
     return f"👉 請執行 python3 -m twstock history --start {bad[0]}，再執行 python3 -m twstock collect --catch-up"
 
 
-def check_report(days, snap, now, state, closed, adhoc=(), schedule=None) -> tuple:
-    """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求；schedule 由呼叫端傳入（schedule_status()）。"""
+def revenue_status(today: date, counts: dict, revenue_on, closed) -> tuple:
+    """
+    月營收一行（第 9 輪 B15）：(狀態, 文字)。counts = {(年, 月): 家數}；revenue_on = 最後一次成功收集營收的日期。
+    ✅ 該月家數 ≥ 前一月 × 98%；⏳ 未達且今天 ≤ 10 日（公布期間），或已過 10 日但 revenue_on 是今天或前一個交易日；
+    ❌ 其餘（已過 10 日、收集停了）。月份 = 今天的上一個月（與 collectors.revenue.revenue_month_for 相同）。
+    """
+    y, m = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+    prev = counts.get((y - 1, 12) if m == 1 else (y, m - 1), 0)
+    n = counts.get((y, m), 0)
+    head = f"月營收 {y}/{m:02d}：已收 {n:,} 家" + (f"（前一月 {prev:,} 家的 {n / prev:.0%}）" if prev else "")
+    if n and n >= prev * REVENUE_DONE_RATIO:
+        return OK, f"{head}，✅ 已齊"
+    if today.day <= REVENUE_DUE_DAY:
+        return PENDING, f"{head}，⏳ 公布期間（每月 {REVENUE_DUE_DAY} 日前）"
+    before = trading_days(today - timedelta(days=30), today - timedelta(days=1), closed)
+    if revenue_on and (revenue_on >= today or (before and revenue_on >= before[-1])):
+        return PENDING, f"{head}，⏳ 晚交公司陸續補進（最後收集 {revenue_on:%m/%d}）"
+    return ABNORMAL, f"{head}，最後一次收集營收 {revenue_on or '尚無紀錄'}"
+
+
+def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None) -> tuple:
+    """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求；schedule 由呼叫端傳入（schedule_status()）；revenue = 各月營收家數（None 不印營收一行）。"""
     items, med = evaluate(days, snap, now), medians(snap)
     out = [f"📋 資料完整性檢查：近 {len(days)} 個交易日 {days[0]} ～ {days[-1]}（現在 {now:%Y-%m-%d %H:%M}，台灣時間）",
            f"🕘 最後一次收集：{last_run_line(state.get('last_run'))}"]
@@ -339,17 +363,28 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None) -> tup
                                                     for label, d, r in gaps))
     alerts = state.get("alerts_at")
     out.append(f"\n處置／注意股最後成功：{alerts:%Y-%m-%d %H:%M}" if alerts else "\n處置／注意股最後成功：尚無執行紀錄")
+    rev = revenue_status(now.date(), revenue, state.get("revenue_on"), closed) if revenue is not None else None
+    if rev:
+        out.append(rev[1] if rev[0] != ABNORMAL else f"{rev[1]}，❌ 異常")
     lines = problem_lines(items, state.get("last_run"))
     # 處置／注意股端點只有近幾日，錯過無法回補：落後 2 個交易日以上算異常；沒有紀錄不算（還沒跑過）
     stale = alerts and len(trading_days(alerts.date() + timedelta(days=1), days[-1], closed)) >= 2
     if stale:
         lines.insert(0, f"❌ 處置／注意股：最後成功 {alerts.date()}，端點只有近幾日，請盡快執行 collect --catch-up")
+    if rev and rev[0] == ABNORMAL:
+        lines.append(f"❌ {rev[1]}：已過 {REVENUE_DUE_DAY} 日仍未收齊，收集可能停了")
     abnormal = sum(ln.startswith("❌") for ln in lines)
     out += ["", *lines] if lines else []
     out.append(f"\n結果：異常 {abnormal} 項" if abnormal else "\n結果：無異常")
     if abnormal:
-        out.append(suggest(items, days, bool(stale)))
+        out.append(suggest(items, days, bool(stale) or bool(rev and rev[0] == ABNORMAL)))
     return "\n".join(out), (1 if abnormal else 0)
+
+
+def revenue_counts(cur) -> dict:
+    """{(年, 月): 家數}；SQL 與 collectors.catchup._revenue_counts 相同。"""
+    return {(y, m): n for y, m, n in cur.execute(
+        "SELECT revenue_year, revenue_month, COUNT(*) FROM monthly_revenue GROUP BY revenue_year, revenue_month").fetchall()}
 
 
 def run_check(n: int, now: datetime) -> int:
@@ -362,11 +397,12 @@ def run_check(n: int, now: datetime) -> int:
         # 至少載入 MEDIAN_DAYS 個交易日，--days 小於 20 時中位數才有意義
         start = due_days(now, max(n, MEDIAN_DAYS), closed)[0]
         snap, state = load_snapshot(cur, start, days[-1]), load_state(cur)
+        revenue = revenue_counts(cur)
         adhoc = [r[0] for r in cur.execute("SELECT holiday_date FROM market_holidays WHERE source = 'adhoc' AND holiday_date BETWEEN ? AND ? "
                                            "ORDER BY holiday_date", start, days[-1]).fetchall()]
     finally:
         conn.close()
-    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status())
+    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue)
     print(text)
     return rc
 

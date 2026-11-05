@@ -232,21 +232,31 @@ DDL = [
         CONSTRAINT UQ_price_events UNIQUE (stock_id, event_date, source)
     )
     """,
-    # 上市三大法人買賣金額（證交所 BFI82U，單位：元；含 ETF 等全部證券）
+    # 三大法人買賣金額（單位：元；含 ETF 等全部證券）：上市證交所 BFI82U、上櫃櫃買 insti/summary（第 9 輪加 market）
     """
     IF OBJECT_ID('insti_amount') IS NULL
     CREATE TABLE insti_amount (
         id          INT IDENTITY(1,1) PRIMARY KEY,
         trade_date  DATE          NOT NULL,
+        market      NVARCHAR(10)  NOT NULL CONSTRAINT DF_insti_amount_market DEFAULT 'TWSE'
+                                  CONSTRAINT CK_insti_amount_market CHECK (market IN ('TWSE','TPEx')),
         unit        NVARCHAR(20)  NOT NULL,   -- foreign 外資及陸資(不含外資自營商) / foreign_dealer 外資自營商 /
                                               -- dealer_self 自營商(自行買賣) / dealer_hedge 自營商(避險) / trust 投信 / total 合計
         buy_amount  BIGINT        NULL,
         sell_amount BIGINT        NULL,
         net_amount  BIGINT        NULL,
         created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
-        CONSTRAINT UQ_insti_amount UNIQUE (trade_date, unit)
+        CONSTRAINT UQ_insti_amount_market UNIQUE (trade_date, market, unit)
     )
     """,
+    # 第 9 輪遷移（既有資料庫）：加 market（既有列 = TWSE）→ 刪舊唯一鍵 → 建新唯一鍵；每一步都先判斷，可重複執行
+    "IF COL_LENGTH('insti_amount', 'market') IS NULL "
+    "ALTER TABLE insti_amount ADD market NVARCHAR(10) NOT NULL CONSTRAINT DF_insti_amount_market DEFAULT 'TWSE' "
+    "CONSTRAINT CK_insti_amount_market CHECK (market IN ('TWSE','TPEx'))",
+    "IF EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_insti_amount' AND parent_object_id = OBJECT_ID('insti_amount')) "
+    "ALTER TABLE insti_amount DROP CONSTRAINT UQ_insti_amount",
+    "IF NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_insti_amount_market' AND parent_object_id = OBJECT_ID('insti_amount')) "
+    "ALTER TABLE insti_amount ADD CONSTRAINT UQ_insti_amount_market UNIQUE (trade_date, market, unit)",
     # 收集執行紀錄（時間為台灣時間，由 Python 傳入；容器的 GETDATE() 是 UTC，不可使用）
     """
     IF OBJECT_ID('collect_runs') IS NULL

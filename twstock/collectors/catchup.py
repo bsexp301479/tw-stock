@@ -14,7 +14,7 @@ import pyodbc
 from .. import db, fetch, health
 from ..config import DB_CONFIG, SITE_DATA_DIR, tw_now
 from ..fetch import FetchError
-from ..health import Row, due_days, evaluate, load_snapshot, load_state, medians, missing_keys
+from ..health import REVENUE_DONE_RATIO, Row, due_days, evaluate, load_snapshot, load_state, medians, missing_keys
 from ..tradingcal import (add_adhoc, is_adhoc_closure, is_trading_day, load_closed, remove_adhoc, trading_days,
                           update_calendar, warn_uncovered)
 from .alerts import collect_alerts
@@ -28,7 +28,6 @@ from .revenue import collect_monthly_revenue, revenue_month_for
 DEFAULT_DAYS, MAX_DAYS = 10, 30
 CHAINS_REFRESH_DAYS = 30
 DB_RETRY_SECONDS = 60       # 開機登入時 Docker 可能還沒起來，等一下再試一次
-REVENUE_DONE_RATIO = 0.98   # 該月筆數 ≥ 前一月 × 98% 視為公布完成
 
 
 def month_key(d: date) -> tuple:

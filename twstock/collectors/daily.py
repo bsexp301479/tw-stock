@@ -23,12 +23,12 @@ ALL_DATASETS = (PRICES, PE, INSTI, ETF, MARGIN)
 HOLDINGS_KEYS = tuple(f"holdings.{c}" for c in HOLDINGS)
 # 每個資料集對應的細項（分市場），也是 collect_for_date 與 health.SPECS 共用的鍵
 DATASET_KEYS = {PRICES: ("prices.TWSE", "prices.TPEx"), PE: ("pe.TWSE", "pe.TPEx"),
-                INSTI: ("insti.TWSE", "insti.TPEx"), INDEX: ("index.TAIEX",), AMOUNT: ("amount",),
+                INSTI: ("insti.TWSE", "insti.TPEx"), INDEX: ("index.TAIEX",), AMOUNT: ("amount", "amount.TPEx"),
                 ETF: ("etf.TWSE", "etf.TPEx"), MARGIN: ("margin.TWSE", "margin.TPEx"), HOLDINGS_DS: HOLDINGS_KEYS}
 # 一天之內的收集順序：行情先於本益比、法人；ETF 行情先於融資融券與持股（兩者都只寫入 etfs 已有的 ETF）
 # 漲跌家數不補歷史（health.BREADTH_FROM），所以不在 DATASET_KEYS；上市家數與行情共用同一個 MI_INDEX 回應
 DAY_KEYS = ("prices.TWSE", "prices.TPEx", "index.TAIEX", "etf.TWSE", "etf.TPEx", "pe.TWSE", "pe.TPEx",
-            "insti.TWSE", "insti.TPEx", "amount", "margin.TWSE", "margin.TPEx", "breadth.TWSE", "breadth.TPEx") + HOLDINGS_KEYS
+            "insti.TWSE", "insti.TPEx", "amount", "amount.TPEx", "margin.TWSE", "margin.TPEx", "breadth.TWSE", "breadth.TPEx") + HOLDINGS_KEYS
 PARSE_ERRORS = (SchemaError, KeyError, IndexError, TypeError, ValueError, AttributeError)
 
 
@@ -641,7 +641,7 @@ def parse_insti_amount(data: dict, d: date) -> list:
         unit = _amount_unit(str(row[idx["單位名稱"]]).strip())
         if unit:
             rows[unit] = {"trade_date": d.isoformat(), "unit": unit,
-                          "buy_amount": clean_number(row[idx["買進金額"]], int),
+                          "market": "TWSE", "buy_amount": clean_number(row[idx["買進金額"]], int),
                           "sell_amount": clean_number(row[idx["賣出金額"]], int),
                           "net_amount": clean_number(row[idx["買賣差額"]], int)}
     return list(rows.values())
@@ -653,18 +653,56 @@ def fetch_twse_insti_amount(d: date) -> list:
     return parse_insti_amount(data, d)
 
 
+# 上櫃 insti/summary 的單位名稱（去掉前面的全形空白與「*」）→ 代碼；「外資及陸資合計」「自營商合計」不存（避免重複）
+TPEX_AMOUNT_UNIT = {"外資及陸資(不含自營商)": "foreign", "外資自營商": "foreign_dealer", "投信": "trust",
+                    "自營商(自行買賣)": "dealer_self", "自營商(避險)": "dealer_hedge", "三大法人合計": "total"}
+
+
+def parse_tpex_insti_amount(data: dict, d: date) -> list:
+    """
+    上櫃 insti/summary 回應 → 與 parse_insti_amount 同形的 6 列（market = TPEx，元）。
+    休市、stat 不是 ok、回應日期不是 d、欄位不符或 6 個單位不齊 → []（不寫入）。
+    「三大法人合計」不含外資自營商（官方 notes），與上市「合計」口徑相同。
+    """
+    if str(data.get("stat", "")).lower() != "ok" or data.get("date") not in (None, f"{d:%Y%m%d}"):
+        return []
+    need = ("單位名稱", "買進金額(元)", "賣出金額(元)", "買賣超(元)")
+    for table in data.get("tables", []):
+        idx = {f: i for i, f in enumerate(table.get("fields", []))}
+        if not set(need) <= idx.keys():
+            continue
+        rows = {}
+        for row in table.get("data", []):
+            if len(row) <= max(idx[f] for f in need):
+                continue
+            unit = TPEX_AMOUNT_UNIT.get(str(row[idx["單位名稱"]]).strip().rstrip("*"))
+            if unit:
+                rows[unit] = {"trade_date": d.isoformat(), "market": "TPEx", "unit": unit,
+                              "buy_amount": clean_number(row[idx["買進金額(元)"]], int),
+                              "sell_amount": clean_number(row[idx["賣出金額(元)"]], int),
+                              "net_amount": clean_number(row[idx["買賣超(元)"]], int)}
+        return list(rows.values()) if len(rows) == len(TPEX_AMOUNT_UNIT) else []
+    return []
+
+
+def fetch_tpex_insti_amount(d: date) -> list:
+    data = request("POST", f"{TPEX}/insti/summary", data={"date": f"{d:%Y/%m/%d}", "response": "json"})
+    return parse_tpex_insti_amount(data, d)
+
+
 def merge_insti_amount(cursor, rows: list):
+    """rows 每列都要有 market（TWSE／TPEx）；同一天、同一市場、同一單位重複寫入 = 更新。"""
     cursor.execute("""
         MERGE insti_amount AS t
         USING OPENJSON(?) WITH (
-            trade_date DATE, unit NVARCHAR(20), buy_amount BIGINT, sell_amount BIGINT, net_amount BIGINT
+            trade_date DATE, market NVARCHAR(10), unit NVARCHAR(20), buy_amount BIGINT, sell_amount BIGINT, net_amount BIGINT
         ) AS s
-        ON t.trade_date = s.trade_date AND t.unit = s.unit
+        ON t.trade_date = s.trade_date AND t.market = s.market AND t.unit = s.unit
         WHEN MATCHED THEN UPDATE SET
             buy_amount = s.buy_amount, sell_amount = s.sell_amount, net_amount = s.net_amount
         WHEN NOT MATCHED THEN
-            INSERT (trade_date, unit, buy_amount, sell_amount, net_amount)
-            VALUES (s.trade_date, s.unit, s.buy_amount, s.sell_amount, s.net_amount);
+            INSERT (trade_date, market, unit, buy_amount, sell_amount, net_amount)
+            VALUES (s.trade_date, s.market, s.unit, s.buy_amount, s.sell_amount, s.net_amount);
     """, db.to_json(rows))
 
 
@@ -789,7 +827,7 @@ def _collect_key(key: str, d: date, cache: dict) -> int:
         _save(lambda cur: (merge_margin(cur, d, stocks, "stock"), etfs and merge_margin(cur, d, etfs, "etf"),
                            merge_margin_market(cur, d, market, total)))
         return len(stocks)
-    amount = fetch_twse_insti_amount(d)
+    amount = (fetch_tpex_insti_amount if market == "TPEx" else fetch_twse_insti_amount)(d)    # "amount" = 上市、"amount.TPEx" = 上櫃
     if amount:
         _save(merge_insti_amount, amount)
     return len(amount)
@@ -805,8 +843,8 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
     written, errors, cache = {}, {}, {}
     for key in keys:
         dataset, _, market = key.partition(".")
-        if dataset in ("pe", "insti", MARGIN, "breadth") and written.get(f"prices.{market}") == 0:
-            continue                # 同市場行情還沒有：本益比、法人、融資融券、漲跌家數不可能先有，不發請求
+        if dataset in ("pe", "insti", MARGIN, "breadth", AMOUNT) and written.get(f"prices.{market}") == 0:
+            continue                # 同市場行情還沒有：本益比、法人、融資融券、漲跌家數、上櫃法人金額不可能先有，不發請求
         if dataset == "pe" and f"prices.{market}" in errors:
             continue                # 本益比只寫入有行情列的股票
         try:

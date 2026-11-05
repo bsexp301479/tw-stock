@@ -191,6 +191,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .g-mk .insti{grid-column:span 2}
 .g-mk .margin{grid-column:span 2}                      /* 信用交易、市場寬度左右並排 */
 .g-mk .insti + .margin:last-child{grid-column:1/-1}    /* 只有其中一張時佔滿一列 */
+.g-mk .val{grid-column:1/-1}                           /* 估值位置卡：單獨一列，佔滿寬度（第 9 輪 QA-01） */
 @media (max-width:900px){.g-mk .margin{grid-column:1/-1}}
 @media (max-width:720px){.g-mk{grid-template-columns:repeat(2,minmax(0,1fr))}.g-mk .insti{grid-column:1/-1}}
 .night-old{opacity:.7}               /* P20：前一夜盤淡化 */

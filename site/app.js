@@ -157,6 +157,7 @@ function renderToday() {
       ${instiCard(L)}
       ${marginCard(L)}
       ${breadthCard(L)}
+      ${valCard(L)}
     </section>
 
     ${futuresHTML(L.futures)}
@@ -286,10 +287,27 @@ function breadthCard(L) {
     </div>`;
 }
 
-// 三大法人卡：上市用證交所官方金額（A2），上櫃另列估算值；尚無官方資料時維持第 1 輪估算卡
+// 估值位置卡（第 9 輪 F9-4，A10）：上市、上櫃股票的官方本益比、淨值比、殖利率中位數在近一年的位置
+function valCard(L) {
+  const V = L.valuation;
+  if (!V || !(V.TWSE || V.TPEx)) return '';
+  const pos = x => !x ? '--' : x.v <= x.lo ? '一年最低' : x.v >= x.hi ? '一年最高' : `一年位置 ${fmt(x.p, 1)}%`;
+  const row = (x, name) => !x ? '' : `<div class="s num">${name}　本益比 <b>${fmt(x.pe?.v, 2)}</b>（${pos(x.pe)}）　淨值比 <b>${fmt(x.pb?.v, 2)}</b>（${pos(x.pb)}）　殖利率 <b>${x.dy ? fmt(x.dy.v, 2) + '%' : '--'}</b>（${pos(x.dy)}）</div>`;
+  const T = V.TWSE || V.TPEx;
+  return `<div class="card stat idx val">
+      <div class="l">估值位置（官方，股票中位數）<span class="muted">　${md(T.d)}</span></div>
+      ${row(V.TWSE, '上市')}${row(V.TPEx, '上櫃')}
+      ${spark(V.TWSE?.s)}${V.TWSE?.s?.length > 1 ? `<div class="s">上市本益比中位數，近 ${V.TWSE.s.length} 個交易日（${md(V.TWSE.sf)} 起）</div>` : ''}
+      <div class="s">一年位置 = 近 ${T.days} 個交易日（${T.from.replaceAll('-', '/')} 起）中，中位數小於或等於今天的天數比例。中位數只計本益比、淨值比大於 0 的股票（上市 ${fmt(V.TWSE?.n)}、上櫃 ${fmt(V.TPEx?.n)} 檔），不是加權指數本益比；本益比用近 4 季 EPS，財報公布期間 EPS 變化也會改變位置；殖利率用去年股利。只是位置，不是買賣訊號</div>
+    </div>`;
+}
+
+// 三大法人卡：上市（A2）、上櫃（第 9 輪 F9-1）都用官方金額；上櫃官方還沒有任何資料時退回估算一行；上市也沒有時維持第 1 輪估算卡
 function instiCard(L) {
-  const O = L.insti_official, X = L.insti_otc, I = L.insti;
+  const O = L.insti_official, P = L.insti_official_tpex, X = L.insti_otc, I = L.insti;
   const yi1 = v => v == null ? '--' : sgn(v, 1) + '億';
+  const parts = x => `外資 <span class="${cls(x.foreign)}">${yi1(x.foreign)}</span>　投信 <span class="${cls(x.trust)}">${yi1(x.trust)}</span>　自營 <span class="${cls(x.dealer)}">${yi1(x.dealer)}</span>`;
+  const stk = s => s > 0 ? `連買 ${s} 日` : s < 0 ? `連賣 ${-s} 日` : '當日持平';
   if (!O) return `<div class="card stat insti"><div class="l">三大法人（${md(L.flow_date)}）</div>
       <div class="v num ${cls(I.foreign + I.trust + I.dealer)}">${yi(I.foreign + I.trust + I.dealer)}</div>
       <div class="s num">外資 <span class="${cls(I.foreign)}">${yi(I.foreign)}</span>　投信 <span class="${cls(I.trust)}">${yi(I.trust)}</span>　自營 <span class="${cls(I.dealer)}">${yi(I.dealer)}</span></div>
@@ -298,12 +316,15 @@ function instiCard(L) {
   return `<div class="card stat idx insti">
       <div class="l">三大法人　上市，官方，含 ETF<span class="muted">　${md(O.date)}${stale ? '（尚未更新）' : ''}</span></div>
       <div class="v num ${cls(O.total)}">${yi1(O.total)}</div>
-      <div class="s num">外資 <span class="${cls(O.foreign)}">${yi1(O.foreign)}</span>　投信 <span class="${cls(O.trust)}">${yi1(O.trust)}</span>　自營 <span class="${cls(O.dealer)}">${yi1(O.dealer)}</span></div>
-      <div class="s">官方含 ETF 與權證避險，與下方估算口徑不同</div>
+      <div class="s num">${parts(O)}</div>
       ${minibars(O.f)}
-      <div class="s">外資近 ${O.f.length} 日（${md(O.d[0])}～${md(O.d.at(-1))}）<b class="${cls(fs)}">${fs > 0 ? `連買 ${fs} 日` : fs < 0 ? `連賣 ${-fs} 日` : '當日持平'}</b></div>
-      ${X ? `<div class="s num">上櫃估算（${md(L.flow_date)}）：外資 <span class="${cls(X.foreign)}">${yi(X.foreign)}</span>　投信 <span class="${cls(X.trust)}">${yi(X.trust)}</span>　自營 <span class="${cls(X.dealer)}">${yi(X.dealer)}</span></div>
-      <div class="s">上櫃為張數 × 收盤估算、不含 ETF，不可與上市官方值相加</div>` : ''}
+      <div class="s">外資近 ${O.f.length} 日（${md(O.d[0])}～${md(O.d.at(-1))}）<b class="${cls(fs)}">${stk(fs)}</b></div>
+      ${P ? `<div class="s num"><b>上櫃</b>（官方，${md(P.date)}${P.date < L.date ? '，尚未更新' : ''}）合計 <span class="${cls(P.total)}">${yi1(P.total)}</span>　${parts(P)}</div>
+      ${minibars(P.f)}
+      <div class="s">上櫃外資近 ${P.f.length} 日（${md(P.d[0])}～${md(P.d.at(-1))}）<b class="${cls(P.fs)}">${stk(P.fs)}</b></div>`
+      : X ? `<div class="s num">上櫃估算（${md(L.flow_date)}）：外資 <span class="${cls(X.foreign)}">${yi(X.foreign)}</span>　投信 <span class="${cls(X.trust)}">${yi(X.trust)}</span>　自營 <span class="${cls(X.dealer)}">${yi(X.dealer)}</span></div>
+      <div class="s">上櫃官方金額尚無資料，暫以張數 × 收盤估算、不含 ETF，不可與上市官方值相加</div>` : ''}
+      <div class="s">官方金額含 ETF 與權證避險，外資不含外資自營商（已計入自營）；上市、上櫃同一天時可相加。下方法人買超／賣超表為張數 × 收盤估算、不含 ETF，口徑不同</div>
     </div>`;
 }
 
@@ -756,6 +777,8 @@ function screenRows() {
 }
 // 營收欄名的月份：檔數最多的營收月份（YYYYMM）
 const revMonth = () => Object.entries(App.screen?.rmd || {}).sort((a, b) => b[1] - a[1])[0]?.[0];
+// 第 9 輪 F9-2：營收月份混雜（兩個以上月份，且最多的月份不到 98%）→ 資料日一列加公布期間說明
+const revMixed = S => { const n = Object.values(S.rmd || {}), t = n.reduce((a, b) => a + b, 0); return n.length > 1 && Math.max(...n) < t * 0.98; };
 
 // 結果表的動態欄：[欄名, 取值, 格式, 預設方向（1 遞增）]
 const spct = v => v == null ? '--' : sgn(v) + '%';
@@ -778,6 +801,7 @@ const SCR_COLS = {
   ry: ['營收年增', x => x.ry, (v, x) => spct(v) + (x.rm && String(x.rm) !== revMonth() ? `<span class="muted small">（${x.rm % 100}月）</span>` : '')],
   rc: ['累計年增', x => x.rc, spct], rh: ['營收新高(年)', x => x.rh, int0], r3: ['連3月年增', x => x.r3, v => v === 1 ? '✓' : '--'],
   pe: ['本益比', x => x.pe, v => fmt(v, 2), 1], dy: ['殖利率', x => x.dy, spct], pb: ['淨值比', x => x.pb, v => fmt(v, 2), 1],
+  pbp: ['淨值比位置', x => x.pbp, v => fmt(v) + '%', 1],
 };
 const CAP_TAG = '<i class="al al-c" title="90 天內有除權、減資或面額變更，官方本益比、殖利率可能尚未調整">股本變動</i>';
 // 固定欄（股票｜收盤｜漲跌｜成交額）＋ cols；o = {sort: 目前排序欄, cap: 是否標示股本變動}；sort 有值時欄名可點排序
@@ -789,7 +813,7 @@ function screenTable(list, cols, o = {}) {
     list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
       <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.tv, 1)}億</td>` +
       cols.map(k => { const [, get, f] = SCR_COLS[k], v = get(x);
-        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd'].includes(k) ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
+        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp'].includes(k) ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
     '</tbody></table></div>';
 }
 
@@ -837,6 +861,8 @@ const SCREEN_CONDS = [
   { id: 'pe', g: '基本面', label: '0 < 本益比 ≤ {v}', opts: [10, 15, 20], def: 15, val: true, f: (x, v, st) => isNum(x.pe) && x.pe > 0 && x.pe <= v && valGuard(x, st), cols: ['pe'] },
   { id: 'dy', g: '基本面', label: '殖利率 ≥ {v}%', opts: [3, 4, 5, 6], def: 5, val: true, f: (x, v, st) => isNum(x.dy) && x.dy >= v && valGuard(x, st), cols: ['dy'] },
   { id: 'pb', g: '基本面', label: '淨值比 ≤ {v}', opts: [1, 1.5, 2], def: 1, val: true, f: (x, v, st) => isNum(x.pb) && x.pb > 0 && x.pb <= v && valGuard(x, st), cols: ['pb'] },
+  { id: 'pbp', g: '基本面', label: '淨值比一年位置 ≤ {v}%', opts: [10, 20, 30], def: 20, val: true, title: '近 242 個交易日中，淨值比小於或等於今天的天數比例',
+    f: (x, v, st) => isNum(x.pbp) && x.pbp <= v && valGuard(x, st), cols: ['pb', 'pbp'] },
   { id: 'mk', g: '排除', label: '只看 {v}', opts: [[1, '上市'], [2, '上櫃']], def: 1, f: (x, v) => x.m === (v === 1 ? 'TWSE' : 'TPEx') },
   { id: 'xd', g: '排除', label: '排除處置股（含即將處置）', sw: true, f: x => !x.dsp },
   { id: 'xn', g: '排除', label: '排除今日無成交', sw: true, f: x => !x.nt },
@@ -916,18 +942,18 @@ async function renderScreen(q) {
     const chip = ([id, name], ref) => `<button class="chip${ref ? ' ref' : ''}${st.ps === id ? ' on' : ''}" data-ps="${id}"${ref ? ' title="風險檢查，不是買進訊號"' : ''}>${name}</button>`;
     $('#view').innerHTML = `<section class="sec">
       <div class="sec-h">${modeSeg('screen')}</div>
-      <div class="muted small">行情 ${md(S.d)}｜法人 ${md(S.fd)}｜融資融券 上市 ${mdx(S.md.TWSE)}、上櫃 ${mdx(S.md.TPEx)}｜營收 ${Object.entries(S.rmd).sort((a, b) => b[0].localeCompare(a[0])).map(([k, n]) => `${mon(k)} ${fmt(n)} 檔`).join('、') || '--'}</div>
+      <div class="muted small">行情 ${md(S.d)}｜法人 ${md(S.fd)}｜融資融券 上市 ${mdx(S.md.TWSE)}、上櫃 ${mdx(S.md.TPEx)}｜營收 ${Object.entries(S.rmd).sort((a, b) => b[0].localeCompare(a[0])).map(([k, n]) => `${mon(k)} ${fmt(n)} 檔`).join('、') || '--'}${revMixed(S) ? '（每月 1～10 日為公布期間，各股月份不同）' : ''}</div>
       <div style="margin-top:8px">${notes}</div>
       <div class="sec-h" style="margin:8px 0 0;gap:6px"><span class="muted small">預設：</span>${SCREEN_PRESETS.slice(0, 7).map(p => chip(p)).join('')}
         <span class="muted small">參考：</span>${SCREEN_PRESETS.slice(7).map(p => chip(p, true)).join('')}</div>
       <details class="scr-panel card"${open ? ' open' : ''}><summary>條件（已選 ${conds.length} 個）
-        <button class="chip" id="scrClear">清除</button> <button class="chip" id="scrCopy">複製條件連結</button></summary>
+        <button class="chip" id="scrClear">重設</button> <button class="chip" id="scrCopy">複製條件連結</button></summary>
         ${SCREEN_GROUPS.map(g => `<div class="scr-grp"><b>${g}</b><div>${SCREEN_CONDS.filter(c => c.g === g).map(condHTML).join('')}</div></div>`).join('')}
       </details>
       <div class="sec-h" style="margin:8px 0"><h2>符合 ${fmt(hits.length)} 檔</h2>${hits.length > 100 ? `<span class="muted small">依「${oName}」排序顯示前 100 檔</span>` : ''}</div>
       <div class="card">${hits.length ? screenTable(hits.slice(0, 100), cols, { sort: o, cap: conds.some(c => c.val) })
         : '<div class="empty">沒有同時符合所有條件的股票。參考各條件的「單獨」檔數，放寬最少的那一個。</div>'}</div>
-      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收以各股最新公布的月份計算，每月 1～10 日新舊月份混雜。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。</div></section>`;
+      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。</div></section>`;
     const changed = () => { delete st.ps; save(); draw(); };
     onModeSeg();
     $('#view').querySelectorAll('[data-ps]').forEach(b => b.addEventListener('click', () => {
@@ -953,7 +979,7 @@ async function renderScreen(q) {
     }));
     const det = $('#view details.scr-panel');
     det.addEventListener('toggle', () => { open = det.open; });
-    $('#scrClear').addEventListener('click', e => { e.preventDefault(); st = { o: 'tv' }; save(); draw(); });
+    $('#scrClear').addEventListener('click', e => { e.preventDefault(); st = { ...SCREEN_DEFAULT }; save(); draw(); });   // P23：回到預設（保留共同排除）
     $('#scrCopy').addEventListener('click', e => {
       e.preventDefault();
       const b = e.currentTarget;
@@ -1088,7 +1114,7 @@ async function renderHoldings(code) {
         H.out.map(r => `<tr${r.tw ? ` data-code="${esc(r.c)}"` : ''}><td class="nm">${name(r)}</td><td class="num">${fmt(r.l)} ${unit(r)}</td><td class="num">${fmt(r.pw, 2)}%</td></tr>`).join('') +
         '</tbody></table></div>' : ''}
       <div class="muted small" style="margin-top:6px">資料來源：${esc(H.trust || '統一')}投信每日申購買回清單。台股為張、海外為股；權重為占基金淨資產 %，權重變化為百分點。
-        本基金為現金申購買回：申購進來的資金由經理人買進股票，所以<b>申購多的日子加碼會偏多</b>、贖回多的日子減碼會偏多。${S.u1 == null ? '' : `今天單位數 1 日 ${sgn(S.u1)}%，張數增幅接近這個比例的持股，多半是跟著申購買進；明顯超過的才比較像經理人的判斷。`}權重變化另含股價漲跌的影響（張數不變、權重也會變）。標「新」= 前一持股日沒有持有。</div></section>`;
+        本基金為現金申購買回：申購進來的資金由經理人買進股票，所以<b>申購多的日子加碼會偏多</b>、贖回多的日子減碼會偏多。${S.u1 == null ? '' : `${S.d === App.latest.date ? '今天' : md(S.d) + ' '}單位數 1 日 ${sgn(S.u1)}%，張數增幅接近這個比例的持股，多半是跟著申購買進；明顯超過的才比較像經理人的判斷。`}權重變化另含股價漲跌的影響（張數不變、權重也會變）。標「新」= 前一持股日沒有持有。</div></section>`;
   onSeg('holdSeg', v => { localStore('holdSort', null, v); renderHoldings(code); });
   $('#view').addEventListener('click', onRowClick);
 }

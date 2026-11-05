@@ -53,9 +53,7 @@ def fetch_monthly_revenue(market: str, year: int, month: int) -> dict:
 
 
 def revenue_month_for(d: date):
-    """每月 10 日前各公司營收才公布完；10 日以後才收上個月的營收。"""
-    if d.day < 10:
-        return None
+    """d 所在月份的上一個月（第 9 輪：月初起就收已公布的公司，不再等 10 日；何時停由 make_plan 的 98% 判斷）。"""
     return (d.year - 1, 12) if d.month == 1 else (d.year, d.month - 1)
 
 
