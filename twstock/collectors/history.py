@@ -5,7 +5,7 @@
 加 force=True 則已存在的日期也重新抓取並覆寫。
 """
 import time
-from datetime import date
+from datetime import date, timedelta
 
 from .. import db
 from ..config import tw_now
@@ -14,7 +14,11 @@ from ..health import load_snapshot, medians, missing_keys
 from ..tradingcal import HOLIDAYS, is_trading_day, load_closed, trading_days  # noqa: F401（沿用的對外名稱）
 from .daily import (ALL_DATASETS, DATASET_KEYS, DAY_KEYS, HOLDINGS_KEYS, INDEX, PARSE_ERRORS, PRICES, TPEX_INDEX,  # noqa: F401
                     collect_for_date, collect_tpex_index)
+from .financials import collect_financials
 from .revenue import collect_monthly_revenue, revenue_month_for
+
+FINANCIALS = "financials"       # history --only financials：季報（第 10 輪），不在預設資料集
+SECONDS_PER_QUARTER = 4.5       # mopsov 節流 3 秒＋約 1.6 MB 回應
 
 # 依網站節流間隔 + 回應時間的實測值（秒，每個細項）
 SECONDS_PER_KEY = {"prices.TWSE": 4, "prices.TPEx": 4, "pe.TWSE": 4, "pe.TPEx": 3.2, "insti.TWSE": 4, "insti.TPEx": 3.2,
@@ -40,9 +44,55 @@ def day_seconds(keys) -> float:
     return sum(SECONDS_PER_KEY[k] for k in keys if SHARED.get(k) not in keys)
 
 
+def fin_quarters(start: date, end: date, today: date) -> list:
+    """季底日落在 start～end、而且收集窗口已開始（季底 + 15 天 ≤ today）的季別 [(年, 季)]，舊到新。"""
+    out = []
+    for y in range(start.year, end.year + 1):
+        for q in range(1, 5):
+            qe = date(y, 12, 31) if q == 4 else date(y, q * 3 + 1, 1) - timedelta(days=1)
+            if start <= qe <= end and qe + timedelta(days=15) <= today:
+                out.append((y, q))
+    return out
+
+
+def load_fin_have() -> set:
+    """資料庫已有的 (年, 季, 市場)。"""
+    conn = db.connect()
+    try:
+        return {tuple(r) for r in conn.cursor().execute(
+            "SELECT DISTINCT q.fin_year, q.fin_quarter, s.market_type FROM quarterly_financials q "
+            "JOIN stocks s ON s.stock_id = q.stock_id").fetchall()}
+    finally:
+        conn.close()
+
+
+def run_financials(start: date, end: date, force=False) -> tuple:
+    """季報補抓：每季每市場 1 個請求；已有的 (季, 市場) 略過（force 才重抓）；first_seen 一律 NULL。回傳 (完成, 錯誤說明)。"""
+    have = set() if force else load_fin_have()
+    todo = [(y, q, m) for y, q in fin_quarters(start, end, tw_now().date()) for m in ("TWSE", "TPEx") if (y, q, m) not in have]
+    print(f"\n📑 季報：待抓 {len(todo)} 次（季別 × 市場）；⏱️  預估約 {len(todo) * SECONDS_PER_QUARTER / 60:.1f} 分鐘")
+    for y, q, m in todo:
+        try:
+            collect_financials(y, q, None, (m,))
+        except FetchError as e:
+            return False, f"在 {y}Q{q} {m} 停止：疑似被限流封鎖（{e}）"
+        except PARSE_ERRORS as e:
+            return False, f"在 {y}Q{q} {m} 停止：官方欄位不符（{e}），需要修改程式"
+    return True, ""
+
+
 def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
                 revenue=True, delay=0.0) -> bool:
     """回傳 True = 全部完成；False = 中途疑似被封鎖或欄位不符而停止。"""
+    if FINANCIALS in datasets:      # 季報不依交易日；只有 --only financials 時才抓
+        ok, why = run_financials(start, end, force)
+        if not ok:
+            print(f"❌ {why}\n   建議等 30 分鐘以上，再用同樣的指令重跑；已寫入的季別會自動跳過。")
+            return False
+        datasets = tuple(ds for ds in datasets if ds != FINANCIALS)
+        if not datasets:
+            print("🎉 補抓完成！")
+            return True
     closed, snap, med = load_status(start, end)
     days = trading_days(start, end, closed)
     wanted = {k for ds in datasets if ds != TPEX_INDEX for k in DATASET_KEYS[ds]}

@@ -154,6 +154,14 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .lg{display:inline-flex;align-items:center;gap:4px}
 .lg i{display:inline-block;width:12px;height:3px;border-radius:2px}
 .hi{color:var(--amber);margin-left:4px}
+.fin-note{color:var(--text)}                                                  /* 第 10 輪：獲利說明一行 */
+.fin-bars{display:flex;gap:4px;margin-top:4px}
+.fb{flex:1;min-width:0;text-align:center;font-size:11px;color:var(--text2)}
+.fb-a{position:relative}
+.fb-a b{position:absolute;left:0;right:0;border-top:1px solid var(--border2)}
+.fb-a i{position:absolute;left:18%;right:18%;border-radius:2px;background:var(--flat)}
+.fb-a i.up{background:var(--up)}.fb-a i.dn{background:var(--dn)}
+.fb-v{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:520px){#revBox .tbl th:nth-child(3),#revBox .tbl td:nth-child(3){display:none}}   /* 手機隱藏「月增」，累計年增不需橫向捲動 */
 .signal{border-radius:var(--radius);padding:12px 14px;border:1px solid var(--border)}
 .signal.bull{background:var(--up-bg)}.signal.bear{background:var(--dn-bg)}

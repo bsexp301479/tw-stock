@@ -2,8 +2,8 @@
 台股資料收集與網站產生工具（Mac / Windows 通用）
 
   python -m twstock setup-db                         建立資料庫與資料表
-  python -m twstock collect [--date 2026-10-28]      收集單日（全部重抓覆寫：行情、本益比、法人、月營收、指數、台指期、處置／注意股、除權息事件、三大法人金額（上市、上櫃））並匯出網站資料
-  python -m twstock collect --catch-up [--days 10]   補齊最近 N 個交易日缺的資料（各資料集獨立判斷，可重複執行），有新資料才匯出；排程用這個
+  python -m twstock collect [--date 2026-10-28]      收集單日（全部重抓覆寫：行情、本益比、法人、月營收、指數、台指期、處置／注意股、除權息事件、三大法人金額（上市、上櫃）；季報收集期間另收季報）並匯出網站資料
+  python -m twstock collect --catch-up [--days 10]   補齊最近 N 個交易日缺的資料（各資料集獨立判斷，可重複執行；季報收集期間每天收一次季報），有新資料才匯出；排程用這個
   python -m twstock check [--days 20]                檢查各資料集的完整性（唯讀、不連外）：開頭列最後一次收集與排程狀態，有異常時印建議指令並回傳 1
   python -m twstock history --start 2026-01-01       補抓歷史（行情、本益比、法人、ETF、融資融券；只補缺的，可中斷重跑）
   python -m twstock history --start 2025-10-30 --only pe      只補本益比／淨值比／殖利率
@@ -12,9 +12,10 @@
   python -m twstock history --start 2026-07-31 --only amount  只補三大法人買賣金額（上市、上櫃；已有的市場自動略過）
   python -m twstock history --start 2025-10-30 --only etf margin  只補 ETF 行情與融資融券（同一天 ETF 先於融資融券）
   python -m twstock history --start 2025-10-30 --only holdings    只補主動型 ETF 持股（統一、群益投信 8 檔；上市日之前自動略過）
+  python -m twstock history --start 2024-01-01 --only financials  只補季報（季底日在範圍內的季別，每季上市、上櫃各 1 個請求；已有的季別自動略過）
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
   python -m twstock events --start 2025-10-30        補抓除權息／減資／面額變更事件（還原價格用）
-  python -m twstock export                           從資料庫匯出網站 JSON（site/data：latest.json、screen.json、stocks/、etfs/）
+  python -m twstock export                           從資料庫匯出網站 JSON（site/data：latest.json、screen.json、stocks/、etfs/；含季報）
   python -m twstock serve                            本機預覽網站 http://localhost:8000
   python -m twstock futures --start 2025-01-01       台指期日 K 與期貨三大法人未平倉
   python -m twstock chains                           更新產業鏈族群（櫃買產業價值鏈平台）
@@ -193,9 +194,10 @@ def main(argv=None):
     s = sub.add_parser("history", help="補抓歷史資料")
     s.add_argument("--start", type=_date, required=True)
     s.add_argument("--end", type=_date, help="預設今天")
-    s.add_argument("--only", nargs="+", choices=["prices", "pe", "insti", "index", "amount", "tpex_index", "etf", "margin", "holdings"],
+    s.add_argument("--only", nargs="+", choices=["prices", "pe", "insti", "index", "amount", "tpex_index", "financials", "etf", "margin", "holdings"],
                    help="只抓指定資料集（pe = 本益比／淨值比／殖利率，index = 加權指數，tpex_index = 櫃買指數，"
-                        "amount = 上市、上櫃三大法人買賣金額，etf = ETF 行情，margin = 融資融券，holdings = 主動型 ETF 持股）；"
+                        "amount = 上市、上櫃三大法人買賣金額，etf = ETF 行情，margin = 融資融券，holdings = 主動型 ETF 持股，"
+                        "financials = 季報（季底日在 --start～--end 的季別））；"
                         "預設 prices pe insti etf margin")
     s.add_argument("--force", action="store_true", help="已存在的日期也重抓覆寫")
     s.add_argument("--no-revenue", action="store_true")

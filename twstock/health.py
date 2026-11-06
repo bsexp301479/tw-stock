@@ -38,6 +38,11 @@ BREADTH_FROM = date(2026, 11, 3)        # 官方漲跌家數不補歷史，從�
 AMOUNT_TPEX_FROM = date(2026, 7, 31)    # 上櫃官方法人金額（第 9 輪）：和上市 insti_amount 同一個起點
 REVENUE_DONE_RATIO = 0.98               # 月營收：該月家數 ≥ 前一月 × 98% 視為公布完成（catchup 共用）
 REVENUE_DUE_DAY = 10                    # 月營收法定公布期限：每月 10 日
+# 季報（第 10 輪 B5）：收集窗口 = 季底後第 15 天起，到「金融業截止日 + 7 天」；Q4（年報）窗口在次年。月、日
+FIN_WINDOW = {1: ((4, 15), (6, 6)), 2: ((7, 15), (9, 7)), 3: ((10, 15), (12, 6)), 4: ((1, 15), (4, 7))}
+# 申報期限（mopsov 註 1）：(一般業, 金融業)。金融業 = 金控、銀行、證券、保險，取最晚的金控；Q2 的銀行、證券、保險也是 8/31
+FIN_DUE = {1: ((5, 15), (5, 30)), 2: ((8, 14), (8, 31)), 3: ((11, 14), (11, 29)), 4: ((3, 31), (3, 31))}
+FIN_DONE_RATIO = 0.98                   # 季報：總家數 ≥ 上一季 × 98%，且金融業家數 ≥ 上一季（或已過金融業截止日）視為齊
 
 SPECS = (
     Spec("prices.TWSE", "上市行情", 800, False), Spec("prices.TPEx", "上櫃行情", 650, False),
@@ -219,10 +224,10 @@ def problem_lines(items, last_run=None) -> list:
 # ─── 執行紀錄 ─────────────────────────────────────────────
 def load_state(cur) -> dict:
     """
-    由最近 200 筆執行紀錄整理：處置注意股、事件、營收最後成功的時間，最後一次有新資料的時間，
+    由最近 200 筆執行紀錄整理：處置注意股、事件、營收、季報（financials_on）最後成功的時間，最後一次有新資料的時間，
     與最後一次收集（last_run：時間、指令、有無新資料）。
     """
-    state = {"alerts_at": None, "events_to": None, "revenue_on": None, "collected_at": None, "last_run": None}
+    state = {"alerts_at": None, "events_to": None, "revenue_on": None, "financials_on": None, "collected_at": None, "last_run": None}
     for finished, new_data, detail, *extra in cur.execute(
             "SELECT TOP 200 finished_at, new_data, detail, command FROM collect_runs ORDER BY run_id DESC").fetchall():
         if state["last_run"] is None:
@@ -236,6 +241,8 @@ def load_state(cur) -> dict:
             state["events_to"] = date.fromisoformat(und["events_to"])
         if und.get("revenue") and state["revenue_on"] is None:
             state["revenue_on"] = date.fromisoformat(und["revenue"])
+        if und.get("financials") and state["financials_on"] is None:
+            state["financials_on"] = date.fromisoformat(und["financials"])
     return state
 
 
@@ -332,8 +339,77 @@ def revenue_status(today: date, counts: dict, revenue_on, closed) -> tuple:
     return ABNORMAL, f"{head}，最後一次收集營收 {revenue_on or '尚無紀錄'}"
 
 
-def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None) -> tuple:
-    """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求；schedule 由呼叫端傳入（schedule_status()）；revenue = 各月營收家數（None 不印營收一行）。"""
+def fin_quarter_for(d: date):
+    """d 落在哪一季的收集窗口：(西元年, 季)；窗口外 None。Q4 窗口（1/15～4/07）的季別是前一年 Q4。"""
+    for q, ((m1, d1), (m2, d2)) in FIN_WINDOW.items():
+        if (m1, d1) <= (d.month, d.day) <= (m2, d2):
+            return (d.year - 1, 4) if q == 4 else (d.year, q)
+    return None
+
+
+def fin_latest_quarter(d: date) -> tuple:
+    """check 顯示的季別：窗口內 → 該季；窗口外 → 最近一個已結束窗口的季別。回傳 (年, 季, 是否在窗口內)。"""
+    for back in range(0, 400):
+        x = d - timedelta(days=back)
+        q = fin_quarter_for(x)
+        if q:
+            return (*q, back == 0)
+    raise ValueError(d)
+
+
+def prev_quarter(y: int, q: int) -> tuple:
+    return (y - 1, 4) if q == 1 else (y, q - 1)
+
+
+def fin_due(y: int, q: int, closed) -> tuple:
+    """(一般業截止日, 金融業截止日, 一般業截止後第一個交易日, 金融業截止後第一個交易日)。Q4 的截止日在次年。"""
+    yy = y + 1 if q == 4 else y
+    gen, fin = (date(yy, *md) for md in FIN_DUE[q])
+    after = lambda d: trading_days(d + timedelta(days=1), d + timedelta(days=30), closed)[0]
+    return gen, fin, after(gen), after(fin)
+
+
+def fin_done(counts: dict, y: int, q: int, today: date, closed) -> bool:
+    """
+    季報收齊（提前結束收集與 check ✅ 共用）。counts = {(年, 季): (總家數, 金融業家數)}。
+    1. 總家數 > 0 且 ≥ 上一季 × 98%（上一季沒有資料時不算齊：繼續收到窗口結束）；而且
+    2. 金融業家數 ≥ 上一季，或今天已過金融業截止日後的第一個交易日。
+    """
+    n, nf = counts.get((y, q), (0, 0))
+    pn, pf = counts.get(prev_quarter(y, q), (0, 0))
+    return bool(n and pn and n >= pn * FIN_DONE_RATIO and (nf >= pf or today > fin_due(y, q, closed)[3]))
+
+
+def financials_status(today: date, counts: dict, fin_on, closed) -> tuple:
+    """
+    季報一行（第 10 輪 B5）：(狀態, 文字)。✅ fin_done；ℹ️ 窗口外未齊（不計異常）；窗口內未齊：
+    ⏳ 今天 ≤ 一般業截止後第一個交易日，或只差金融業且今天 ≤ 金融業截止後第一個交易日；
+    ⏳ 晚交：fin_on（最後一次成功收集季報的日期）是今天或前一個交易日；❌ 其餘（收集停了）。
+    """
+    y, q, inside = fin_latest_quarter(today)
+    n, nf = counts.get((y, q), (0, 0))
+    pn, pf = counts.get(prev_quarter(y, q), (0, 0))
+    gen, fin, gen_td, fin_td = fin_due(y, q, closed)
+    name = "年報" if q == 4 else f"第 {q} 季財報"
+    head = (f"{name} {y}Q{q}：已收 {n:,} 家" + (f"（前一季 {pn:,} 家的 {n / pn:.0%}）" if pn else "")
+            + (f"，金融業 {nf}／{pf} 家" if pf else ""))
+    if fin_done(counts, y, q, today, closed):
+        return OK, f"{head}，✅ 已齊"
+    if not inside:
+        end = date(y + 1 if q == 4 else y, *FIN_WINDOW[q][1])
+        return "info", f"{head}，ℹ️ 收集期間已結束（{end:%m/%d}），不再收集"
+    if today <= gen_td or (pn and n >= pn * FIN_DONE_RATIO and today <= fin_td):
+        due = f"{gen:%m/%d} 截止" if gen == fin else f"一般業 {gen:%m/%d}、金融業 {fin:%m/%d} 截止"
+        return PENDING, f"{head}，⏳ 公布期間（{due}）"
+    before = trading_days(today - timedelta(days=30), today - timedelta(days=1), closed)
+    if fin_on and (fin_on >= today or (before and fin_on >= before[-1])):
+        return PENDING, f"{head}，⏳ 晚交公司陸續補進（最後收集 {fin_on:%m/%d}）"
+    return ABNORMAL, f"{head}，最後一次收集季報 {fin_on or '尚無紀錄'}"
+
+
+def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None, financials=None) -> tuple:
+    """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求；schedule 由呼叫端傳入（schedule_status()）；revenue = 各月營收家數（None 不印營收一行）；
+    financials = 各季季報家數 {(年, 季): (總家數, 金融業家數)}（None 不印季報一行）。"""
     items, med = evaluate(days, snap, now), medians(snap)
     out = [f"📋 資料完整性檢查：近 {len(days)} 個交易日 {days[0]} ～ {days[-1]}（現在 {now:%Y-%m-%d %H:%M}，台灣時間）",
            f"🕘 最後一次收集：{last_run_line(state.get('last_run'))}"]
@@ -366,6 +442,9 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
     rev = revenue_status(now.date(), revenue, state.get("revenue_on"), closed) if revenue is not None else None
     if rev:
         out.append(rev[1] if rev[0] != ABNORMAL else f"{rev[1]}，❌ 異常")
+    fin = financials_status(now.date(), financials, state.get("financials_on"), closed) if financials is not None else None
+    if fin:
+        out.append(fin[1] if fin[0] != ABNORMAL else f"{fin[1]}，❌ 異常")
     lines = problem_lines(items, state.get("last_run"))
     # 處置／注意股端點只有近幾日，錯過無法回補：落後 2 個交易日以上算異常；沒有紀錄不算（還沒跑過）
     stale = alerts and len(trading_days(alerts.date() + timedelta(days=1), days[-1], closed)) >= 2
@@ -373,11 +452,13 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
         lines.insert(0, f"❌ 處置／注意股：最後成功 {alerts.date()}，端點只有近幾日，請盡快執行 collect --catch-up")
     if rev and rev[0] == ABNORMAL:
         lines.append(f"❌ {rev[1]}：已過 {REVENUE_DUE_DAY} 日仍未收齊，收集可能停了")
+    if fin and fin[0] == ABNORMAL:
+        lines.append(f"❌ {fin[1]}：已過申報截止日仍未收齊，收集可能停了")
     abnormal = sum(ln.startswith("❌") for ln in lines)
     out += ["", *lines] if lines else []
     out.append(f"\n結果：異常 {abnormal} 項" if abnormal else "\n結果：無異常")
     if abnormal:
-        out.append(suggest(items, days, bool(stale) or bool(rev and rev[0] == ABNORMAL)))
+        out.append(suggest(items, days, bool(stale) or bool(rev and rev[0] == ABNORMAL) or bool(fin and fin[0] == ABNORMAL)))
     return "\n".join(out), (1 if abnormal else 0)
 
 
@@ -385,6 +466,13 @@ def revenue_counts(cur) -> dict:
     """{(年, 月): 家數}；SQL 與 collectors.catchup._revenue_counts 相同。"""
     return {(y, m): n for y, m, n in cur.execute(
         "SELECT revenue_year, revenue_month, COUNT(*) FROM monthly_revenue GROUP BY revenue_year, revenue_month").fetchall()}
+
+
+def financial_counts(cur) -> dict:
+    """{(年, 季): (總家數, 金融業家數)}；catchup 與 check 共用。"""
+    return {(y, q): (n, nf) for y, q, n, nf in cur.execute(
+        "SELECT fin_year, fin_quarter, COUNT(*), SUM(CASE WHEN industry_tbl IN ('fh','basi','bd','ins') THEN 1 ELSE 0 END) "
+        "FROM quarterly_financials GROUP BY fin_year, fin_quarter").fetchall()}
 
 
 def run_check(n: int, now: datetime) -> int:
@@ -398,11 +486,12 @@ def run_check(n: int, now: datetime) -> int:
         start = due_days(now, max(n, MEDIAN_DAYS), closed)[0]
         snap, state = load_snapshot(cur, start, days[-1]), load_state(cur)
         revenue = revenue_counts(cur)
+        financials = financial_counts(cur)
         adhoc = [r[0] for r in cur.execute("SELECT holiday_date FROM market_holidays WHERE source = 'adhoc' AND holiday_date BETWEEN ? AND ? "
                                            "ORDER BY holiday_date", start, days[-1]).fetchall()]
     finally:
         conn.close()
-    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue)
+    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue, financials)
     print(text)
     return rc
 

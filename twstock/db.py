@@ -448,6 +448,28 @@ DDL = [
         CONSTRAINT UQ_etf_holding_gaps UNIQUE (etf_id, hold_date)
     )
     """,
+    # 季報（第 10 輪 B5）：mopsov 綜合損益表彙總的「年初至今累計」（千元、元），單季在匯出時相減；
+    # industry_tbl = 解析自哪一張表（ci 一般業、fh 金控、basi 銀行、bd 證券、ins 保險、mim 其他）；
+    # first_seen = 日常收集第一次收到的日期（補抓寫入為 NULL，更新時不動）
+    """
+    IF OBJECT_ID('quarterly_financials') IS NULL
+    CREATE TABLE quarterly_financials (
+        id            INT IDENTITY(1,1) PRIMARY KEY,
+        stock_id      INT            NOT NULL REFERENCES stocks(stock_id),
+        fin_year      INT            NOT NULL,
+        fin_quarter   TINYINT        NOT NULL CHECK (fin_quarter BETWEEN 1 AND 4),
+        industry_tbl  NVARCHAR(10)   NOT NULL CHECK (industry_tbl IN ('ci','fh','basi','bd','ins','mim')),
+        revenue       BIGINT         NULL,
+        gross_profit  BIGINT         NULL,
+        op_income     BIGINT         NULL,
+        net_income    BIGINT         NULL,
+        eps           DECIMAL(10,2)  NULL,
+        first_seen    DATE           NULL,
+        created_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+        updated_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_quarterly_financials UNIQUE (stock_id, fin_year, fin_quarter)
+    )
+    """,
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -485,5 +507,5 @@ def setup_database():
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
-          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、"
+          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
           "etf_holding_gaps")

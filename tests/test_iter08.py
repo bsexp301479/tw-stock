@@ -173,7 +173,7 @@ def test_f82_screen_build():
     S = export.screen_build(rows, {"d": "2026-11-04", "fd": "2026-11-04", "md": {"TWSE": "2026-11-04"}})
     assert S["codes"] == ["1101", "2330", "8888", "9999"] and S["b20"] == [None, -7.38, None, None]
     assert S["rmd"] == {"202609": 2, "202608": 1} and list(S["rmd"]) == ["202609", "202608"]
-    assert set(S) == {"d", "fd", "md", "rmd", "codes", *export.SCREEN_KEYS}
+    assert set(S) == {"d", "fd", "md", "rmd", "fqd", "codes", *export.SCREEN_KEYS}      # fqd：第 10 輪
 
 
 # ─── F8-3：融資融券 ─────────────────────────────────────

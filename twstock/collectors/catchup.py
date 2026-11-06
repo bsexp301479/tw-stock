@@ -14,13 +14,15 @@ import pyodbc
 from .. import db, fetch, health
 from ..config import DB_CONFIG, SITE_DATA_DIR, tw_now
 from ..fetch import FetchError
-from ..health import REVENUE_DONE_RATIO, Row, due_days, evaluate, load_snapshot, load_state, medians, missing_keys
+from ..health import (REVENUE_DONE_RATIO, Row, due_days, evaluate, fin_done, fin_quarter_for, financial_counts, load_snapshot, load_state,
+                      medians, missing_keys)
 from ..tradingcal import (add_adhoc, is_adhoc_closure, is_trading_day, load_closed, remove_adhoc, trading_days,
                           update_calendar, warn_uncovered)
 from .alerts import collect_alerts
 from .chains import chains_age_days, update_chains
 from .daily import DAY_KEYS, PARSE_ERRORS, collect_for_date, collect_tpex_index
 from .events import LOOKBACK_DAYS, collect_events
+from .financials import collect_financials
 from .futures import collect_futures, collect_futures_institutional
 from .industry import update_industry
 from .revenue import collect_monthly_revenue, revenue_month_for
@@ -34,15 +36,15 @@ def month_key(d: date) -> tuple:
     return d.year, d.month
 
 
-def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, revenue_counts=None) -> dict:
+def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, revenue_counts=None, fin_counts=None) -> dict:
     """
     純函式：輸入現在時間、資料現況、執行紀錄、日曆；輸出待抓清單（不連網、不連資料庫）。
     days：評估範圍；by_date：[(日期, 鍵)]；tpex_months；futures、futures_oi：(起, 迄)；alerts：bool；
-    events：(起, 迄)；revenue：[(年, 月)]。
+    events：(起, 迄)；revenue：[(年, 月)]；financials：(年, 季) 或 None（第 10 輪：今天在季報窗口內、今天還沒收過、還沒收齊）。
     """
     days = due_days(now, n, closed)
     plan = {"days": days, "by_date": [], "tpex_months": [], "futures": None, "futures_oi": None,
-            "alerts": False, "events": None, "revenue": []}
+            "alerts": False, "events": None, "revenue": [], "financials": None}
     if not days:
         return plan
     med = medians(snap)
@@ -71,25 +73,31 @@ def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, reven
             prev = (y - 1, 12) if m == 1 else (y, m - 1)
             if revenue_counts.get((y, m), 0) < revenue_counts.get(prev, 0) * REVENUE_DONE_RATIO or not revenue_counts.get((y, m)):
                 plan["revenue"].append((y, m))
+    fq = fin_quarter_for(now.date())
+    if fq and fin_counts is not None and state.get("financials_on") != now.date() and not fin_done(fin_counts, *fq, now.date(), closed):
+        plan["financials"] = fq
     return plan
 
 
-def plan_for_date(d: date, now: datetime, closed_by_calendar: bool) -> dict:
-    """collect --date：該日全部重抓；行事曆上的休市日只處理沒有日期的資料。"""
+def plan_for_date(d: date, now: datetime, closed_by_calendar: bool, fin_counts=None, closed=()) -> dict:
+    """collect --date：該日全部重抓；行事曆上的休市日只處理沒有日期的資料。季報：d 在收集窗口內、該季還沒收齊才收（與 catch-up 相同的 98% 規則）。"""
     plan = {"days": [] if closed_by_calendar else [d], "by_date": [] if closed_by_calendar else [(d, DAY_KEYS)],
             "tpex_months": [] if closed_by_calendar else [month_key(d)],
             "futures": None if closed_by_calendar else (d, d), "futures_oi": None if closed_by_calendar else (d, d),
             "alerts": not closed_by_calendar, "events": None if closed_by_calendar else (d - timedelta(days=LOOKBACK_DAYS), d),
-            "revenue": []}
+            "revenue": [], "financials": None}
     month = revenue_month_for(d)
     if month and not closed_by_calendar:
         plan["revenue"] = [month]
+    fq = fin_quarter_for(d)
+    if fq and not closed_by_calendar and fin_counts is not None and not fin_done(fin_counts, *fq, now.date(), closed):
+        plan["financials"] = fq                        # 第 10 輪
     return plan
 
 
 def plan_is_empty(plan: dict) -> bool:
     return not (plan["by_date"] or plan["tpex_months"] or plan["futures"] or plan["futures_oi"]
-                or plan["alerts"] or plan["events"] or plan["revenue"])
+                or plan["alerts"] or plan["events"] or plan["revenue"] or plan.get("financials"))
 
 
 def _guard(key, errors, fn, *args):
@@ -126,6 +134,8 @@ def execute_plan(plan: dict, now: datetime, no_revenue=False) -> tuple:
     if plan["revenue"] and not no_revenue:
         if all([_guard("revenue", errors, collect_monthly_revenue, y, m) for y, m in plan["revenue"]]):
             undated["revenue"] = str(now.date())
+    if plan.get("financials") and _guard("financials", errors, collect_financials, *plan["financials"], now.date()):
+        undated["financials"] = str(now.date())     # 0 家（窗口剛開始）也算成功：同一天不再抓
     if wrote_prices:        # 新股票要有產業別；產業鏈 30 天更新一次
         _guard("industry", errors, update_industry)
         age = chains_age_days()
@@ -135,7 +145,8 @@ def execute_plan(plan: dict, now: datetime, no_revenue=False) -> tuple:
 
 
 def _undated_counts(cur) -> tuple:
-    return tuple(cur.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("stock_alerts", "price_events", "monthly_revenue"))
+    return tuple(cur.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                 for t in ("stock_alerts", "price_events", "monthly_revenue", "quarterly_financials"))
 
 
 def _revenue_counts(cur) -> dict:
@@ -233,9 +244,9 @@ def _run_locked(days, date_, no_revenue, no_export, notify, now, export_all) -> 
             is_closed = not is_trading_day(date_, closed_for_run)
             if is_closed:
                 print(f"ℹ️  {date_} 休市，不發行情請求")
-            plan = plan_for_date(date_, now, is_closed)
+            plan = plan_for_date(date_, now, is_closed, financial_counts(cur), closed)
         else:
-            plan = make_plan(now, days, before, state, closed, _revenue_counts(cur))
+            plan = make_plan(now, days, before, state, closed, _revenue_counts(cur), financial_counts(cur))
     finally:
         conn.close()
 
@@ -273,7 +284,7 @@ def _run_locked(days, date_, no_revenue, no_export, notify, now, export_all) -> 
         changed = any(before[k] != after[k] for k in before) or _undated_counts(cur) != undated_before
         items = evaluate(day_list, after, now, errors)
         result = health.outcome(items)
-        undated_errors = [k for k in errors if k in ("alerts", "events", "revenue", "industry", "chains")]
+        undated_errors = [k for k in errors if k in ("alerts", "events", "revenue", "financials", "industry", "chains")]
         if undated_errors:
             result = health.ABNORMAL
     finally:

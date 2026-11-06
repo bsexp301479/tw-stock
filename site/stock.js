@@ -37,13 +37,17 @@ window.renderStock = async function (code) {
   // P16：股本變動事件 90 天內，本益比與殖利率加註
   const cap = data.capchg, capSub = cap ? `${md(cap.d)} ${EV_LABEL[cap.t]}，官方值可能尚未調整` : '';
   // P9：本益比、殖利率卡的資料日（與 P16 註記並列）；值為空時說明是官方未提供
-  const fundSub = v => [v == null && fund.date ? '官方未提供' : '', fund.date ? '資料 ' + md(fund.date) : '', capSub].filter(Boolean).join('；');
+  // 第 10 輪 P24：淨值比卡也標資料日（cap = false：股本變動註記照舊只在本益比、殖利率卡）
+  const fundSub = (v, cap = true) => [v == null && fund.date ? '官方未提供' : '', fund.date ? '資料 ' + md(fund.date) : '', cap ? capSub : ''].filter(Boolean).join('；');
   // 第 9 輪 F9-4（B7）：估值一年位置；股本變動、虧損、無股利、新上市時匯出沒有該欄
   const VAL = data.val;
   const valSub = (k, v) => { const x = VAL?.[k]; if (!x || v == null) return '';
     const [p, lo, hi] = x, f = n => fmt(n, 2) + (k === 'dy' ? '%' : '');
     return `一年位置 ${v <= lo ? '最低' : v >= hi ? '最高' : p + '%'}（${f(lo)}～${f(hi)}）`; };
   const subs = (...a) => a.filter(Boolean).join('<br>');
+  // 第 10 輪 B5：季報（沒有任何季報的股票沒有 fin）；近 4 季 EPS 明顯高於一年前（一年前 ≤ 0 且現在 > 0，或 ≥ 1.5 倍）時加獲利說明一行
+  const F = data.fin;
+  const finUp = F && isNum(F.e4) && isNum(F.e4p) && F.e4 > 0 && (F.e4p <= 0 || F.e4 >= F.e4p * 1.5);
   const watching = App.watch.has(code);
   const fd = md(App.latest.flow_date);
   const hlFrom = s?.hf ?? App.latest.hl_from;          // null → 已滿 52 週
@@ -98,7 +102,7 @@ window.renderStock = async function (code) {
 
     <section class="sec metrics">
       ${[['開盤', pfmt(P.o[last])], ['最高', pfmt(P.h[last]), 'up'], ['最低', pfmt(P.l[last]), 'dn'], ['昨收', pfmt(prev)],
-         ['成交量', fmt(P.v[last]) + ' 張'], ['本益比', fmt(fund.pe, 2), '', subs(fundSub(fund.pe), valSub('pe', fund.pe))], ['股價淨值比', fmt(fund.pb, 2), '', valSub('pb', fund.pb)],
+         ['成交量', fmt(P.v[last]) + ' 張'], ['本益比', fmt(fund.pe, 2), '', subs(fundSub(fund.pe), valSub('pe', fund.pe))], ['股價淨值比', fmt(fund.pb, 2), '', subs(fundSub(fund.pb, false), valSub('pb', fund.pb))],
          ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', subs(fundSub(fund.dy), valSub('dy', fund.dy))],
          [hlFrom ? '區間高' : '52週高', pfmt(s?.h52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
          [hlFrom ? '區間低' : '52週低', pfmt(s?.l52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
@@ -106,7 +110,8 @@ window.renderStock = async function (code) {
          ['外資5日', yi(s?.f5), cls(s?.f5), '至 ' + fd], ['投信5日', yi(s?.t5), cls(s?.t5), '至 ' + fd], ...mgCards]
         .map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
     </section>
-    ${VAL ? `<div class="muted small val-note">一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比位置也反映獲利變化：獲利下降時本益比會升高，請一併看淨值比。</div>` : ''}
+    ${VAL ? `<div class="muted small val-note">一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}</div>` : ''}
+    ${finUp ? `<div class="small val-note fin-note">近 4 季 EPS 一年前 ${fmt(F.e4p, 2)} 元 → 現在 ${fmt(F.e4, 2)} 元（${F.e4p <= 0 ? '轉盈' : fmt(F.e4 / F.e4p, 1) + ' 倍'}）：本益比會因獲利增加而下降，位置低不代表股價便宜；請看下方季報卡的單季 EPS 是否已經轉弱。</div>` : ''}
     ${acHTML}
 
     <section class="sec card">
@@ -132,7 +137,8 @@ window.renderStock = async function (code) {
     <section class="sec grid g2">
       <div class="card"><div class="sec-h"><h2>月營收</h2><span class="muted small">柱：營收（億），紅／綠 = 年增正／負；線：累計年增（%，右軸）</span></div><div id="revBox"></div></div>
       <div class="card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></div>
-    </section>`;
+    </section>
+    ${F ? `<section class="sec card"><div class="sec-h"><h2>季報</h2><span class="muted small">${qName(F.q.at(-1)[0])}${F.c.fs ? `｜本站收錄 ${md(F.c.fs)}` : ''}｜${FIN_TBL[F.t] || ''}</span></div><div id="finBox"></div></section>` : ''}`;
 
   $('#starBtn').addEventListener('click', () => {
     App.watch.has(code) ? App.watch.delete(code) : App.watch.add(code);
@@ -155,6 +161,7 @@ window.renderStock = async function (code) {
     $('#' + id).addEventListener(t, () => { syncLeader = charts[idx]; }, { passive: true })));
 
   renderRevenue(data.revenue);
+  if (F) renderFin(F);
   draw();
 };
 
@@ -415,6 +422,32 @@ function renderSignals(rows, mode) {
     : `<div class="signal ${lean}">
         <div style="font-weight:600;margin-bottom:6px">${{ bull: '偏多', bear: '偏空', '': '中性' }[lean]}：${bull.length} 多 ${bear.length} 空</div>
         ${tags}<div class="muted small" style="margin-top:8px">${note}</div></div>`;
+}
+
+// ─── 第 10 輪 B5：季報卡（匯出端已把累計相減成單季；q = [季別, 單季 EPS, EPS 年增 %, 毛利率 %, 營益率 %, 單季營收（千元）]）───
+const FIN_TBL = { ci: '一般業', fh: '金控', basi: '銀行', bd: '證券', ins: '保險', mim: '其他' };
+const qName = k => `${Math.floor(k / 100)} Q${k % 100}`;                 // 202603 → 2026 Q3
+const qShort = k => `${String(k).slice(2, 4)}Q${k % 100}`;              // 202603 → 26Q3
+function renderFin(F) {
+  const Q = F.q, L = Q.at(-1), k = L[0], q = k % 100;
+  const base = Q.find(r => r[0] === k - 100);                             // 去年同季（近 8 季內才有）
+  const ey = (v, cur, b) => v != null ? sgn(v, 1) + '%' : b != null && b <= 0 && cur > 0 ? '轉盈' : '--';
+  const pc1 = v => v == null ? '--' : fmt(v, 1) + '%';
+  const stats = [['單季 EPS', fmt(L[1], 2), cls(L[2]), `年增 ${ey(L[2], L[1], base?.[1])}`],
+    ['累計 EPS', fmt(F.c.e, 2), '', `${q === 4 ? '全年' : `1～${q * 3} 月`}，年增 ${F.c.ey == null ? '--' : sgn(F.c.ey, 1) + '%'}`],
+    ...(F.t === 'ci' ? [['毛利率', pc1(L[3]), '', `去年同季 ${pc1(base?.[3])}`]] : []),
+    ...(L[4] != null ? [['營益率', pc1(L[4]), '', `去年同季 ${pc1(base?.[4])}`]] : []),
+    ['近 4 季 EPS', fmt(F.e4, 2), '', `一年前 ${fmt(F.e4p, 2)}`]];
+  const v = Q.map(r => r[1]).filter(isNum), mx = Math.max(0, ...v), mn = Math.min(0, ...v), span = mx - mn || 1, H = 110;
+  const bar = r => { const e = r[1], c = e == null ? '' : r[2] == null ? 'flat' : r[2] >= 0 ? 'up' : 'dn';
+    const top = (mx - Math.max(e ?? 0, 0)) / span * H, h = e == null ? 0 : Math.max(Math.abs(e) / span * H, 1);
+    return `<div class="fb" title="${qName(r[0])} 單季 EPS ${fmt(e, 2)}，年增 ${ey(r[2], e, r[6])}">
+      <div class="fb-v num">${fmt(e, 2)}</div><div class="fb-a" style="height:${H}px"><b style="top:${mx / span * H}px"></b><i class="${c}" style="top:${top}px;height:${h}px"></i></div>
+      <div class="fb-l">${qShort(r[0])}</div></div>`; };
+  $('#finBox').innerHTML = `<div class="metrics">${stats.map(([l, x, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c}" style="font-size:16px">${x}</div><div class="s">${sub}</div></div>`).join('')}</div>
+    <div class="ch-label">近 ${Q.length} 季單季 EPS（元）；紅／綠 = 比去年同季增加／減少，灰 = 無法比較（去年同季虧損或沒有資料）</div>
+    <div class="fin-bars">${Q.map(bar).join('')}</div>
+    <div class="muted small" style="margin-top:6px">單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。金融業沒有毛利率。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}</div>`;
 }
 
 function renderRevenue(rows) {

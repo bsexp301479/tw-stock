@@ -6,7 +6,7 @@
                      已支援持股的主動 ETF（holdings）、市場寬度（breadth）
   screen.json        條件選股與排行擴充：每檔股票的價量、營收、融資融券欄位（欄式，和 latest.json stocks 合併使用）
   stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈、最新融資融券、主動 ETF 持有（active）、
-                     融資融券序列（mg）、投信買超中的主動 ETF（act）
+                     融資融券序列（mg）、投信買超中的主動 ETF（act）、季報（fin，第 10 輪）
   etfs/{代號}.json   主動 ETF 持股：近 HOLD_DAYS 個持股日的張數與權重、最新一天的增減
 """
 import json
@@ -22,7 +22,7 @@ from . import db
 from .analysis.flow import LONG, group_flows, load_concepts, streak
 from .analysis.forecast import build_forecast, load_oi
 from .config import SITE_DATA_DIR, tw_now
-from .health import HOLDINGS, build_status
+from .health import HOLDINGS, build_status, fin_quarter_for, prev_quarter
 
 REPLAY = 20                    # 泡泡圖回放天數
 FUTURES_DAYS = 500             # 首頁台指期日 K 匯出天數
@@ -45,10 +45,12 @@ BREADTH_DAYS = 60              # 市場寬度走勢天數
 NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到小，取符合的最大 N）
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
-               "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp")
+               "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
+               "eq", "ey", "e4", "gm", "gmy", "fq", "eh")
 VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
 VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
 VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
+FIN_QUARTERS = 8                # 第 10 輪 B5：個股季報卡的季數
 _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
 
@@ -723,11 +725,113 @@ def revenue_stats(rows):
     return {"rm": y * 100 + m, "ry": yoy, "rc": cum, "rh": hi, "r3": int(r3)}
 
 
+# ─── 第 10 輪 B5：季報（資料庫存累計值，這裡相減成單季；個股與選股共用）──────
+def _r1(a, b):
+    """a ÷ b × 100，四捨五入（ROUND_HALF_UP）到 1 位小數。"""
+    return float((Decimal(a) * 100 / Decimal(b)).quantize(Decimal("0.1"), ROUND_HALF_UP))
+
+
+def fin_single(cum: dict, y: int, q: int):
+    """
+    單季 [營收, 毛利, 營益, 淨利, EPS]：Q1 = 累計；Q2～Q4 = 本季累計 − 上一季累計（Q4 = 全年 − Q3 累計）。
+    cum = {(年, 季): (營收, 毛利, 營益, 淨利, EPS)}；該季沒有 → None；上一季沒有或該欄 NULL → 該欄 None（不以累計頂替）。
+    """
+    cur = cum.get((y, q))
+    if cur is None:
+        return None
+    prev = None if q == 1 else cum.get((y, q - 1))
+    if q == 1:
+        return list(cur)
+    return [a - b if prev is not None and a is not None and b is not None else None for a, b in zip(cur, prev or (None,) * 5)]
+
+
+def fin_yoy(v, base):
+    """年增 %：去年同期 ≤ 0 或任一缺 → None（畫面寫「轉盈」等）。"""
+    return None if v is None or base is None or base <= 0 else _r1(v - base, base)
+
+
+def fin_margin(x, rev):
+    """毛利率、營益率 %：單季營收 ≤ 0 或缺 → None。"""
+    return None if x is None or rev is None or rev <= 0 else _r1(x, rev)
+
+
+def fin_e4(cum: dict, y: int, q: int):
+    """近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計（四項缺一 → None）；Q4 = 全年。"""
+    if q == 4:
+        return cum[(y, 4)][4] if (y, 4) in cum else None
+    xs = [cum.get(k, (None,) * 5)[4] for k in ((y, q), (y - 1, 4), (y - 1, q))]
+    return None if None in xs else xs[0] + xs[1] - xs[2]
+
+
+def fin_stock(cum: dict, tbl: str, seen):
+    """stocks/{代號}.json 的 fin；沒有任何季報 → None。q：近 8 季（有累計值的季別，舊到新）[季別, 單季 EPS, EPS 年增, 毛利率, 營益率, 單季營收, 去年同季單季 EPS]。"""
+    if not cum:
+        return None
+    y, q = max(cum)
+    keys, k = [], (y, q)
+    for _ in range(FIN_QUARTERS):
+        keys.append(k)
+        k = prev_quarter(*k)
+    rows = []
+    for yy, qq in reversed(keys):
+        if (yy, qq) not in cum:
+            continue
+        s, b = fin_single(cum, yy, qq), fin_single(cum, yy - 1, qq)
+        rows.append([yy * 100 + qq, _f(s[4]), fin_yoy(s[4], b and b[4]), fin_margin(s[1], s[0]), fin_margin(s[2], s[0]), s[0],
+                     _f(b and b[4])])   # 第 10 輪 QA-01：去年同季單季 EPS（前 4 季的去年同季不在 q 內，畫面靠它判斷「轉盈」）
+    e, eb = cum[(y, q)][4], cum.get((y - 1, q), (None,) * 5)[4]
+    return {"t": tbl, "q": rows, "c": {"e": _f(e), "ey": fin_yoy(e, eb), **({"fs": str(seen)} if seen else {})},
+            "e4": _f(fin_e4(cum, y, q)), "e4p": _f(fin_e4(cum, y - 1, q))}
+
+
+def fin_screen(cum: dict) -> dict:
+    """screen.json 的季報欄（最新一季）：eq 單季 EPS、ey 年增 %、e4 近 4 季、gm 毛利率、gmy 毛利率年增（百分點）、fq 季別、eh 創 N 季新高。"""
+    if not cum:
+        return dict.fromkeys(("eq", "ey", "e4", "gm", "gmy", "fq", "eh"))
+    y, q = max(cum)
+    s, b = fin_single(cum, y, q), fin_single(cum, y - 1, q)
+    gm, gmb = fin_margin(s[1], s[0]), b and fin_margin(b[1], b[0])
+    eh, k = 0, prev_quarter(y, q)          # 單季 EPS 高於之前連續 eh 季
+    while s[4] is not None and (p := fin_single(cum, *k)) and p[4] is not None and p[4] < s[4]:
+        eh += 1
+        k = prev_quarter(*k)
+    return {"eq": _f(s[4]), "ey": fin_yoy(s[4], b and b[4]), "e4": _f(fin_e4(cum, y, q)), "gm": gm,
+            "gmy": _f(gm - gmb, 1) if gm is not None and gmb is not None else None, "fq": y * 100 + q, "eh": eh}
+
+
+def fin_progress(counts: dict, d):
+    """今日頁一行：資料日在季報窗口內、當季已有資料時 {q, n: {市場: 家數}, p: {市場: 前一季家數}}；否則 None。"""
+    fq = fin_quarter_for(d)
+    if not fq:
+        return None
+    n = {m: counts.get((*fq, m), 0) for m in ("TWSE", "TPEx")}
+    if not any(n.values()):
+        return None
+    pq = prev_quarter(*fq)
+    return {"q": fq[0] * 100 + fq[1], "n": n, "p": {m: counts.get((*pq, m), 0) for m in ("TWSE", "TPEx")}}
+
+
+def _load_financials(cur) -> tuple:
+    """({代號: {(年, 季): (營收, 毛利, 營益, 淨利, EPS)}}, {代號: (最新一季業別, 最新一季 first_seen)}, {(年, 季, 市場): 家數})。"""
+    fin, meta, counts = defaultdict(dict), {}, Counter()
+    for code, mkt, y, q, tbl, *vals, seen in cur.execute("""
+        SELECT s.stock_code, s.market_type, f.fin_year, f.fin_quarter, f.industry_tbl,
+               f.revenue, f.gross_profit, f.op_income, f.net_income, f.eps, f.first_seen
+        FROM quarterly_financials f JOIN stocks s ON s.stock_id = f.stock_id
+        ORDER BY s.stock_code, f.fin_year, f.fin_quarter"""):
+        fin[code][(y, q)] = tuple(vals)
+        meta[code] = (tbl, seen)
+        counts[(y, q, mkt)] += 1
+    return fin, meta, counts
+
+
 def screen_build(rows, head):
     """screen.json：欄式。rows：{代號: {SCREEN_KEYS…}}（依代號排序）；head：d、fd、md。rmd = 各營收月份的檔數。"""
     codes = sorted(rows)
     rmd = Counter(rows[c]["rm"] for c in codes if rows[c]["rm"] is not None)
-    return {**head, "rmd": {str(k): v for k, v in sorted(rmd.items(), reverse=True)}, "codes": codes,
+    fqd = Counter(rows[c]["fq"] for c in codes if rows[c].get("fq") is not None)        # 第 10 輪：各季報季別的檔數
+    return {**head, "rmd": {str(k): v for k, v in sorted(rmd.items(), reverse=True)},
+            "fqd": {str(k): v for k, v in sorted(fqd.items(), reverse=True)}, "codes": codes,
             **{k: [rows[c][k] for c in codes] for k in SCREEN_KEYS}}
 
 
@@ -880,6 +984,7 @@ def export_all() -> float:
     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
     status = build_status(cur, latest_date, now)
     valuation, stock_val, val_date = _load_valuation(cur)      # F9-4
+    fin, fin_meta, fin_counts = _load_financials(cur)          # 第 10 輪 B5
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
@@ -947,6 +1052,7 @@ def export_all() -> float:
                       "t": [round(x / 1000) if x is not None else None for x in tn],
                       "dl": [round(x / 1000) if x is not None else None for x in dn]},
             "revenue": rev_rows[-REVENUE_MONTHS:],
+            **({"fin": fb} if (fb := fin_stock(fin.get(code), *fin_meta.get(code, (None, None)))) else {}),   # 第 10 輪 B5
             "fund": dict(zip(("pe", "pb", "dy"), map(_f, fund[code][:3])), date=str(fund[code][3]))
                     if code in fund else None,
             **({"capchg": cap} if cap else {}),
@@ -1035,7 +1141,8 @@ def export_all() -> float:
                                       tv, b_days, idx_close[mkt]),
                         **revenue_stats(rev_rows), "cap": int(cap is not None),
                         **screen_margin(mrows, mlast.get(mkt), m5.get(mkt), conv, mkt),
-                        "pbp": (stock_val.get(code) or {}).get("pb", [None])[0]}     # F9-4：淨值比一年位置（cap 由前端估值規則排除）
+                        "pbp": (stock_val.get(code) or {}).get("pb", [None])[0],     # F9-4：淨值比一年位置（cap 由前端估值規則排除）
+                        **fin_screen(fin.get(code))}                                  # 第 10 輪 B5
 
     industries = defaultdict(list)
     for code in snapshot:
@@ -1060,6 +1167,7 @@ def export_all() -> float:
         "insti_official": _insti_official(amount["TWSE"]),
         "insti_official_tpex": _insti_official(amount["TPEx"]),      # 第 9 輪 F9-1：上櫃官方（結構同 insti_official）
         "valuation": valuation,                                      # 第 9 輪 F9-4：市場估值一年位置
+        "fin_progress": fin_progress(fin_counts, latest_date),       # 第 10 輪 B5：季報公布進度（窗口外 null）
         "insti_otc": {k: round(v, 1) for k, v in insti_otc.items()},
         "index": {code: {"date": str(rows[-1][0]), "c": _f(rows[-1][1]), "ch": _f(rows[-1][2]),
                          "p": _f(_pct(rows[-1][1], rows[-1][2])), "from": str(rows[-INDEX_DAYS:][0][0]),
@@ -1091,7 +1199,8 @@ def export_all() -> float:
     _write(SITE_DATA_DIR / "latest.json", latest)
     size = (SITE_DATA_DIR / "latest.json").stat().st_size / 1024
     print(f"  📌 screen.json {(SITE_DATA_DIR / 'screen.json').stat().st_size / 1024:.0f} KB（營收月份 " +
-          "、".join(f"{k[:4]}/{k[4:]} {v:,} 檔" for k, v in S["rmd"].items()) + "）")
+          "、".join(f"{k[:4]}/{k[4:]} {v:,} 檔" for k, v in S["rmd"].items()) + "；季報 " +
+          ("、".join(f"{k[:4]}Q{k[5]} {v:,} 檔" for k, v in S["fqd"].items()) or "無") + "）")
     print(f"  📌 還原事件 {n_ev} 筆（上櫃反推 {n_inferred} 筆）")
     if bad_all:
         print(f"⚠️  還原係數超出 {ADJ_MIN}～{ADJ_MAX}，未採用 {len(bad_all)} 筆：" +

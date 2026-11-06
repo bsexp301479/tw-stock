@@ -386,6 +386,7 @@ class World:
         self.runs, self.holidays, self.exports, self.notices = [], [], 0, []
         self.run_updates = []                                   # finish_run：(outcome, export_seconds, run_id)
         self.revenue = {(2026, 8): 1980, (2026, 9): 1980}
+        self.fin = {(y, q): (1984, 38) for y in range(2024, 2028) for q in range(1, 5)}    # 第 10 輪：季報各季都已齊（不發季報請求）
         days = tradingcal.trading_days(seed_until - timedelta(days=45), seed_until, CLOSED)
         self.rows.update(_full_snapshot(days))
         if not unsettled:       # 沒有日期的資料：seed_until 當晚都已成功
@@ -649,6 +650,8 @@ class FakeCursor:
             self.result = [(0,)]
         elif "revenue_year, revenue_month, COUNT" in sql:
             self.result = [(y, m, n) for (y, m), n in w.revenue.items()]
+        elif "fin_year, fin_quarter, COUNT" in sql:                 # 第 10 輪
+            self.result = [(y, q, n, nf) for (y, q), (n, nf) in w.fin.items()]
         return self
 
     def fetchone(self):

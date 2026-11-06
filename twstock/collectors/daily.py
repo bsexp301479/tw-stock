@@ -843,8 +843,9 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
     written, errors, cache = {}, {}, {}
     for key in keys:
         dataset, _, market = key.partition(".")
-        if dataset in ("pe", "insti", MARGIN, "breadth", AMOUNT) and written.get(f"prices.{market}") == 0:
-            continue                # 同市場行情還沒有：本益比、法人、融資融券、漲跌家數、上櫃法人金額不可能先有，不發請求
+        # "amount"（上市法人金額）partition 後市場是空字串：視為 TWSE（第 10 輪 P24；鍵名不改）
+        if dataset in ("pe", "insti", MARGIN, "breadth", AMOUNT) and written.get(f"prices.{market or 'TWSE'}") == 0:
+            continue                # 同市場行情還沒有：本益比、法人、融資融券、漲跌家數、法人金額不可能先有，不發請求
         if dataset == "pe" and f"prices.{market}" in errors:
             continue                # 本益比只寫入有行情列的股票
         try:

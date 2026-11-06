@@ -298,8 +298,16 @@ function valCard(L) {
       <div class="l">估值位置（官方，股票中位數）<span class="muted">　${md(T.d)}</span></div>
       ${row(V.TWSE, '上市')}${row(V.TPEx, '上櫃')}
       ${spark(V.TWSE?.s)}${V.TWSE?.s?.length > 1 ? `<div class="s">上市本益比中位數，近 ${V.TWSE.s.length} 個交易日（${md(V.TWSE.sf)} 起）</div>` : ''}
+      ${finLine(L.fin_progress)}
       <div class="s">一年位置 = 近 ${T.days} 個交易日（${T.from.replaceAll('-', '/')} 起）中，中位數小於或等於今天的天數比例。中位數只計本益比、淨值比大於 0 的股票（上市 ${fmt(V.TWSE?.n)}、上櫃 ${fmt(V.TPEx?.n)} 檔），不是加權指數本益比；本益比用近 4 季 EPS，財報公布期間 EPS 變化也會改變位置；殖利率用去年股利。只是位置，不是買賣訊號</div>
     </div>`;
+}
+
+// 第 10 輪 B5：季報公布進度（資料日在季報收集期間、當季已有資料時才有 fin_progress）
+function finLine(P) {
+  if (!P) return '';
+  const q = P.q % 100, name = q === 4 ? `${Math.floor(P.q / 100)} 年報` : `第 ${q} 季財報`;
+  return `<div class="s">${name}已收：上市 ${fmt(P.n.TWSE)}、上櫃 ${fmt(P.n.TPEx)} 家（前一季 ${fmt(P.p.TWSE)}、${fmt(P.p.TPEx)} 家）；本益比中位數會隨 EPS 更新而變動</div>`;
 }
 
 // 三大法人卡：上市（A2）、上櫃（第 9 輪 F9-1）都用官方金額；上櫃官方還沒有任何資料時退回估算一行；上市也沒有時維持第 1 輪估算卡
@@ -779,6 +787,10 @@ function screenRows() {
 const revMonth = () => Object.entries(App.screen?.rmd || {}).sort((a, b) => b[1] - a[1])[0]?.[0];
 // 第 9 輪 F9-2：營收月份混雜（兩個以上月份，且最多的月份不到 98%）→ 資料日一列加公布期間說明
 const revMixed = S => { const n = Object.values(S.rmd || {}), t = n.reduce((a, b) => a + b, 0); return n.length > 1 && Math.max(...n) < t * 0.98; };
+// 第 10 輪 B5：季報季別（YYYYQQ，例如 202603）同營收月份的做法：欄名用檔數最多的季別，季別不同的列加小字
+const finQ = () => Object.entries(App.screen?.fqd || {}).sort((a, b) => b[1] - a[1])[0]?.[0];
+const finMixed = S => revMixed({ rmd: S.fqd });
+const finTag = x => x.fq && String(x.fq) !== finQ() ? `<span class="muted small">（Q${x.fq % 100}）</span>` : '';
 
 // 結果表的動態欄：[欄名, 取值, 格式, 預設方向（1 遞增）]
 const spct = v => v == null ? '--' : sgn(v) + '%';
@@ -802,18 +814,21 @@ const SCR_COLS = {
   rc: ['累計年增', x => x.rc, spct], rh: ['營收新高(年)', x => x.rh, int0], r3: ['連3月年增', x => x.r3, v => v === 1 ? '✓' : '--'],
   pe: ['本益比', x => x.pe, v => fmt(v, 2), 1], dy: ['殖利率', x => x.dy, spct], pb: ['淨值比', x => x.pb, v => fmt(v, 2), 1],
   pbp: ['淨值比位置', x => x.pbp, v => fmt(v) + '%', 1],
+  eq: ['單季EPS', x => x.eq, (v, x) => fmt(v, 2) + finTag(x)], ey: ['EPS年增', x => x.ey, (v, x) => spct(v) + finTag(x)],
+  e4: ['近4季EPS', x => x.e4, v => fmt(v, 2)], gm: ['毛利率', x => x.gm, v => fmt(v, 1) + '%'],
+  gmy: ['毛利率年增', x => x.gmy, v => sgn(v, 1) + '點'], eh: ['EPS新高(季)', x => x.eh, int0],
 };
 const CAP_TAG = '<i class="al al-c" title="90 天內有除權、減資或面額變更，官方本益比、殖利率可能尚未調整">股本變動</i>';
 // 固定欄（股票｜收盤｜漲跌｜成交額）＋ cols；o = {sort: 目前排序欄, cap: 是否標示股本變動}；sort 有值時欄名可點排序
 function screenTable(list, cols, o = {}) {
-  const head = k => { const c = SCR_COLS[k], M = revMonth();
-    return k === 'ry' && M ? `營收年增（${Number(M.slice(4))} 月）` : c[0]; };
+  const head = k => { const c = SCR_COLS[k], M = revMonth(), Fq = finQ();
+    return k === 'ry' && M ? `營收年增（${Number(M.slice(4))} 月）` : (k === 'eq' || k === 'ey') && Fq ? `${c[0]}（Q${Number(Fq.slice(4))}）` : c[0]; };
   const th = (k, t) => o.sort ? `<th class="sort" data-k="${k}">${t}</th>` : `<th>${t}</th>`;
   return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th>${th('p', '漲跌')}${th('tv', '成交額')}${cols.map(k => th(k, head(k))).join('')}</tr></thead><tbody>` +
     list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
       <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.tv, 1)}億</td>` +
       cols.map(k => { const [, get, f] = SCR_COLS[k], v = get(x);
-        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp'].includes(k) ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
+        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh'].includes(k) ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
     '</tbody></table></div>';
 }
 
@@ -858,6 +873,12 @@ const SCREEN_CONDS = [
   { id: 'rc', g: '基本面', label: '累計年增 ≥ {v}%', opts: [20, 30, 50], def: 30, f: scrGe('rc'), cols: ['rc'] },
   { id: 'rh', g: '基本面', label: '營收創新高', sw: true, f: scrPos('rh'), cols: ['rh'] },
   { id: 'r3', g: '基本面', label: '連續 3 個月年增', sw: true, f: x => x.r3 === 1, cols: ['r3'] },
+  // 第 10 輪 B5：季報（最新一季；null = 沒有季報、去年同季虧損、金融業的毛利率 → 不符合）
+  { id: 'ey', g: '基本面', label: '單季 EPS 年增 ≥ {v}%', opts: [0, 20, 50], def: 20, f: scrGe('ey'), cols: ['eq', 'ey'], title: '最新一季單季 EPS 比去年同季；去年同季虧損或為 0 時不計算' },
+  { id: 'gmy', g: '基本面', label: '毛利率年增 ≥ {v} 百分點', opts: [0, 1, 3], def: 0, f: scrGe('gmy'), cols: ['gm', 'gmy'], title: '單季毛利率比去年同季；金融業沒有毛利率，不列入' },
+  { id: 'e4', g: '基本面', label: '近 4 季 EPS > 0', sw: true, f: scrPos('e4'), cols: ['e4'] },
+  { id: 'eh', g: '基本面', label: '單季 EPS 創 {v} 季新高', opts: [4, 8], def: 4, f: scrGe('eh'), cols: ['eq', 'eh'], title: '最新一季單季 EPS 高於之前連續 N 季' },
+  { id: 'ed', g: '基本面', label: '單季 EPS 比去年同季下滑', sw: true, f: x => isNum(x.ey) && x.ey < 0, cols: ['eq', 'ey'] },
   { id: 'pe', g: '基本面', label: '0 < 本益比 ≤ {v}', opts: [10, 15, 20], def: 15, val: true, f: (x, v, st) => isNum(x.pe) && x.pe > 0 && x.pe <= v && valGuard(x, st), cols: ['pe'] },
   { id: 'dy', g: '基本面', label: '殖利率 ≥ {v}%', opts: [3, 4, 5, 6], def: 5, val: true, f: (x, v, st) => isNum(x.dy) && x.dy >= v && valGuard(x, st), cols: ['dy'] },
   { id: 'pb', g: '基本面', label: '淨值比 ≤ {v}', opts: [1, 1.5, 2], def: 1, val: true, f: (x, v, st) => isNum(x.pb) && x.pb > 0 && x.pb <= v && valGuard(x, st), cols: ['pb'] },
@@ -875,7 +896,8 @@ const SCREEN_GROUPS = ['流動性', '價量', '法人', '信用', '基本面', '
 const SCREEN_PRESETS = [
   ['1', '法人連買＋營收創新高', 's=3&rh=1&tv=0.5'], ['2', '投信認養', 'ts=3&t5=1&t5r=5&tv=0.5'], ['3', '帶量突破', 'nh=60&vr=1.5&tv=1'],
   ['4', '多頭排列＋相對強勢', 'ma=3&rs20=0&f5=1&tv=3'], ['5', '價值高息', 'pe=15&dy=5&tv=0.5'], ['6', '營收高成長', 'ry=30&rc=30&rh=1&tv=1'],
-  ['7', '籌碼換手', 'n5r=3&m5d=2&ma=1&tv=0.5'], ['r1', '融資追價', 'm5u=10&r5=10&tv=0.5'], ['r2', '軋空觀察', 'sr=20&ma=1&tv=0.5'],
+  ['7', '籌碼換手', 'n5r=3&m5d=2&ma=1&tv=0.5'], ['8', '財報優於去年', 'ey=20&gmy=0&tv=0.5'],
+  ['r1', '融資追價', 'm5u=10&r5=10&tv=0.5'], ['r2', '軋空觀察', 'sr=20&ma=1&tv=0.5'], ['r3', '本益比低但 EPS 下滑', 'pe=15&ed=1&tv=0.5'],
 ];
 const SCREEN_DEFAULT = { xd: 1, xn: 1, xc: 1, o: 'tv' };
 // 條件狀態 = {條件 id: 門檻, o: 排序欄, od: 'a' 遞增／'d' 遞減（省略 = 預設方向）, ps: 套用中的預設}
@@ -942,10 +964,10 @@ async function renderScreen(q) {
     const chip = ([id, name], ref) => `<button class="chip${ref ? ' ref' : ''}${st.ps === id ? ' on' : ''}" data-ps="${id}"${ref ? ' title="風險檢查，不是買進訊號"' : ''}>${name}</button>`;
     $('#view').innerHTML = `<section class="sec">
       <div class="sec-h">${modeSeg('screen')}</div>
-      <div class="muted small">行情 ${md(S.d)}｜法人 ${md(S.fd)}｜融資融券 上市 ${mdx(S.md.TWSE)}、上櫃 ${mdx(S.md.TPEx)}｜營收 ${Object.entries(S.rmd).sort((a, b) => b[0].localeCompare(a[0])).map(([k, n]) => `${mon(k)} ${fmt(n)} 檔`).join('、') || '--'}${revMixed(S) ? '（每月 1～10 日為公布期間，各股月份不同）' : ''}</div>
+      <div class="muted small">行情 ${md(S.d)}｜法人 ${md(S.fd)}｜融資融券 上市 ${mdx(S.md.TWSE)}、上櫃 ${mdx(S.md.TPEx)}｜營收 ${Object.entries(S.rmd).sort((a, b) => b[0].localeCompare(a[0])).map(([k, n]) => `${mon(k)} ${fmt(n)} 檔`).join('、') || '--'}${revMixed(S) ? '（每月 1～10 日為公布期間，各股月份不同）' : ''}｜季報 ${Object.entries(S.fqd || {}).sort((a, b) => b[0].localeCompare(a[0])).map(([k, n]) => `${k.slice(0, 4) === S.d.slice(0, 4) ? '' : k.slice(0, 4) + ' '}Q${Number(k.slice(4))} ${fmt(n)} 檔`).join('、') || '--'}${finMixed(S) ? '（財報公布期間，各股季別不同）' : ''}</div>
       <div style="margin-top:8px">${notes}</div>
-      <div class="sec-h" style="margin:8px 0 0;gap:6px"><span class="muted small">預設：</span>${SCREEN_PRESETS.slice(0, 7).map(p => chip(p)).join('')}
-        <span class="muted small">參考：</span>${SCREEN_PRESETS.slice(7).map(p => chip(p, true)).join('')}</div>
+      <div class="sec-h" style="margin:8px 0 0;gap:6px"><span class="muted small">預設：</span>${SCREEN_PRESETS.filter(p => p[0][0] !== 'r').map(p => chip(p)).join('')}
+        <span class="muted small">參考：</span>${SCREEN_PRESETS.filter(p => p[0][0] === 'r').map(p => chip(p, true)).join('')}</div>
       <details class="scr-panel card"${open ? ' open' : ''}><summary>條件（已選 ${conds.length} 個）
         <button class="chip" id="scrClear">重設</button> <button class="chip" id="scrCopy">複製條件連結</button></summary>
         ${SCREEN_GROUPS.map(g => `<div class="scr-grp"><b>${g}</b><div>${SCREEN_CONDS.filter(c => c.g === g).map(condHTML).join('')}</div></div>`).join('')}
@@ -953,7 +975,7 @@ async function renderScreen(q) {
       <div class="sec-h" style="margin:8px 0"><h2>符合 ${fmt(hits.length)} 檔</h2>${hits.length > 100 ? `<span class="muted small">依「${oName}」排序顯示前 100 檔</span>` : ''}</div>
       <div class="card">${hits.length ? screenTable(hits.slice(0, 100), cols, { sort: o, cap: conds.some(c => c.val) })
         : '<div class="empty">沒有同時符合所有條件的股票。參考各條件的「單獨」檔數，放寬最少的那一個。</div>'}</div>
-      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。</div></section>`;
+      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。季報條件以各股最新一季判斷：單季 EPS 由累計相減，去年同季虧損時不計算年增，金融業沒有毛利率；財報公布期間各股季別不同（欄位會標出和欄名不同的季別）。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。</div></section>`;
     const changed = () => { delete st.ps; save(); draw(); };
     onModeSeg();
     $('#view').querySelectorAll('[data-ps]').forEach(b => b.addEventListener('click', () => {
