@@ -46,7 +46,7 @@ NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
-               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp")
+               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to")
 VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
 VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
 VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
@@ -265,6 +265,36 @@ def market_valuation(rows, days):
     return out
 
 
+def market_wpe(rows, days):
+    """
+    第 12 輪 A10-延伸：市值加權本益比 = Σ 市值 ÷ Σ（市值 ÷ 本益比），只計本益比 > 0、有市值（收盤 × 目前股數）的股票。
+    rows = [(日期, 市場, 代號, 本益比, 市值)]（float 或 None）；days = 窗口日期（舊到新，同 market_valuation）。
+    回傳 {市場: {v, p 位置 %（1 位）, lo, hi, cov 計入市值占比 %（1 位）, t: [最大市值代號, 占計入市值 %（1 位）]}}；某市場沒有資料 → 不輸出。
+    """
+    per = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0, 0.0, None]))    # 全部市值、計入市值、Σ 市值÷本益比、(最大市值, 代號)
+    window = set(days)
+    for d, m, code, pe, cap in rows:
+        if d not in window or not cap or cap <= 0:
+            continue
+        b = per[m][d]
+        b[0] += cap
+        if pe is not None and pe > 0:
+            b[1] += cap
+            b[2] += cap / pe
+            if b[3] is None or cap > b[3][0]:
+                b[3] = (cap, code)
+    out = {}
+    for m, by_day in per.items():
+        ds = [d for d in days if by_day.get(d) and by_day[d][2] > 0]
+        if not ds:
+            continue
+        s = [by_day[d][1] / by_day[d][2] for d in ds]
+        b = by_day[ds[-1]]
+        out[m] = {"v": round(s[-1], 2), "p": round(position(s, s[-1]), 1), "lo": round(min(s), 2), "hi": round(max(s), 2),
+                  "cov": round(b[1] / b[0] * 100, 1), "t": [b[3][1], round(b[3][0] / b[1] * 100, 1)]}
+    return out
+
+
 def stock_valuation(series, today):
     """
     B7：series = {"pe"|"pb"|"dy": [窗口內 > 0 的值]}；today = {"pe", "pb", "dy": 窗口最後一天的值（可為 None）}。
@@ -279,24 +309,36 @@ def stock_valuation(series, today):
     return out or None
 
 
-def _load_valuation(cur):
-    """讀窗口內的 stock_fundamentals（約 47 萬列）→ (市場估值, {代號: 個股估值}, 窗口最後一天)。"""
+def _load_valuation(cur, shares=None):
+    """
+    讀窗口內的 stock_fundamentals（約 47 萬列）→ (市場估值, {代號: 個股估值}, 窗口最後一天)。
+    第 12 輪：同一個查詢多讀當天收盤，乘 shares（{代號: 目前股數}）得市值，市場估值加 wpe（市值加權本益比）。
+    """
     days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {VAL_DAYS} trade_date FROM stock_fundamentals ORDER BY trade_date DESC")][::-1]
     if not days:
         return None, {}, None
     f = lambda x: None if x is None else float(x)
-    mrows, series, today = [], defaultdict(lambda: {"pe": [], "pb": [], "dy": []}), {}
-    for d, m, code, pe, pb, dy in cur.execute("""
-        SELECT f.trade_date, s.market_type, s.stock_code, f.pe_ratio, f.pb_ratio, f.dividend_yield
-        FROM stock_fundamentals f JOIN stocks s ON s.stock_id = f.stock_id WHERE f.trade_date BETWEEN ? AND ?""", days[0], days[-1]):
+    mrows, wrows, series, today = [], [], defaultdict(lambda: {"pe": [], "pb": [], "dy": []}), {}
+    shares = shares or {}
+    for d, m, code, pe, pb, dy, close in cur.execute("""
+        SELECT f.trade_date, s.market_type, s.stock_code, f.pe_ratio, f.pb_ratio, f.dividend_yield, p.close_price
+        FROM stock_fundamentals f JOIN stocks s ON s.stock_id = f.stock_id
+        LEFT JOIN daily_prices p ON p.stock_id = f.stock_id AND p.trade_date = f.trade_date
+        WHERE f.trade_date BETWEEN ? AND ?""", days[0], days[-1]):
         pe, pb, dy = f(pe), f(pb), f(dy)
         mrows.append((d, m, pe, pb, dy))
+        if close is not None and shares.get(code):
+            wrows.append((d, m, code, pe, float(close) * shares[code]))
         for k, v in (("pe", pe), ("pb", pb), ("dy", dy)):
             if v is not None and v > 0:
                 series[code][k].append(v)
         if d == days[-1]:
             today[code] = {"pe": pe, "pb": pb, "dy": dy}
-    return market_valuation(mrows, days) or None, {c: stock_valuation(series[c], today.get(c, {})) for c in series}, days[-1]
+    mv = market_valuation(mrows, days)
+    for m, w in market_wpe(wrows, days).items():          # 第 12 輪
+        if m in mv:
+            mv[m]["wpe"] = w
+    return mv or None, {c: stock_valuation(series[c], today.get(c, {})) for c in series}, days[-1]
 
 
 # ─── 融資融券（B2＋A4）與 ETF（E1）────────────────────────
@@ -403,6 +445,15 @@ def margin_series(d_, rows, conv, srows=None):
     return mg
 
 
+# ─── 市值、週轉率（第 12 輪 B11；目前股數）────────────────────
+def cap_turnover(close, volume, shares):
+    """(市值 億元（1 位）, 週轉率 % = 成交股數 ÷ 股數 × 100（2 位）)；沒有股數 → (None, None)；沒有收盤 → 市值 None；成交量 None → 週轉率 None。"""
+    if not shares:
+        return None, None
+    return (None if close is None else round(float(close) * shares / YI, 1),
+            None if volume is None else round(volume / shares * 100, 2))
+
+
 # ─── 借券賣出（第 11 輪 B14；資料庫存股，匯出一律換成張）────────────
 def lots(shares):
     """股 → 張（四捨五入到整數，half-up；None 照傳）。"""
@@ -439,6 +490,19 @@ def market_sbl(sdates, rows_by_market):
     R = rows_by_market.get(d, [])
     bal, prev = sum(r[1] for r in R), sum(r[0] for r in R)
     return {"d": str(d), "lb": lots(bal), "l1": lots(bal - prev), "n": len(R)}
+
+
+def _load_etf_sbl(cur):
+    """第 12 輪：ETF 借券，各市場最新借券日 → ({市場: 日期}, {代號: (前日餘額, 餘額)}（股）)。"""
+    by_m = defaultdict(dict)
+    for code, m, d, prev, bal in cur.execute("""
+        SELECT e.etf_code, e.market_type, x.trade_date, x.sbl_prev, x.sbl_balance
+        FROM etf_sbl x JOIN etfs e ON e.etf_id = x.etf_id
+        WHERE x.trade_date = (SELECT MAX(y.trade_date) FROM etf_sbl y JOIN etfs z ON z.etf_id = y.etf_id
+                              WHERE z.market_type = e.market_type)"""):
+        by_m[m][code] = (d, prev, bal)
+    dates = {m: next(iter(v.values()))[0] for m, v in by_m.items()}
+    return dates, {c: (p, b) for v in by_m.values() for c, (_, p, b) in v.items()}, by_m
 
 
 def _load_sbl(cur):
@@ -526,8 +590,11 @@ def _load_etfs(cur, since):
     return px, latest
 
 
-def etf_block(latest, margin_rows):
-    """latest.json 的 etfs。margin_rows：{代號: (融資前日, 融資餘額, 融券前日, 融券餘額)}（該市場最新融資融券日）。"""
+def etf_block(latest, margin_rows, sbl_rows=None):
+    """
+    latest.json 的 etfs。margin_rows：{代號: (融資前日, 融資餘額, 融券前日, 融券餘額)}（該市場最新融資融券日）。
+    第 12 輪：sbl_rows：{代號: (借券前日餘額, 借券餘額)}（股，該市場最新借券日）→ lb、l1（張）。
+    """
     if not latest:
         return None
     rows = {}
@@ -538,6 +605,9 @@ def etf_block(latest, margin_rows):
             mg = margin_rows.get(code)
             if mg:
                 r.update(mb=mg[1], m1=mg[1] - mg[0], sb=mg[3], s1=mg[3] - mg[2])
+            sl = (sbl_rows or {}).get(code)
+            if sl:
+                r.update(lb=lots(sl[1]), l1=lots(sl[1] - sl[0]))
             rows[code] = r
     return {"dates": {m: str(d) for m, (d, _) in latest.items()}, "rows": rows}
 
@@ -1039,9 +1109,10 @@ def export_all() -> float:
     # 寬度輸出 BREADTH_DAYS 天，前面多 60 天給 MA60
     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
     status = build_status(cur, latest_date, now)
-    valuation, stock_val, val_date = _load_valuation(cur)      # F9-4
+    valuation, stock_val, val_date = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe
     fin, fin_meta, fin_counts = _load_financials(cur)          # 第 10 輪 B5
     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
+    edates, esbl, esbl_m = _load_etf_sbl(cur)                  # 第 12 輪 ETF 借券
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
@@ -1100,6 +1171,9 @@ def export_all() -> float:
         mk_ = info["market"]
         sbl = stock_sbl(srows, slast.get(mk_), s5.get(mk_), shares.get(code),
                         (mrows.get(slast.get(mk_)) or (None,) * 5)[4], conv)
+        # 第 12 輪 B11：最新收盤（無成交日用最後一個收盤）× 目前股數；週轉率只在最後一根是資料日時計算
+        lc = next((x for x in reversed(c) if x is not None), None)
+        mc, to = cap_turnover(lc, v[-1] if d_[-1] == latest_date else None, shares.get(code))
         act = None
         if code in act_lots and dates[-1] in d_ and tn[d_.index(dates[-1])] is not None:
             t_lots = round(tn[d_.index(dates[-1])] / 1000)
@@ -1127,6 +1201,7 @@ def export_all() -> float:
                if info["market"] in mlast else {}),
             **({"active": active[code]} if code in active else {}),
             **({"sbl": sbl} if sbl else {}),                                     # 第 11 輪 B14：該股最新借券日沒有列 → 不輸出
+            **({"mt": {"d": str(latest_date), "mc": mc, "to": to}} if mc is not None else {}),   # 第 12 輪 B11
             **({"mg": mg} if mg else {}),
             **({"act": act} if act else {}),
         })
@@ -1207,7 +1282,8 @@ def export_all() -> float:
                         **screen_margin(mrows, mlast.get(mkt), m5.get(mkt), conv, mkt),
                         "pbp": (stock_val.get(code) or {}).get("pb", [None])[0],     # F9-4：淨值比一年位置（cap 由前端估值規則排除）
                         **fin_screen(fin.get(code)),                                  # 第 10 輪 B5
-                        **{k: (sbl or {}).get(k) for k in ("lb", "l1", "l5", "lp")}}   # 第 11 輪 B14
+                        **{k: (sbl or {}).get(k) for k in ("lb", "l1", "l5", "lp")},   # 第 11 輪 B14
+                        "mc": mc, "to": to}                                               # 第 12 輪 B11
 
     industries = defaultdict(list)
     for code in snapshot:
@@ -1245,7 +1321,8 @@ def export_all() -> float:
         "forecast": forecast,
         "margin": margin,
         "sbl": {m: market_sbl(sdates[m], srecent[m]) for m in ("TWSE", "TPEx") if sdates.get(m)} or None,   # 第 11 輪 B14
-        "etfs": etf_block(etf_latest, etf_margin_rows),
+        "sbl_etf": {m: market_sbl([d], {d: [(p, b) for _, p, b in esbl_m[m].values()]}) for m, d in edates.items()} or None,   # 第 12 輪
+        "etfs": etf_block(etf_latest, etf_margin_rows, esbl),
         "holdings": {code: {"d": str(hd[-1]), "n": etf_names[code][0],
                             **({"u1": u} if (u := unit_change(hs, hd)) is not None else {})}
                      for code, (hd, hs, _) in holdings.items()},
