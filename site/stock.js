@@ -60,6 +60,10 @@ window.renderStock = async function (code) {
        ['融券餘額', fmt(MG.sb) + ' 張', '', `1日 ${sgn(MG.s1, 0)}`],
        ['券資比', MG.sr == null ? '--' : fmt(MG.sr, 2) + '%', '', '資料 ' + md(MG.d)],
        ['融資使用率', MG.mu == null ? '--' : fmt(MG.mu, 2) + '%', '', mgNote ? '次一營業日' + mgNote : '資料 ' + md(MG.d)]];
+  // 第 11 輪 B14：借券賣出（張；占股本用目前股數）。sbl 不存在 = 該市場最新借券日沒有這檔
+  const SL = data.sbl;
+  const slCards = !SL ? [] : [['借券賣出餘額', fmt(SL.lb) + ' 張', '', `1日 ${sgn(SL.l1, 0)}　5日 ${SL.l5 == null ? '--' : sgn(SL.l5, 0)}`],
+    ['借券占股本', SL.lp == null ? '--' : fmt(SL.lp, 2) + '%', '', (SL.lx == null ? '' : `融券的 ${fmt(SL.lx, 1)} 倍　`) + '資料 ' + md(SL.d)]];
 
   // E2-4：主動 ETF 持有（統一、群益投信 8 檔；沒有任何一檔持有、也沒有 act 時不顯示）
   const AC = data.active, A = data.act;
@@ -107,9 +111,10 @@ window.renderStock = async function (code) {
          [hlFrom ? '區間高' : '52週高', pfmt(s?.h52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
          [hlFrom ? '區間低' : '52週低', pfmt(s?.l52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
          ['法人1日', yi(s?.n1), cls(s?.n1), fd], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
-         ['外資5日', yi(s?.f5), cls(s?.f5), '至 ' + fd], ['投信5日', yi(s?.t5), cls(s?.t5), '至 ' + fd], ...mgCards]
+         ['外資5日', yi(s?.f5), cls(s?.f5), '至 ' + fd], ['投信5日', yi(s?.t5), cls(s?.t5), '至 ' + fd], ...mgCards, ...slCards]
         .map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
     </section>
+    ${SL ? `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。占股本以目前發行股數計算。借券資料晚上 8 點半以後才更新。</div>` : ''}
     ${VAL ? `<div class="muted small val-note">一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}</div>` : ''}
     ${finUp ? `<div class="small val-note fin-note">近 4 季 EPS 一年前 ${fmt(F.e4p, 2)} 元 → 現在 ${fmt(F.e4, 2)} 元（${F.e4p <= 0 ? '轉盈' : fmt(F.e4 / F.e4p, 1) + ' 倍'}）：本益比會因獲利增加而下降，位置低不代表股價便宜；請看下方季報卡的單季 EPS 是否已經轉弱。</div>` : ''}
     ${acHTML}
@@ -127,7 +132,7 @@ window.renderStock = async function (code) {
       <div id="vC" class="chart-box" style="height:80px"></div>
       <div class="ch-label">三大法人買賣超（張，未還原）<span id="iLegend" style="display:contents"></span></div>
       <div id="iC" class="chart-box" style="height:90px"></div>
-      ${data.mg ? `<div class="ch-label">融資／融券餘額<span id="gUnit"></span><span id="gLegend" style="display:contents"></span></div>
+      ${data.mg ? `<div class="ch-label">融資／融券${data.mg.lb ? '／借券賣出' : ''}餘額<span id="gUnit"></span><span id="gLegend" style="display:contents"></span></div>
       <div id="gC" class="chart-box" style="height:90px"></div>` : ''}
       <div class="ch-label">MACD (12, 26, 9)
         <span class="lg"><i style="background:#378ADD"></i>DIF</span><span class="lg"><i style="background:#EF9F27"></i>DEA</span></div>
@@ -183,7 +188,8 @@ function aggregate(data, mode, adj) {
   const af = adj ? adjFactors(P.d, ev) : P.d.map(() => 1);
   // F8-3：融資融券餘額；還原時乘上該日之後所有官方換算的 k（面額變更、減資），原始為官方原值
   const gk = d => adj && G?.k ? G.k.reduce((a, x) => x.d > d ? a * x.k : a, 1) : 1;
-  const mgAt = i => G ? { mb: G.mb[i] == null ? null : Math.round(G.mb[i] * gk(P.d[i])), sb: G.sb[i] == null ? null : Math.round(G.sb[i] * gk(P.d[i])) } : { mb: null, sb: null };
+  const sc = (a, i) => a?.[i] == null ? null : Math.round(a[i] * gk(P.d[i]));
+  const mgAt = i => ({ mb: sc(G?.mb, i), sb: sc(G?.sb, i), lb: sc(G?.lb, i) });   // 第 11 輪：借券（lb）同樣依官方換算
   const evAt = Object.fromEntries(ev.map(e => [e.d, e]));
   // 無成交的日子（開高低收為 --）以前一個收盤價畫一字線，時間軸保持連續；上市前的空值略過
   const rows = [];
@@ -222,7 +228,7 @@ function aggregate(data, mode, adj) {
       g.h = Math.max(g.h, r.h); g.l = Math.min(g.l, r.l); g.c = r.c; g.v += r.v; g.ev = g.ev.concat(r.ev);
       g.nt = g.nt && r.nt;   // 整週/整月都沒成交才算一字線
       for (const k of ['f', 't', 'dl', 'net']) if (r[k] != null) g[k] = (g[k] ?? 0) + r[k];
-      for (const k of ['mb', 'sb']) if (r[k] != null) g[k] = r[k];   // 融資融券：期間最後一個有值的餘額
+      for (const k of ['mb', 'sb', 'lb']) if (r[k] != null) g[k] = r[k];   // 融資融券、借券：期間最後一個有值的餘額
     }
   }
   return [...out.values()];
@@ -302,8 +308,9 @@ function buildCharts(raw, mode, G, adj) {
     }
   }
 
-  // F8-3：融資（右軸）／融券（疊加軸、不顯示刻度）餘額；第三條序列（借券賣出餘額，B14）預留
-  const MB = raw.map(r => r.mb), SB = raw.map(r => r.sb);
+  // F8-3：融資（右軸）／融券（疊加軸、不顯示刻度）餘額；第 11 輪 B14：借券賣出（第三個疊加軸，不顯示刻度）
+  // 三條線各自一個座標軸：借券常是融券的上百倍，同軸會把融券壓平
+  const MB = raw.map(r => r.mb), SB = raw.map(r => r.sb), LB = raw.map(r => r.lb);
   let gc = null, mbSer = null;
   if (G && $('#gC')) {
     gc = mk('gC', false);
@@ -312,6 +319,11 @@ function buildCharts(raw, mode, G, adj) {
     const sbSer = gc.addLineSeries({ color: '#AE3EC9', lineWidth: 1, priceScaleId: 'sb', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
     gc.priceScale('sb').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
     sbSer.setData(SB.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
+    if (G.lb) {
+      const lbSer = gc.addLineSeries({ color: '#E8590C', lineWidth: 1, lineStyle: 2, priceScaleId: 'lb', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
+      gc.priceScale('lb').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+      lbSer.setData(LB.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
+    }
     // 換算事件標在包含該日期的那一根（T 中 ≤ 事件日的最後一根）
     mbSer.setMarkers((G.k || []).map(x => { let j = -1; T.forEach((t, i) => { if (t <= x.d) j = i; }); return [j, x]; }).filter(([j]) => j >= 0)
       .sort((a, b) => a[0] - b[0]).map(([j, x]) => ({ time: T[j], position: 'aboveBar', shape: 'circle', color: css('--blue'), text: EV_LABEL[x.t] + (adj ? ' 已換算' : '') })));
@@ -368,7 +380,8 @@ function buildCharts(raw, mode, G, adj) {
       $('#gLegend').innerHTML = (g !== i && MB[g] != null ? `<span class="muted">${T[g]}</span>` : '') +
         `<span class="lg"><i style="background:#1C7ED6"></i>融資 <b class="num">${fmt(MB[g])}</b></span>` +
         `<span class="lg"><i style="background:#AE3EC9"></i>融券 <b class="num">${fmt(SB[g])}</b></span>` +
-        `<span class="lg">券資比 <b class="num">${MB[g] ? fmt(SB[g] / MB[g] * 100, 2) + '%' : '--'}</b></span>`;
+        `<span class="lg">券資比 <b class="num">${MB[g] ? fmt(SB[g] / MB[g] * 100, 2) + '%' : '--'}</b></span>` +
+        (G.lb ? `<span class="lg"><i style="background:#E8590C"></i>借券 <b class="num">${fmt(LB[g])}</b></span>` : '');
     }
   };
   let crossSyncing = false;
@@ -447,7 +460,7 @@ function renderFin(F) {
   $('#finBox').innerHTML = `<div class="metrics">${stats.map(([l, x, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c}" style="font-size:16px">${x}</div><div class="s">${sub}</div></div>`).join('')}</div>
     <div class="ch-label">近 ${Q.length} 季單季 EPS（元）；紅／綠 = 比去年同季增加／減少，灰 = 無法比較（去年同季虧損或沒有資料）</div>
     <div class="fin-bars">${Q.map(bar).join('')}</div>
-    <div class="muted small" style="margin-top:6px">單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。金融業沒有毛利率。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}</div>`;
+    <div class="muted small" style="margin-top:6px">單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。官方本益比以最新股數計算，期間有增資的公司，近 4 季 EPS 會和「股價 ÷ 本益比」有差異。金融業沒有毛利率。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}</div>`;
 }
 
 function renderRevenue(rows) {

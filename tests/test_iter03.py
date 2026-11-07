@@ -103,6 +103,7 @@ def _full_snapshot(days, skip=()):
           "pe.TPEx": Row(888, 675, 888, 888), "insti.TWSE": Row(1077), "insti.TPEx": Row(784), "amount": Row(6), "amount.TPEx": Row(6),
           "index.TAIEX": Row(1), "index.TPEX": Row(1), "futures": Row(6), "futures_oi": Row(9),
           "etf.TWSE": Row(250), "etf.TPEx": Row(120), "margin.TWSE": Row(1100), "margin.TPEx": Row(900),   # 第 4 輪
+          "sbl.TWSE": Row(1100), "sbl.TPEx": Row(900),                                                     # 第 11 輪
           "breadth.TWSE": Row(1), "breadth.TPEx": Row(1), **{f"holdings.{c}": Row(50) for c in health.HOLDINGS}}   # 第 5 輪
     return {k: {d: v for d in days if (k, d) not in skip} for k, v in ok.items()}
 
@@ -361,7 +362,8 @@ OI_HEAD = "日期,商品名稱,身份別,多方交易口數,多方交易契約�
 ALL_EP = ("MI_INDEX", "BWIBBU_d", "fund/T86", "BFI82U", "dailyQuotes", "peQryDate", "dailyTrade", "futDataDown", "futContractsDateDown",
           "MI_MARGN", "margin/balance", "highlight", "GetPCF",     # 第 5 輪：GetPCF 的日期是持股日
           "etf/buyback",                                            # 第 7 輪群益：和 GetPCF 共用已公布的持股日（down 才用得到）
-          "insti/summary")                                          # 第 9 輪：上櫃官方法人金額
+          "insti/summary",                                          # 第 9 輪：上櫃官方法人金額
+          "TWT93U", "margin/sbl")                                   # 第 11 輪：借券賣出（上市、上櫃）
 # 第 4 輪：行情回應含 ETF 列（另有權證、TDR 等其他證券，兩邊都不可寫入）；融資融券回應含股票與 ETF
 TWSE_ETFS = [f"00{n:03d}" for n in range(100, 350)]          # 250 檔，如 00100
 TPEX_ETFS = [f"00{n:03d}B" for n in range(700, 820)]         # 120 檔，如 00700B
@@ -417,7 +419,7 @@ class World:
                         ("dailyQuotes", self._quotes), ("peQryDate", self._pe), ("dailyTrade", self._tpex_insti),
                         ("indexInfo/inx", self._inx), ("futDataDown", self._fut), ("futContractsDateDown", self._oi),
                         ("MI_MARGN", self._mgn), ("margin/balance", self._tpex_mgn), ("highlight", self._hl), ("GetPCF", self._pcf),
-                        ("etf/buyback", self._cap), ("insti/summary", self._tpex_amount)):
+                        ("etf/buyback", self._cap), ("insti/summary", self._tpex_amount), ("TWT93U", self._sbl), ("margin/sbl", self._sbl)):
             if key in url:
                 return fn(form)
         return Resp([]) if "openapi" in url else Resp({"stat": "沒有資料", "tables": []})
@@ -523,6 +525,21 @@ class World:
                 for c in TWSE_CODES + TWSE_ETFS + OTHERS]
         return Resp({"stat": "OK", "tables": [total, {"fields": fields, "groups": MGN_GROUPS, "data": rows}]})
 
+    def _sbl(self, form):
+        """第 11 輪：TWT93U（上市，GET date=YYYYMMDD）、margin/sbl（上櫃，POST date=YYYY/MM/DD）；尚未公布 = 回應日期仍是請求日、沒有資料列。"""
+        d = self._date(form)
+        twse = "/" not in form["date"]
+        ep = "TWT93U" if twse else "margin/sbl"
+        head = ["代號" if twse else "股票代號", "名稱", "前日餘額", "賣出", "買進", "現券", "今日餘額", "次一營業日限額", "前日餘額", "當日賣出",
+                "當日還券", "當日調整" if twse else "當日調整數額", "當日餘額", "次一營業日可限額" if twse else "次一營業日可借券賣出限額", "備註"]
+        rows = [] if self._no(ep, form) else \
+            [[c, "名", "0", "0", "0", "0", "0", "1,000", "10,000", "1,000", "0", "0", "11,000", "500", " "]
+             for c in (TWSE_CODES + TWSE_ETFS + OTHERS if twse else TPEX_CODES + TPEX_ETFS)]
+        if twse:
+            return Resp({"stat": "OK", "date": f"{d:%Y%m%d}", "fields": head, "data": rows + ([["", "合計"] + ["1"] * 13] if rows else []),
+                         "groups": [{"title": "股票", "span": 2}, {"title": "融券", "span": 6}, {"title": "借券賣出", "span": 6}, {"title": "", "span": 1}] if rows else []})
+        return Resp({"date": f"{d:%Y%m%d}", "stat": "ok", "tables": [{"fields": head, "data": rows}]})
+
     def _tpex_mgn(self, form):
         if self._no("margin/balance", form):
             return self._empty_tables(TPM_FIELDS)
@@ -581,8 +598,9 @@ class World:
                 mine = [r for r in rows if r["stock_code"].endswith("B") == (mk == "TPEx")]
                 if mine:
                     self.rows[f"etf.{mk}"][pd] = Row(len(mine))
-        elif table in ("daily_prices", "stock_fundamentals", "institutional_trades", "margin_trades"):
-            name = {"daily_prices": "prices", "stock_fundamentals": "pe", "institutional_trades": "insti", "margin_trades": "margin"}[table]
+        elif table in ("daily_prices", "stock_fundamentals", "institutional_trades", "margin_trades", "sbl_trades"):
+            name = {"daily_prices": "prices", "stock_fundamentals": "pe", "institutional_trades": "insti", "margin_trades": "margin",
+                    "sbl_trades": "sbl"}[table]
             for mk in ("TWSE", "TPEx"):
                 mine = [r for r in rows if market(r["stock_code"]) == mk]
                 if mine:

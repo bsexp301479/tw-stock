@@ -470,6 +470,44 @@ DDL = [
         CONSTRAINT UQ_quarterly_financials UNIQUE (stock_id, fin_year, fin_quarter)
     )
     """,
+    # 借券賣出（第 11 輪 B14；股，和融資融券的張不同）：上市 TWT93U、上櫃 margin/sbl 的「借券賣出」6 欄＋備註原文；
+    # 股票 sbl_trades、ETF etf_sbl 欄位相同（比照 margin_trades／etf_margin）。單檔最大 3481 約 7.9 億股（11/06，INT 上限的 37%），一律 BIGINT 留餘裕
+    """
+    IF OBJECT_ID('sbl_trades') IS NULL
+    CREATE TABLE sbl_trades (
+        id           BIGINT IDENTITY(1,1) PRIMARY KEY,
+        stock_id     INT           NOT NULL REFERENCES stocks(stock_id),
+        trade_date   DATE          NOT NULL,
+        sbl_prev     BIGINT        NOT NULL,   -- 前日餘額
+        sbl_sell     BIGINT        NULL,       -- 當日賣出
+        sbl_return   BIGINT        NULL,       -- 當日還券
+        sbl_adjust   BIGINT        NULL,       -- 當日調整
+        sbl_balance  BIGINT        NOT NULL,   -- 當日餘額
+        sbl_limit    BIGINT        NULL,       -- 次一營業日可借券賣出限額
+        note         NVARCHAR(20)  NULL,       -- 備註原文（X 停券、V 不得借券交易…）
+        created_at   DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_sbl_trades UNIQUE (stock_id, trade_date)
+    )
+    """,
+    """
+    IF OBJECT_ID('etf_sbl') IS NULL
+    CREATE TABLE etf_sbl (
+        id           BIGINT IDENTITY(1,1) PRIMARY KEY,
+        etf_id       INT           NOT NULL REFERENCES etfs(etf_id),
+        trade_date   DATE          NOT NULL,
+        sbl_prev     BIGINT        NOT NULL,
+        sbl_sell     BIGINT        NULL,
+        sbl_return   BIGINT        NULL,
+        sbl_adjust   BIGINT        NULL,
+        sbl_balance  BIGINT        NOT NULL,
+        sbl_limit    BIGINT        NULL,
+        note         NVARCHAR(20)  NULL,
+        created_at   DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_etf_sbl UNIQUE (etf_id, trade_date)
+    )
+    """,
+    # 第 11 輪：發行股數（update_industry 一併寫入；目前股數，不保留歷史）
+    "IF COL_LENGTH('stocks', 'shares') IS NULL ALTER TABLE stocks ADD shares BIGINT NULL",
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -483,6 +521,8 @@ DDL = [
     "CREATE INDEX IX_industry_chains_code ON industry_chains(stock_code)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_margin_trades_date') "
     "CREATE INDEX IX_margin_trades_date ON margin_trades(trade_date)",
+    "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_sbl_trades_date') "
+    "CREATE INDEX IX_sbl_trades_date ON sbl_trades(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_daily_date') "
     "CREATE INDEX IX_etf_daily_date ON etf_daily(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_holdings_code') "
@@ -508,4 +548,4 @@ def setup_database():
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
           "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
-          "etf_holding_gaps")
+          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_holding_gaps")

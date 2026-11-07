@@ -265,11 +265,23 @@ function marginCard(L) {
       ${row(T, '上市')}${row(O, '上櫃')}
       <div class="s num">融資維持率（自算）上市 ${mr(T)}　上櫃 ${mr(O)}</div>
       <div class="s num">融資金額（官方，含 ETF）上市 ${amt(T)}　上櫃 ${amt(O)}</div>
+      ${sblLine(L)}
       ${E ? `<div class="s num">ETF 另計（不計入上方）：上市 ETF 融資 ${wan(E.mb)} ${lots(E.m1)}、融券 ${wan(E.sb)} ${lots(E.s1)}</div>` : ''}
       ${T ? `${minibars(T.m20)}<div class="s">上市股票融資增減（張），近 ${T.m20.length} 日（${md(T.d20[0])}～${md(T.d20.at(-1))}）</div>` : ''}
       <div class="s">維持率 = Σ(融資張數 × 1,000 × 收盤) ÷ 官方融資金額，股票＋ETF，自算、非官方；涵蓋率不足 99% 時顯示「資料不足」</div>
       <div class="s">參考（經驗值，非官方門檻）：大盤融資維持率跌到 140% 左右時，常伴隨融資斷頭賣壓。投資人整戶擔保維持率低於 130% 會被追繳，這是官方規定。</div>
     </div>`;
+}
+
+// 第 11 輪 B14：借券賣出餘額（股票口徑，張）與融券的倍數；倍數用同一市場信用交易卡的融券合計
+function sblLine(L) {
+  const B = L.sbl, M = L.margin;
+  if (!B) return '';
+  const wan = n => `<b title="${fmt(n)} 張">${fmt(n / 1e4, n >= 1e6 ? 0 : 1)}</b> 萬張`;
+  const one = (x, m, name) => !x ? '' : `${name} ${wan(x.lb)} <span class="${cls(x.l1)}">${sgn(x.l1, 0)}</span>` +
+    (M?.[m]?.sb ? `（融券的 ${fmt(x.lb / M[m].sb, 0)} 倍）` : '') + (x.d !== (M?.[m]?.d ?? x.d) ? `<span class="muted">（${md(x.d)}）</span>` : '');
+  return `<div class="s num">借券賣出餘額　${[one(B.TWSE, 'TWSE', '上市'), one(B.TPEx, 'TPEx', '上櫃')].filter(Boolean).join('　')}　<a class="muted small" href="#/rank/l+">看排行 →</a></div>
+      <div class="s">借券賣出含避險、套利，不等於看空；晚上 8 點半以後才更新</div>`;
 }
 
 // 市場寬度卡（A3＋A8）：全部為網站自算（還原收盤、股票、不含 ETF）；官方家數在成交額卡
@@ -658,9 +670,10 @@ const RANKS = [
   ['ry', '營收年增', 'ry', -1, 'x'], ['dy', '殖利率', 'dy', -1, 'v'], ['pe', '本益比最低', 'pe', 1, 'v'],
   ['m+', '融資增加', 'm*', -1, 'm'], ['m-', '融資減少', 'm*', 1, 'm'], ['mr', '融資增加率', 'mr*', -1, 'm'],
   ['s+', '融券增加', 's*', -1, 'm'], ['s-', '融券減少', 's*', 1, 'm'], ['sr', '券資比', 'sr', -1, 'm'], ['mu', '融資使用率', 'mu', -1, 'm'],
+  ['l+', '借券賣出增加', 'la*', -1, 'l'], ['lp', '借券占股本', 'lp', -1, 'l'],     // 第 11 輪 B14：'l' = 借券（需要 screen.json）
 ];
 const RANK_GROUPS = [['法人', ['n+', 'n-', 'f+', 'f-', 't+', 't-', 'd+', 'd-', 'fs', 'ts', 's']], ['價量', ['p+', 'p-', 'tv', 'vr', 'nh', 'rs20']],
-  ['基本面', ['ry', 'dy', 'pe']], ['融資融券', ['m+', 'm-', 'mr', 's+', 's-', 'sr', 'mu']]];
+  ['基本面', ['ry', 'dy', 'pe']], ['融資融券', ['m+', 'm-', 'mr', 's+', 's-', 'sr', 'mu']], ['借券', ['l+', 'lp']]];
 // screen.json 排行的額外篩選與表格欄位
 const RANK_FILTER = { nh: x => x.nh > 0, dy: x => isNum(x.pe) && x.pe > 0 && x.cap !== 1, pe: x => x.pe > 0 && x.cap !== 1, sr: x => isNum(x.mb) && x.mb >= MARGIN_BASE };
 const RANK_COLS = { vr: ['vr'], nh: ['nh'], rs20: ['rs20'], ry: ['ry'], dy: ['dy', 'pe', 'pb'], pe: ['pe', 'pb', 'dy'] };
@@ -710,7 +723,11 @@ async function renderRank(arg) {
     const inMkt = x => mkt === 'all' || x.m === mkt;
     const list = screenRows().filter(x => isNum(x[field]) && (RANK_FILTER[by] || (() => true))(x) && inMkt(x) && (x.tv ?? 0) >= Number(minTv))
       .sort((a, b) => dir * (a[field] - b[field]) || (src === 'm' ? (a.code < b.code ? -1 : 1) : b.tv - a.tv)).slice(0, 50);
-    if (src === 'm') {
+    if (src === 'l') {
+      const sds = [...new Set(Object.entries(S.sd || {}).filter(([m]) => mkt === 'all' || m === mkt).map(([, d]) => md(d)))].join('、');
+      table = sblTable(list, span);
+      foot = `借券資料日：上市 ${S.sd?.TWSE ? md(S.sd.TWSE) : '--'}、上櫃 ${S.sd?.TPEx ? md(S.sd.TPEx) : '--'}（${sds || '--'}）。估算金額 = 借券賣出增減張數 × 1,000 × 收盤，是估算。借券賣出含避險、套利（ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。占股本 = 借券賣出餘額 ÷ 目前發行股數（不是當時股數）。資料晚上 8 點半以後才更新。不含 ETF。`;
+    } else if (src === 'm') {
       const all = screenRows().filter(inMkt), cnt = (k, sg) => all.filter(x => isNum(x[k]) && sg * x[k] > 0).length;
       const mds = [...new Set(Object.entries(S.md).filter(([m]) => mkt === 'all' || m === mkt).map(([, d]) => md(d)))].join('、');
       table = `<div class="muted small tbl-cap">融資增加 ${fmt(cnt('m' + span, 1))} 家、減少 ${fmt(cnt('m' + span, -1))} 家；融券增加 ${fmt(cnt('s' + span, 1))} 家、減少 ${fmt(cnt('s' + span, -1))} 家（${span} 日，股票，融資融券 ${mds || '--'}）</div>` +
@@ -756,6 +773,18 @@ function marginTable(list, span, by) {
     '</tbody></table></div>';
 }
 
+// 第 11 輪 B14：借券排行的表格
+function sblTable(list, span) {
+  const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>5日漲跌</th><th>借券餘額</th><th>借券${lbl}</th><th>估算（億）</th><th>占股本</th><th>融券餘額</th><th>成交額</th></tr></thead><tbody>` +
+    list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span></td>
+      <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num ${cls(x.r5)}">${isNum(x.r5) ? sgn(x.r5) + '%' : '--'}</td>
+      <td class="num">${isNum(x.lb) ? fmt(x.lb) : '--'}</td><td class="num ${cls(x['l' + k])}">${isNum(x['l' + k]) ? sgn(x['l' + k], 0) : '--'}</td>
+      <td class="num ${cls(x['la' + k])}">${isNum(x['la' + k]) ? yi(x['la' + k]) : '--'}</td><td class="num">${isNum(x.lp) ? fmt(x.lp, 2) + '%' : '--'}</td>
+      <td class="num">${isNum(x.sb) ? fmt(x.sb) : '--'}</td><td class="num">${fmt(x.tv, 1)}億</td></tr>`).join('') +
+    '</tbody></table></div>';
+}
+
 // ─── 第 8 輪 F8-2：條件選股（screen.json 與 latest.json stocks 合併）──────────
 const isNum = v => typeof v === 'number';       // null、undefined 一律不符合（null >= 0 在 JS 是 true）
 async function loadScreen() {
@@ -776,6 +805,7 @@ function screenRow(code, st, S) {             // st = latest.json stocks 的一�
     const v = x['m' + n];
     x['ma' + n] = isNum(v) && isNum(x.c) ? v * 1000 * x.c / 1e8 : null;
     x['mr' + n] = isNum(v) && isNum(x.mb) && x.mb - v >= MARGIN_BASE ? v / (x.mb - v) * 100 : null;
+    x['la' + n] = isNum(x['l' + n]) && isNum(x.c) ? x['l' + n] * 1000 * x.c / 1e8 : null;   // 第 11 輪：借券增減估算金額（億）
   }
   return x;
 }
@@ -815,8 +845,9 @@ const SCR_COLS = {
   pe: ['本益比', x => x.pe, v => fmt(v, 2), 1], dy: ['殖利率', x => x.dy, spct], pb: ['淨值比', x => x.pb, v => fmt(v, 2), 1],
   pbp: ['淨值比位置', x => x.pbp, v => fmt(v) + '%', 1],
   eq: ['單季EPS', x => x.eq, (v, x) => fmt(v, 2) + finTag(x)], ey: ['EPS年增', x => x.ey, (v, x) => spct(v) + finTag(x)],
-  e4: ['近4季EPS', x => x.e4, v => fmt(v, 2)], gm: ['毛利率', x => x.gm, v => fmt(v, 1) + '%'],
-  gmy: ['毛利率年增', x => x.gmy, v => sgn(v, 1) + '點'], eh: ['EPS新高(季)', x => x.eh, int0],
+  e4: ['近4季EPS', x => x.e4, v => fmt(v, 2)], gm: ['毛利率', x => x.gm, (v, x) => fmt(v, 1) + '%' + finTag(x)],
+  gmy: ['毛利率年增', x => x.gmy, (v, x) => sgn(v, 1) + '點' + finTag(x)], eh: ['EPS新高(季)', x => x.eh, int0],
+  lb: ['借券餘額', x => x.lb, v => fmt(v)], l5: ['借券5日', x => x.l5, v => sgn(v, 0)], lp: ['借券占股本', x => x.lp, v => fmt(v, 2) + '%'],
 };
 const CAP_TAG = '<i class="al al-c" title="90 天內有除權、減資或面額變更，官方本益比、殖利率可能尚未調整">股本變動</i>';
 // 固定欄（股票｜收盤｜漲跌｜成交額）＋ cols；o = {sort: 目前排序欄, cap: 是否標示股本變動}；sort 有值時欄名可點排序
@@ -828,7 +859,7 @@ function screenTable(list, cols, o = {}) {
     list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
       <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.tv, 1)}億</td>` +
       cols.map(k => { const [, get, f] = SCR_COLS[k], v = get(x);
-        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh'].includes(k) ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
+        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh', 'lb', 'lp'].includes(k) ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
     '</tbody></table></div>';
 }
 
@@ -869,6 +900,9 @@ const SCREEN_CONDS = [
     f: (x, v) => { const b = m5Base(x); return isNum(b) && b >= MARGIN_BASE && x.m5 / b * 100 >= v; }, cols: ['m5', 'm5p'] },
   { id: 'sr', g: '信用', label: '券資比 ≥ {v}%（融資 ≥ 1,000 張）', opts: [10, 20, 30], def: 20, f: (x, v) => isNum(x.mb) && x.mb >= MARGIN_BASE && isNum(x.sr) && x.sr >= v, cols: ['sr'] },
   { id: 'mu', g: '信用', label: '融資使用率 ≥ {v}%', opts: [20, 30, 50], def: 30, f: scrGe('mu'), cols: ['mu'] },
+  // 第 11 輪 B14：借券（null = 沒有借券資料或沒有股數 → 不符合）
+  { id: 'lp', g: '信用', label: '借券占股本 ≥ {v}%', opts: [3, 5, 8], def: 5, f: scrGe('lp'), cols: ['lb', 'lp'], title: '借券賣出餘額 ÷ 目前發行股數；借券含避險、套利，不等於看空' },
+  { id: 'l5', g: '信用', label: '借券 5 日增加 ≥ {v} 張', opts: [500, 1000, 5000], def: 1000, f: scrGe('l5'), cols: ['lb', 'l5'] },
   { id: 'ry', g: '基本面', label: '營收年增 ≥ {v}%', opts: [20, 30, 50], def: 30, f: scrGe('ry'), cols: ['ry'] },
   { id: 'rc', g: '基本面', label: '累計年增 ≥ {v}%', opts: [20, 30, 50], def: 30, f: scrGe('rc'), cols: ['rc'] },
   { id: 'rh', g: '基本面', label: '營收創新高', sw: true, f: scrPos('rh'), cols: ['rh'] },

@@ -23,6 +23,7 @@ SECONDS_PER_QUARTER = 4.5       # mopsov 節流 3 秒＋約 1.6 MB 回應
 # 依網站節流間隔 + 回應時間的實測值（秒，每個細項）
 SECONDS_PER_KEY = {"prices.TWSE": 4, "prices.TPEx": 4, "pe.TWSE": 4, "pe.TPEx": 3.2, "insti.TWSE": 4, "insti.TPEx": 3.2,
                    "index.TAIEX": 4, "amount": 4, "amount.TPEx": 3.2, "etf.TWSE": 4, "etf.TPEx": 1, "margin.TWSE": 4, "margin.TPEx": 0.5,
+                   "sbl.TWSE": 4, "sbl.TPEx": 3.2,
                    **{k: 3.2 for k in HOLDINGS_KEYS}}
 SHARED = {"etf.TWSE": "prices.TWSE", "etf.TPEx": "prices.TPEx"}   # 同一天也要抓行情時共用回應，不另計時
 SECONDS_PER_MONTH = 3.2

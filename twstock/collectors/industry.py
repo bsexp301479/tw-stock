@@ -1,6 +1,6 @@
-"""更新 stocks.industry：證交所 / 櫃買 OpenAPI 公司基本資料的產業別代碼 → 中文名稱。"""
+"""更新 stocks.industry 與 stocks.shares：證交所 / 櫃買 OpenAPI 公司基本資料的產業別代碼 → 中文名稱、發行股數（第 11 輪）。"""
 from .. import db
-from ..fetch import request
+from ..fetch import clean_number, request
 
 INDUSTRY = {
     "01": "水泥", "02": "食品", "03": "塑膠", "04": "紡織纖維", "05": "電機機械",
@@ -15,25 +15,27 @@ INDUSTRY = {
 
 
 def update_industry() -> int:
+    """產業別與發行股數（第 11 輪，借券占股本用；目前股數，不保留歷史）一起更新；只更新有變動的列。"""
     twse = request("GET", "https://openapi.twse.com.tw/v1/opendata/t187ap03_L")
     tpex = request("GET", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O")
-    pairs = [(r["公司代號"], r["產業別"]) for r in twse] + \
-            [(r["SecuritiesCompanyCode"], r["SecuritiesIndustryCode"]) for r in tpex]
-    rows = [{"stock_code": c.strip(), "industry": INDUSTRY.get(i.strip(), "其他")} for c, i in pairs]
+    triples = [(r["公司代號"], r["產業別"], r.get("已發行普通股數或TDR原股發行股數")) for r in twse] + \
+              [(r["SecuritiesCompanyCode"], r["SecuritiesIndustryCode"], r.get("IssueShares")) for r in tpex]
+    rows = [{"stock_code": c.strip(), "industry": INDUSTRY.get(i.strip(), "其他"), "shares": clean_number(n, int) or None}
+            for c, i, n in triples]
 
     conn = db.connect()
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            UPDATE st SET industry = j.industry
+            UPDATE st SET industry = j.industry, shares = ISNULL(j.shares, st.shares)
             FROM stocks st
-            JOIN OPENJSON(?) WITH (stock_code NVARCHAR(10), industry NVARCHAR(50)) AS j
+            JOIN OPENJSON(?) WITH (stock_code NVARCHAR(10), industry NVARCHAR(50), shares BIGINT) AS j
               ON j.stock_code = st.stock_code
-            WHERE ISNULL(st.industry, '') <> j.industry
+            WHERE ISNULL(st.industry, '') <> j.industry OR (j.shares IS NOT NULL AND ISNULL(st.shares, -1) <> j.shares)
         """, db.to_json(rows))
         changed = cursor.rowcount
         conn.commit()
     finally:
         conn.close()
-    print(f"  🏷️  產業別：更新 {changed} 檔")
+    print(f"  🏷️  產業別、股數：更新 {changed} 檔")
     return changed

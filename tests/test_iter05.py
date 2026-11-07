@@ -321,7 +321,7 @@ def test_e2_m8_history_schema():
 
 def test_e2_cli():
     src = (ROOT / "twstock/__main__.py").read_text(encoding="utf-8")
-    assert '"margin", "holdings"]' in src and "--only holdings" in src
+    assert '"margin", "holdings", "sbl"]' in src and "--only holdings" in src          # 第 11 輪：choices 最後加 sbl
 
 
 # ─── A3：官方漲跌家數 ─────────────────────────────────────

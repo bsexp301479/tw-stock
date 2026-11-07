@@ -1,5 +1,5 @@
 """
-每日資料：上市 + 上櫃的收盤行情、本益比/殖利率、三大法人買賣超、ETF 行情、融資融券、官方漲跌家數、主動 ETF 持股。
+每日資料：上市 + 上櫃的收盤行情、本益比/殖利率、三大法人買賣超、ETF 行情、融資融券、借券賣出、官方漲跌家數、主動 ETF 持股。
 
 寫入採批次：整批資料序列化成一個 JSON 參數，由 OPENJSON 展開後 MERGE；
 每張表一次資料庫往返，取代逐筆查詢/更新的上萬次往返。
@@ -18,17 +18,18 @@ TPEX = "https://www.tpex.org.tw/www/zh-tw"
 
 # history --only 的資料集名稱；INDEX = 加權指數（抓行情時會一併寫入），TPEX_INDEX = 櫃買指數（月查詢）
 PRICES, PE, INSTI, INDEX, AMOUNT, TPEX_INDEX = "prices", "pe", "insti", "index", "amount", "tpex_index"
-ETF, MARGIN, HOLDINGS_DS = "etf", "margin", "holdings"
+ETF, MARGIN, HOLDINGS_DS, SBL = "etf", "margin", "holdings", "sbl"
 ALL_DATASETS = (PRICES, PE, INSTI, ETF, MARGIN)
 HOLDINGS_KEYS = tuple(f"holdings.{c}" for c in HOLDINGS)
 # 每個資料集對應的細項（分市場），也是 collect_for_date 與 health.SPECS 共用的鍵
 DATASET_KEYS = {PRICES: ("prices.TWSE", "prices.TPEx"), PE: ("pe.TWSE", "pe.TPEx"),
                 INSTI: ("insti.TWSE", "insti.TPEx"), INDEX: ("index.TAIEX",), AMOUNT: ("amount", "amount.TPEx"),
-                ETF: ("etf.TWSE", "etf.TPEx"), MARGIN: ("margin.TWSE", "margin.TPEx"), HOLDINGS_DS: HOLDINGS_KEYS}
-# 一天之內的收集順序：行情先於本益比、法人；ETF 行情先於融資融券與持股（兩者都只寫入 etfs 已有的 ETF）
+                ETF: ("etf.TWSE", "etf.TPEx"), MARGIN: ("margin.TWSE", "margin.TPEx"), HOLDINGS_DS: HOLDINGS_KEYS,
+                SBL: ("sbl.TWSE", "sbl.TPEx")}
+# 一天之內的收集順序：行情先於本益比、法人；ETF 行情先於融資融券、借券與持股（都只寫入 etfs 已有的 ETF）
 # 漲跌家數不補歷史（health.BREADTH_FROM），所以不在 DATASET_KEYS；上市家數與行情共用同一個 MI_INDEX 回應
 DAY_KEYS = ("prices.TWSE", "prices.TPEx", "index.TAIEX", "etf.TWSE", "etf.TPEx", "pe.TWSE", "pe.TPEx",
-            "insti.TWSE", "insti.TPEx", "amount", "amount.TPEx", "margin.TWSE", "margin.TPEx", "breadth.TWSE", "breadth.TPEx") + HOLDINGS_KEYS
+            "insti.TWSE", "insti.TPEx", "amount", "amount.TPEx", "margin.TWSE", "margin.TPEx", "sbl.TWSE", "sbl.TPEx", "breadth.TWSE", "breadth.TPEx") + HOLDINGS_KEYS
 PARSE_ERRORS = (SchemaError, KeyError, IndexError, TypeError, ValueError, AttributeError)
 
 
@@ -407,6 +408,58 @@ def fetch_tpex_margin(d: date) -> tuple:
     return parse_tpex_margin(request("POST", f"{TPEX}/margin/balance", data={"date": f"{d:%Y/%m/%d}", "response": "json"}))
 
 
+# ─── 借券賣出（第 11 輪 B14；上市 TWT93U、上櫃 margin/sbl；股；股票、ETF、其他證券同一個回應）──
+# 兩個回應都是「融券 6 欄＋借券賣出 6 欄」，欄名重複，依位置取值；位置 → 欄名（用來驗證沒有改版）。只存借券賣出那 6 欄
+SBL_COLS = ("sbl_prev", "sbl_sell", "sbl_return", "sbl_adjust", "sbl_balance", "sbl_limit")
+SBL_POS = {"TWSE": {0: "代號", 8: "前日餘額", 9: "當日賣出", 10: "當日還券", 11: "當日調整", 12: "當日餘額", 13: "次一營業日可限額", 14: "備註"},
+           "TPEx": {0: "股票代號", 8: "前日餘額", 9: "當日賣出", 10: "當日還券", 11: "當日調整數額", 12: "當日餘額",
+                    13: "次一營業日可借券賣出限額", 14: "備註"}}
+TWSE_SBL_GROUPS = [("股票", 2), ("融券", 6), ("借券賣出", 6)]
+
+
+def parse_sbl(data: dict, d: date, market: str) -> list:
+    """
+    TWT93U（上市）／margin/sbl（上櫃）→ [{stock_code, sbl_prev…sbl_limit（股）, note}]，含股票、ETF、其他證券，由呼叫端分流。
+    回應日期不是 d（20:30 第一次更新前可能還是前一個交易日）、stat 不是 OK、沒有資料列 → []（尚未公布，不算失敗）。
+    欄位（上市另驗 groups）不符 → SchemaError。上市最後一列「合計」（代號空白）不是個股，略過。
+    """
+    if str(data.get("stat", "")).upper() != "OK" or str(data.get("date")) != f"{d:%Y%m%d}":
+        return []
+    t = data if market == "TWSE" else next(iter(data.get("tables") or []), {})
+    if not t.get("data"):
+        return []
+    fields, pos = t.get("fields") or [], SBL_POS[market]
+    bad = [f"{i}:{name}" for i, name in pos.items() if i >= len(fields) or fields[i] != name]
+    groups = [(g.get("title"), g.get("span")) for g in t.get("groups") or []][:3] if market == "TWSE" else None
+    if bad or (market == "TWSE" and groups != TWSE_SBL_GROUPS):
+        raise SchemaError(f"借券賣出（{market}）欄位不符：groups {groups}，位置 {'、'.join(bad) or '正常'}")
+    rows = []
+    for r in t["data"]:
+        code = str(r[0]).strip() if r else ""
+        if len(r) < 15 or not code:
+            continue                                    # 合計列、短列
+        row = {"stock_code": code, **{c: clean_number(r[8 + i], int) for i, c in enumerate(SBL_COLS)},
+               "note": str(r[14] or "").strip()[:20] or None}
+        if row["sbl_prev"] is not None and row["sbl_balance"] is not None:
+            rows.append(row)
+    return rows
+
+
+def sbl_mismatch(rows: list) -> list:
+    """「前日餘額 + 當日賣出 − 當日還券 + 當日調整 ≠ 當日餘額」的代號（官方公式；只印警告，照存）。"""
+    v = lambda r, c: r[c] or 0
+    return [r["stock_code"] for r in rows
+            if r["sbl_prev"] + v(r, "sbl_sell") - v(r, "sbl_return") + v(r, "sbl_adjust") != r["sbl_balance"]]
+
+
+def fetch_sbl(d: date, market: str) -> list:
+    if market == "TWSE":
+        data = request("GET", f"{TWSE}/marginTrading/TWT93U", params={"date": f"{d:%Y%m%d}", "response": "json"})
+    else:
+        data = request("POST", f"{TPEX}/margin/sbl", data={"date": f"{d:%Y/%m/%d}", "response": "json"})
+    return parse_sbl(data, d, market)
+
+
 # ─── 批次寫入 ─────────────────────────────────────────────
 def merge_stocks(cursor, rows: list, trade_date: date):
     """
@@ -570,6 +623,31 @@ def merge_margin(cursor, trade_date, rows: list, kind: str):
         WHEN NOT MATCHED THEN
             INSERT ({key}, trade_date, {cols}, note)
             VALUES (s.{key}, ?, {", ".join(f"s.{c}" for c in MARGIN_COLS)}, s.note);
+    """, db.to_json(rows), trade_date, trade_date)
+
+
+_SBL_TABLE = {"stock": ("sbl_trades", "stocks", "stock_id", "stock_code"), "etf": ("etf_sbl", "etfs", "etf_id", "etf_code")}
+
+
+def merge_sbl(cursor, trade_date, rows: list, kind: str):
+    """借券賣出個股表：股票寫 sbl_trades（只寫 stocks 已有的），ETF 寫 etf_sbl（只寫 etfs 已有的）；同一天重抓 = 覆寫。"""
+    table, ref, key, code = _SBL_TABLE[kind]
+    cursor.execute(f"""
+        MERGE {table} AS t
+        USING (
+            SELECT r.{key}, j.*
+            FROM OPENJSON(?) WITH (
+                stock_code NVARCHAR(10), sbl_prev BIGINT, sbl_sell BIGINT, sbl_return BIGINT, sbl_adjust BIGINT,
+                sbl_balance BIGINT, sbl_limit BIGINT, note NVARCHAR(20)
+            ) AS j
+            JOIN {ref} r ON r.{code} = j.stock_code
+        ) AS s
+        ON t.{key} = s.{key} AND t.trade_date = ?
+        WHEN MATCHED THEN UPDATE SET
+            {", ".join(f"{c} = s.{c}" for c in SBL_COLS)}, note = s.note
+        WHEN NOT MATCHED THEN
+            INSERT ({key}, trade_date, {", ".join(SBL_COLS)}, note)
+            VALUES (s.{key}, ?, {", ".join(f"s.{c}" for c in SBL_COLS)}, s.note);
     """, db.to_json(rows), trade_date, trade_date)
 
 
@@ -827,6 +905,17 @@ def _collect_key(key: str, d: date, cache: dict) -> int:
         _save(lambda cur: (merge_margin(cur, d, stocks, "stock"), etfs and merge_margin(cur, d, etfs, "etf"),
                            merge_margin_market(cur, d, market, total)))
         return len(stocks)
+    if dataset == SBL:
+        rows = fetch_sbl(d, market)
+        stocks = [r for r in rows if is_valid_stock_code(r["stock_code"])]
+        etfs = [r for r in rows if is_etf_code(r["stock_code"])]
+        if not stocks:
+            return 0                                    # 尚未公布（日期不符或沒有資料列）
+        bad = sbl_mismatch(stocks + etfs)
+        if bad:
+            print(f"  ⚠️  {key} 有 {len(bad)} 檔不符「前日 + 賣出 − 還券 + 調整 = 餘額」（照存）：{'、'.join(bad[:5])}")
+        _save(lambda cur: (merge_sbl(cur, d, stocks, "stock"), etfs and merge_sbl(cur, d, etfs, "etf")))
+        return len(stocks)
     amount = (fetch_tpex_insti_amount if market == "TPEx" else fetch_twse_insti_amount)(d)    # "amount" = 上市、"amount.TPEx" = 上櫃
     if amount:
         _save(merge_insti_amount, amount)
@@ -844,8 +933,8 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
     for key in keys:
         dataset, _, market = key.partition(".")
         # "amount"（上市法人金額）partition 後市場是空字串：視為 TWSE（第 10 輪 P24；鍵名不改）
-        if dataset in ("pe", "insti", MARGIN, "breadth", AMOUNT) and written.get(f"prices.{market or 'TWSE'}") == 0:
-            continue                # 同市場行情還沒有：本益比、法人、融資融券、漲跌家數、法人金額不可能先有，不發請求
+        if dataset in ("pe", "insti", MARGIN, SBL, "breadth", AMOUNT) and written.get(f"prices.{market or 'TWSE'}") == 0:
+            continue                # 同市場行情還沒有：本益比、法人、融資融券、借券、漲跌家數、法人金額不可能先有，不發請求
         if dataset == "pe" and f"prices.{market}" in errors:
             continue                # 本益比只寫入有行情列的股票
         try:
@@ -865,4 +954,4 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
     return written, errors
 
 
-__all__ = ["collect_for_date", "FetchError", "PRICES", "PE", "INSTI", "ETF", "MARGIN", "HOLDINGS_DS", "ALL_DATASETS"]
+__all__ = ["collect_for_date", "FetchError", "PRICES", "PE", "INSTI", "ETF", "MARGIN", "HOLDINGS_DS", "SBL", "ALL_DATASETS"]

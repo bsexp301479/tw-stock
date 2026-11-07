@@ -46,7 +46,7 @@ NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
-               "eq", "ey", "e4", "gm", "gmy", "fq", "eh")
+               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp")
 VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
 VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
 VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
@@ -388,14 +388,69 @@ def screen_margin(rows, mdate, d5, conv, market):
             "sr": r["sr"], "mu": r["mu"], "mnt": (r.get("nt") or None) if market == "TWSE" else None}
 
 
-def margin_series(d_, rows, conv):
-    """個股 JSON 的 mg：與 prices.d 對齊的官方原始餘額（張），沒有資料的日期 null；k = 換算紀錄（沒有就不放）。該股沒有任何融資融券列 → None。"""
+def margin_series(d_, rows, conv, srows=None):
+    """
+    個股 JSON 的 mg：與 prices.d 對齊的官方原始餘額（張），沒有資料的日期 null；k = 換算紀錄（沒有就不放）。該股沒有任何融資融券列 → None。
+    第 11 輪 B14：srows（借券 {日期: (前日, 餘額, 限額, 備註)}，股）有資料時加 lb = 借券賣出餘額（張）；只有借券、沒有融資融券的股票不畫圖。
+    """
     if not rows:
         return None
     mg = {"mb": [rows[d][1] if d in rows else None for d in d_], "sb": [rows[d][4] if d in rows else None for d in d_]}
+    if srows:
+        mg["lb"] = [lots(srows[d][1]) if d in srows else None for d in d_]
     if conv:
         mg["k"] = conv
     return mg
+
+
+# ─── 借券賣出（第 11 輪 B14；資料庫存股，匯出一律換成張）────────────
+def lots(shares):
+    """股 → 張（四捨五入到整數，half-up；None 照傳）。"""
+    return None if shares is None else int((shares + 500) // 1000) if shares >= 0 else -int((-shares + 500) // 1000)
+
+
+def stock_sbl(rows: dict, sdate, d5, shares, short_lots, conv=()):
+    """
+    個股 JSON 的 sbl。rows：{日期: (前日餘額, 當日餘額, 限額, 備註)}（股）；sdate：該市場最新借券日；d5：往前第 5 個借券日。
+    該股當天沒有列 → None。lb 餘額、l1／l5 增減（張；5 日前餘額依融資融券的官方換算 k 調整）；
+    lp 占股本 %（2 位；shares 為 None 或 0 不輸出）；lx = 借券 ÷ 融券（1 位；融券 0 或沒有不輸出）。
+    """
+    r = rows.get(sdate) if sdate else None
+    if r is None:
+        return None
+    prev, bal, _, nt = r
+    old = rows.get(d5) if d5 else None
+    out = {"d": str(sdate), "lb": lots(bal), "l1": lots(bal - prev),
+           "l5": lots(bal - old[1] * conv_k(conv, d5)) if old else None}
+    if shares:
+        out["lp"] = round(bal / shares * 100, 2)
+    if short_lots:
+        out["lx"] = round(bal / (short_lots * 1000), 1)
+    if nt:
+        out["nt"] = nt
+    return out
+
+
+def market_sbl(sdates, rows_by_market):
+    """latest.json 的 sbl.{市場}：股票（不含 ETF）借券賣出餘額合計與 1 日增減（張）。rows_by_market：{日期: [(前日, 餘額)]}。"""
+    if not sdates:
+        return None
+    d = sdates[-1]
+    R = rows_by_market.get(d, [])
+    bal, prev = sum(r[1] for r in R), sum(r[0] for r in R)
+    return {"d": str(d), "lb": lots(bal), "l1": lots(bal - prev), "n": len(R)}
+
+
+def _load_sbl(cur):
+    """(各市場借券日期（舊到新，最近 6 天）, 各市場最新日的 [(前日, 餘額)], 個股 {代號: {日期: (前日, 餘額, 限額, 備註)}}（完整歷史）)。"""
+    per_stock, by_m = defaultdict(dict), defaultdict(lambda: defaultdict(list))
+    for code, m, d, prev, bal, lim, nt in cur.execute("""
+        SELECT s.stock_code, s.market_type, x.trade_date, x.sbl_prev, x.sbl_balance, x.sbl_limit, x.note
+        FROM sbl_trades x JOIN stocks s ON s.stock_id = x.stock_id"""):
+        per_stock[code][d] = (prev, bal, lim, nt)
+        by_m[m][d].append((prev, bal))
+    sdates = {m: sorted(ds)[-6:] for m, ds in by_m.items()}
+    return sdates, {m: {sdates[m][-1]: by_m[m][sdates[m][-1]]} for m in sdates}, per_stock
 
 
 def market_margin(dates, official, stocks, etfs, close):
@@ -826,7 +881,7 @@ def _load_financials(cur) -> tuple:
 
 
 def screen_build(rows, head):
-    """screen.json：欄式。rows：{代號: {SCREEN_KEYS…}}（依代號排序）；head：d、fd、md。rmd = 各營收月份的檔數。"""
+    """screen.json：欄式。rows：{代號: {SCREEN_KEYS…}}（依代號排序）；head：d、fd、md、sd（第 11 輪：各市場借券資料日）。rmd = 各營收月份的檔數。"""
     codes = sorted(rows)
     rmd = Counter(rows[c]["rm"] for c in codes if rows[c]["rm"] is not None)
     fqd = Counter(rows[c]["fq"] for c in codes if rows[c].get("fq") is not None)        # 第 10 輪：各季報季別的檔數
@@ -921,6 +976,7 @@ def export_all() -> float:
 
     stocks = {r[0]: {"name": r[1], "market": r[2], "industry": r[3] or "其他"}
               for r in cur.execute("SELECT stock_code, stock_name, market_type, industry FROM stocks")}
+    shares = {c: n for c, n in cur.execute("SELECT stock_code, shares FROM stocks WHERE shares > 0")}     # 第 11 輪
 
     # ── 每檔股票完整日線 + 法人 ──
     prices = defaultdict(list)
@@ -985,9 +1041,12 @@ def export_all() -> float:
     status = build_status(cur, latest_date, now)
     valuation, stock_val, val_date = _load_valuation(cur)      # F9-4
     fin, fin_meta, fin_counts = _load_financials(cur)          # 第 10 輪 B5
+    sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
+    slast = {m: ds[-1] for m, ds in sdates.items()}
+    s5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in sdates.items()}
 
     concepts = load_concepts()
     concept_of = defaultdict(list)
@@ -1036,7 +1095,11 @@ def export_all() -> float:
         rev_rows = _revenue_rows(revenue.get(code, []))
         mrows = mper.get(code, {})
         conv = margin_conv(mrows, ev)
-        mg = margin_series(d_, mrows, conv)
+        srows = sper.get(code, {})
+        mg = margin_series(d_, mrows, conv, srows)
+        mk_ = info["market"]
+        sbl = stock_sbl(srows, slast.get(mk_), s5.get(mk_), shares.get(code),
+                        (mrows.get(slast.get(mk_)) or (None,) * 5)[4], conv)
         act = None
         if code in act_lots and dates[-1] in d_ and tn[d_.index(dates[-1])] is not None:
             t_lots = round(tn[d_.index(dates[-1])] / 1000)
@@ -1063,6 +1126,7 @@ def export_all() -> float:
             **({"margin": stock_margin(mrows, mlast[info["market"]], m5[info["market"]], conv)}
                if info["market"] in mlast else {}),
             **({"active": active[code]} if code in active else {}),
+            **({"sbl": sbl} if sbl else {}),                                     # 第 11 輪 B14：該股最新借券日沒有列 → 不輸出
             **({"mg": mg} if mg else {}),
             **({"act": act} if act else {}),
         })
@@ -1142,7 +1206,8 @@ def export_all() -> float:
                         **revenue_stats(rev_rows), "cap": int(cap is not None),
                         **screen_margin(mrows, mlast.get(mkt), m5.get(mkt), conv, mkt),
                         "pbp": (stock_val.get(code) or {}).get("pb", [None])[0],     # F9-4：淨值比一年位置（cap 由前端估值規則排除）
-                        **fin_screen(fin.get(code))}                                  # 第 10 輪 B5
+                        **fin_screen(fin.get(code)),                                  # 第 10 輪 B5
+                        **{k: (sbl or {}).get(k) for k in ("lb", "l1", "l5", "lp")}}   # 第 11 輪 B14
 
     industries = defaultdict(list)
     for code in snapshot:
@@ -1179,6 +1244,7 @@ def export_all() -> float:
         "futures_oi": futures_oi,
         "forecast": forecast,
         "margin": margin,
+        "sbl": {m: market_sbl(sdates[m], srecent[m]) for m in ("TWSE", "TPEx") if sdates.get(m)} or None,   # 第 11 輪 B14
         "etfs": etf_block(etf_latest, etf_margin_rows),
         "holdings": {code: {"d": str(hd[-1]), "n": etf_names[code][0],
                             **({"u1": u} if (u := unit_change(hs, hd)) is not None else {})}
@@ -1194,7 +1260,8 @@ def export_all() -> float:
         "stocks": snapshot,
     }
     # screen.json 在 latest.json 之前寫：中途失敗時前端比對 d／fd 會顯示不同步
-    S = screen_build(screen, {"d": str(latest_date), "fd": str(dates[-1]), "md": {m: str(d) for m, d in mlast.items()}})
+    S = screen_build(screen, {"d": str(latest_date), "fd": str(dates[-1]), "md": {m: str(d) for m, d in mlast.items()},
+                              "sd": {m: str(d) for m, d in slast.items()}})
     _write(SITE_DATA_DIR / "screen.json", S)
     _write(SITE_DATA_DIR / "latest.json", latest)
     size = (SITE_DATA_DIR / "latest.json").stat().st_size / 1024
