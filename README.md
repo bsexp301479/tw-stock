@@ -17,7 +17,7 @@
 | `twstock/health.py` | 資料完整性判斷、`check`、執行紀錄、通知 |
 | `twstock/export.py` | 匯出 `site/data/latest.json`、`screen.json`（條件選股與排行擴充用）、`stocks/{代號}.json`、`etfs/{代號}.json` |
 | `twstock/analysis/` | `flow` 資金流象限、`forecast` 依期貨法人未平倉的大盤漲跌預測、`chanlun` 纏論 |
-| `site/` | 網站：今日（含加權與櫃買指數、台指期日 K、期貨法人未平倉、籌碼因子觀察、信用交易、市場寬度）、泡泡圖、排行（含條件選股、融資融券排行、借券排行）、ETF（含主動型 ETF 持股頁、主動 ETF 彙總）、自選、個股頁（含主動 ETF 持有、融資融券與借券賣出圖、借券指標卡、季報卡）。今日頁指數卡下方分「總覽／法人資金／信用估值／期貨」四頁，個股頁頁首下方分「走勢／籌碼／基本面」三頁，瀏覽器會記住上次選的分頁；個股「基本面」的月營收可切換「今年 vs 去年」（逐月對照去年同月與同期累計）和「近 36 個月」 |
+| `site/` | 網站：今日（含加權與櫃買指數、台指期日 K、期貨法人未平倉、籌碼因子觀察、信用交易、市場寬度）、泡泡圖、排行（含條件選股、融資融券排行、借券排行）、ETF（含主動型 ETF 持股頁、主動 ETF 彙總）、自選、個股頁（含主動 ETF 持有、融資融券與借券賣出圖、借券指標卡、季報卡）。今日頁指數卡下方分「總覽／法人資金／信用估值／期貨」四頁，個股頁頁首下方分「走勢／籌碼／基本面」三頁，瀏覽器會記住上次選的分頁；個股「基本面」的月營收可切換「今年 vs 去年」（逐月對照去年同月與同期累計）和「近 36 個月」。第 13 輪：表格第一欄（名稱）固定，排行、選股、ETF 表的排序欄放在名稱後的第 2 欄，手機不用橫向捲動；較長的口徑說明預設收合，點「說明」展開（防誤讀的句子保持可見）；個股頁頁首列出當天開、高、低、昨收、量，「走勢」分頁只留 52 週高低、市值、週轉率四張卡；首頁「錢流去哪」預設各顯示 5 個產業，可按「顯示全部」 |
 | `tests/` | 純邏輯測試（不連網、不連資料庫）：`python3 tests/test_iter01.py`、`python3 tests/test_iter02.py`、`python3 tests/test_iter03.py`、`python3 tests/test_iter04.py`、`python3 tests/test_iter05.py`、`python3 tests/test_iter06.py`、`python3 tests/test_iter07.py`、`python3 tests/test_iter08.py`、`python3 tests/test_iter09.py`、`python3 tests/test_iter10.py` |
 | `docs/iterations/` | 持續優化流程：每一輪分析師、PM、SA、PG、QA 的文件 |
 | `data/concepts.csv` | 自訂概念股（只需放產業鏈沒有的題材，如 CoWoS、矽光子） |

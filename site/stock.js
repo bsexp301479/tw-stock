@@ -68,7 +68,7 @@ window.renderStock = async function (code) {
   // 第 12 輪 B11：市值、週轉率（目前股數）
   const MT = data.mt, mcTxt = v => v >= 1e4 ? fmt(v / 1e4, 2) + ' 兆' : fmt(v, v >= 100 ? 0 : 1) + ' 億';
   const mtCards = [['市值', MT?.mc == null ? '--' : mcTxt(MT.mc), '', MT ? '收盤 × 目前發行股數' : '沒有發行股數資料'],
-    ['週轉率', MT?.to == null ? '--' : fmt(MT.to, 2) + '%', '', MT ? `${md(MT.d)}，成交股數 ÷ 目前發行股數` : '沒有發行股數資料']];
+    ['週轉率', MT?.to == null ? '--' : fmt(MT.to, 2) + '%', '', MT ? `${MT.d !== P.d[last] ? md(MT.d) + '，' : ''}成交股數 ÷ 目前發行股數` : '沒有發行股數資料']];
   const slCards = !SL ? [] : [['借券賣出餘額', fmt(SL.lb) + ' 張', '', `1日 ${sgn(SL.l1, 0)}　5日 ${SL.l5 == null ? '--' : sgn(SL.l5, 0)}`],
     ['借券占股本', SL.lp == null ? '--' : fmt(SL.lp, 2) + '%', '', (SL.lx == null ? '' : `融券的 ${fmt(SL.lx, 1)} 倍　`) + '資料 ' + md(SL.d)]];
 
@@ -86,7 +86,7 @@ window.renderStock = async function (code) {
         <td class="num">${fmt(a.l)}</td><td class="num">${fmt(a.w, 2)}%</td>
         <td class="num ${cls(a.d1)}">${a.d1 == null ? '--' : sgn(a.d1, 0)}</td><td class="num ${cls(a.d5)}">${a.d5 == null ? '--' : sgn(a.d5, 0)}</td>
         <td class="num">${md(a.d)}</td></tr>`).join('') +
-      '</tbody></table></div><div class="muted small" style="margin-top:6px">張數增減包含申購贖回的影響：申購多的日子，經理人會用申購資金加碼，不一定代表看好（可對照持股頁的「單位數 1 日」）。權重為占該 ETF 淨資產 %，含股價漲跌影響。</div></section>');
+      '</tbody></table></div><div class="muted small" style="margin-top:6px">' + noteHTML('張數增減包含申購贖回的影響，不一定代表看好', '張數增減包含申購贖回的影響：申購多的日子，經理人會用申購資金加碼，不一定代表看好（可對照持股頁的「單位數 1 日」）。權重為占該 ETF 淨資產 %，含股價漲跌影響。') + '</div></section>');
 
   $('#view').innerHTML = `
     <section class="sec card">
@@ -106,6 +106,7 @@ window.renderStock = async function (code) {
             ${data.concepts.map(c => `<span class="pill">${esc(c)}</span>`).join('')}
             <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
           </div>
+          <div class="s-ohlc small num muted"><span class="nw">開 <b>${pfmt(P.o[last])}</b></span>　<span class="nw">高 <b class="up">${pfmt(P.h[last])}</b></span>　<span class="nw">低 <b class="dn">${pfmt(P.l[last])}</b></span>　<span class="nw">昨收 <b>${pfmt(prev)}</b></span>　<span class="nw">量 <b>${fmt(P.v[last])}</b> 張</span></div>
         </div>
         <button class="star ${watching ? 'on' : ''}" id="starBtn">${watching ? '★ 已加入自選' : '☆ 加入自選'}</button>
       </div>
@@ -113,8 +114,7 @@ window.renderStock = async function (code) {
 
     ${pageTabsHTML('stockTabSeg', STOCK_TABS, tab)}
     <section class="sec metrics">
-      ${(tab === 'k' ? [['開盤', pfmt(P.o[last])], ['最高', pfmt(P.h[last]), 'up'], ['最低', pfmt(P.l[last]), 'dn'], ['昨收', pfmt(prev)],
-         ['成交量', fmt(P.v[last]) + ' 張'],
+      ${(tab === 'k' ? [
          [hlFrom ? '區間高' : '52週高', pfmt(s?.h52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
          [hlFrom ? '區間低' : '52週低', pfmt(s?.l52), '', hlFrom ? hlSub + '，還原' : '還原權值'], ...mtCards]
         : tab === 'chip' ? [['法人1日', yi(s?.n1), cls(s?.n1), fd], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
@@ -124,7 +124,7 @@ window.renderStock = async function (code) {
         .map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
     </section>
     ${tab === 'chip' ? `${SL ? `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。占股本以目前發行股數計算。借券資料晚上 8 點半以後才更新。</div>` : ''}
-    ${acHTML}` : tab === 'fund' ? `${VAL ? `<div class="muted small val-note">一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}</div>` : ''}
+    ${acHTML}` : tab === 'fund' ? `${VAL ? `<div class="muted small val-note">${noteHTML('獲利大增時本益比會落到一年低點，位置低不代表股價便宜', `一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}`)}</div>` : ''}
     ${finUp ? `<div class="small val-note fin-note">近 4 季 EPS 一年前 ${fmt(F.e4p, 2)} 元 → 現在 ${fmt(F.e4, 2)} 元（${F.e4p <= 0 ? '轉盈' : fmt(F.e4 / F.e4p, 1) + ' 倍'}）：本益比會因獲利增加而下降，位置低不代表股價便宜；請看下方季報卡的單季 EPS 是否已經轉弱。</div>` : ''}
     <section class="sec grid ${F ? 'g2' : 'g-one'}">
       <div class="card"><div class="sec-h"><h2>月營收</h2><span class="sp"></span><span id="revSegBox"></span></div><div id="revBox"></div></div>
@@ -470,7 +470,7 @@ function renderFin(F) {
   $('#finBox').innerHTML = `<div class="metrics">${stats.map(([l, x, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c}" style="font-size:16px">${x}</div><div class="s">${sub}</div></div>`).join('')}</div>
     <div class="ch-label">近 ${Q.length} 季單季 EPS（元）；紅／綠 = 比去年同季增加／減少，灰 = 無法比較（去年同季虧損或沒有資料）</div>
     <div class="fin-bars">${Q.map(bar).join('')}</div>
-    <div class="muted small" style="margin-top:6px">單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。官方本益比以最新股數計算，期間有增資的公司，近 4 季 EPS 會和「股價 ÷ 本益比」有差異。金融業沒有毛利率。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}</div>`;
+    <div class="muted small" style="margin-top:6px">${noteHTML('單季、近 4 季 EPS 由累計相減，可能和公司公告略有差異', `單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。官方本益比以最新股數計算，期間有增資的公司，近 4 季 EPS 會和「股價 ÷ 本益比」有差異。金融業沒有毛利率。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}`)}</div>`;
 }
 
 function renderRevenue(rows) {
@@ -509,7 +509,7 @@ function renderRevenueYoY(rows, amt, pc) {
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>月份</th><th>${Y}（億）</th><th>${Y - 1}（億）</th><th>年增</th></tr></thead><tbody>` +
     months.slice().reverse().map(m => `<tr><td>${m} 月</td><td class="num">${cur(m) ? amt(cur(m)[2]) : '--'}</td><td class="num">${prev(m) ? amt(prev(m)[2]) : '--'}</td>${pc(cur(m)?.[4] ?? null)}</tr>`).join('') +
     `<tr><td><b>累計</b></td><td class="num"><b>${amt(sc)}</b></td><td class="num">${amt(sp)}</td>${pc(cy)}</tr></tbody></table></div>
-    <div class="muted small" style="margin-top:6px">柱：${Y} 年（藍）與 ${Y - 1} 年（灰）同月營收；去年 ${M + 1 <= 12 ? `${M + 1}～12 月只有去年，供參考` : '全年對照'}。年增 = 今年該月 ÷ 去年同月 − 1；累計只算兩年都有資料的月份。</div>`;
+    <div class="muted small" style="margin-top:6px">${noteHTML(`柱：${Y} 年（藍）、${Y - 1} 年（灰）同月營收`, `柱：${Y} 年（藍）與 ${Y - 1} 年（灰）同月營收；去年 ${M + 1 <= 12 ? `${M + 1}～12 月只有去年，供參考` : '全年對照'}。年增 = 今年該月 ÷ 去年同月 − 1；累計只算兩年都有資料的月份。`)}</div>`;
   if (!window.Plotly) { $('#revC').innerHTML = '<div class="empty">圖表元件載入失敗，請檢查網路後重新整理</div>'; return; }
   const x = Array.from({ length: 12 }, (_, i) => `${i + 1}月`), text2 = css('--text2'), grid = css('--border');
   const ys = y => x.map((_, i) => { const r = by.get(y * 100 + i + 1); return r ? r[2] / 1e5 : null; });
