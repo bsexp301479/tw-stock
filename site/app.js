@@ -150,26 +150,25 @@ function renderToday() {
       <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num ${cls(s.n1)}">${yi(s.n1)}</td></tr>`).join('');
 
-  $('#view').innerHTML = `
-    <section class="sec grid g-stats">${indexCard(L.index?.TAIEX, '加權指數')}${indexCard(L.index?.TPEX, '櫃買指數')}</section>
-    <section class="sec grid g-stats g-mk">
+  // 分頁：指數卡永遠顯示，其餘依分頁只輸出該頁的區塊（圖表不會畫在隱藏的容器裡）
+  const tab = pageTab('todayTab', TODAY_TABS);
+  const fut = `${futuresHTML(L.futures)}${oiHTML(L.futures_oi, L.forecast)}`;
+  const body = {
+    ov: `<section class="sec grid g-stats g-mk">
       ${mk('TWSE', '上市')}${mk('TPEx', '上櫃')}
-      ${instiCard(L)}
-      ${marginCard(L)}
       ${breadthCard(L)}
-      ${valCard(L)}
     </section>
-
-    ${futuresHTML(L.futures)}
-    ${oiHTML(L.futures_oi, L.forecast)}
 
     <section class="sec">
       <div class="sec-h"><h2>資金象限</h2><span class="sp"></span>${groupSeg()}</div>
       <a class="quads" href="#/bubble">
         ${QUADS.map(([q, d]) => `<div class="quad q-${q}"><div class="t">${q}</div><div class="n num">${counts[q]}</div><div class="d">${d}</div></div>`).join('')}
       </a>
-    </section>
-
+    </section>`,
+    credit: `<section class="sec grid ${marginCard(L) && valCard(L) ? 'g2' : 'g-one'}">${marginCard(L)}${valCard(L)}</section>`,   // 信用交易、估值左右並排
+    fut: fut.trim() || '<div class="empty">沒有期貨資料</div>',
+  };
+  body.flow = `<section class="sec grid ${L.insti_official ? 'g2' : 'g-one'}">${instiCard(L)}</section>
     <section class="sec grid g2">
       <div class="card">
         <div class="sec-h"><h2>錢流去哪</h2><span class="muted small">估算，不含 ETF</span><span class="sp"></span>${segHTML('spanSeg', [['1', '今天'], ['5', '近 5 日']], span)}</div>
@@ -189,12 +188,25 @@ function renderToday() {
     </section>
     ${activeCard(L.active_rank)}`;
 
-  onSeg('grpSeg', v => { setGroup(v); renderToday(); });
-  onSeg('spanSeg', v => { localStore('span', null, v); renderToday(); });
+  $('#view').innerHTML = `
+    <section class="sec grid g-stats">${indexCard(L.index?.TAIEX, '加權指數')}${indexCard(L.index?.TPEX, '櫃買指數')}</section>
+    ${pageTabsHTML('todayTabSeg', TODAY_TABS, tab)}
+    ${body[tab]}`;
+
+  onSeg('todayTabSeg', v => { localStore('todayTab', null, v); disposeFuturesChart(); renderToday(); });
+  if ($('#grpSeg')) onSeg('grpSeg', v => { setGroup(v); renderToday(); });
+  if ($('#spanSeg')) onSeg('spanSeg', v => { localStore('span', null, v); renderToday(); });
   $('#view').addEventListener('click', onRowClick);
-  drawFutures(L.futures);
-  drawOI(L.futures_oi);
+  if (tab === 'fut') { drawFutures(L.futures); drawOI(L.futures_oi); }
 }
+
+// 首頁、個股頁的分頁（記住上次選的分頁；存的值不在清單裡就用第一個）
+const TODAY_TABS = [['ov', '總覽'], ['flow', '法人資金'], ['credit', '信用估值'], ['fut', '期貨']];
+function pageTab(key, tabs) {
+  const v = localStore(key, tabs[0][0]);
+  return tabs.some(t => t[0] === v) ? v : tabs[0][0];
+}
+function pageTabsHTML(id, tabs, active) { return `<div class="sec page-tabs">${segHTML(id, tabs, active)}</div>`; }
 
 // ─── 台指期日 K（首頁） ─────────────────────────────────
 let futChart = null, oiChart = null;
@@ -355,19 +367,27 @@ function instiCard(L) {
       <div class="s num">外資 <span class="${cls(I.foreign)}">${yi(I.foreign)}</span>　投信 <span class="${cls(I.trust)}">${yi(I.trust)}</span>　自營 <span class="${cls(I.dealer)}">${yi(I.dealer)}</span></div>
       <div class="s">估算：買賣超張數 × 收盤價，不含 ETF</div></div>`;
   const stale = O.date < L.date, fs = O.fs;
+  // 上市、上櫃各一張卡（左右並排；手機上下排），共同說明放在兩張卡下方
+  const otc = P ? `<div class="card stat idx insti">
+      <div class="l">三大法人　上櫃，官方，含 ETF<span class="muted">　${md(P.date)}${P.date < L.date ? '（尚未更新）' : ''}</span></div>
+      <div class="v num ${cls(P.total)}">${yi1(P.total)}</div>
+      <div class="s num">${parts(P)}</div>
+      ${minibars(P.f)}
+      <div class="s">外資近 ${P.f.length} 日（${md(P.d[0])}～${md(P.d.at(-1))}）<b class="${cls(P.fs)}">${stk(P.fs)}</b></div>
+    </div>`
+    : X ? `<div class="card stat idx insti">
+      <div class="l">三大法人　上櫃，估算<span class="muted">　${md(L.flow_date)}</span></div>
+      <div class="s num">外資 <span class="${cls(X.foreign)}">${yi(X.foreign)}</span>　投信 <span class="${cls(X.trust)}">${yi(X.trust)}</span>　自營 <span class="${cls(X.dealer)}">${yi(X.dealer)}</span></div>
+      <div class="s">上櫃官方金額尚無資料，暫以張數 × 收盤估算、不含 ETF，不可與上市官方值相加</div>
+    </div>` : '';
   return `<div class="card stat idx insti">
       <div class="l">三大法人　上市，官方，含 ETF<span class="muted">　${md(O.date)}${stale ? '（尚未更新）' : ''}</span></div>
       <div class="v num ${cls(O.total)}">${yi1(O.total)}</div>
       <div class="s num">${parts(O)}</div>
       ${minibars(O.f)}
       <div class="s">外資近 ${O.f.length} 日（${md(O.d[0])}～${md(O.d.at(-1))}）<b class="${cls(fs)}">${stk(fs)}</b></div>
-      ${P ? `<div class="s num"><b>上櫃</b>（官方，${md(P.date)}${P.date < L.date ? '，尚未更新' : ''}）合計 <span class="${cls(P.total)}">${yi1(P.total)}</span>　${parts(P)}</div>
-      ${minibars(P.f)}
-      <div class="s">上櫃外資近 ${P.f.length} 日（${md(P.d[0])}～${md(P.d.at(-1))}）<b class="${cls(P.fs)}">${stk(P.fs)}</b></div>`
-      : X ? `<div class="s num">上櫃估算（${md(L.flow_date)}）：外資 <span class="${cls(X.foreign)}">${yi(X.foreign)}</span>　投信 <span class="${cls(X.trust)}">${yi(X.trust)}</span>　自營 <span class="${cls(X.dealer)}">${yi(X.dealer)}</span></div>
-      <div class="s">上櫃官方金額尚無資料，暫以張數 × 收盤估算、不含 ETF，不可與上市官方值相加</div>` : ''}
-      <div class="s">官方金額含 ETF 與權證避險，外資不含外資自營商（已計入自營）；上市、上櫃同一天時可相加。下方法人買超／賣超表為張數 × 收盤估算、不含 ETF，口徑不同</div>
-    </div>`;
+    </div>${otc}
+    <div class="muted small span-all">官方金額含 ETF 與權證避險，外資不含外資自營商（已計入自營）；上市、上櫃同一天時可相加。下方法人買超／賣超表為張數 × 收盤估算、不含 ETF，口徑不同</div>`;
 }
 
 function futuresHTML(F) {

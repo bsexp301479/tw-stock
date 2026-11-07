@@ -202,6 +202,10 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .g-mk .val{grid-column:1/-1}                           /* 估值位置卡：單獨一列，佔滿寬度（第 9 輪 QA-01） */
 @media (max-width:900px){.g-mk .margin{grid-column:1/-1}}
 @media (max-width:720px){.g-mk{grid-template-columns:repeat(2,minmax(0,1fr))}.g-mk .insti{grid-column:1/-1}}
+.g-one{grid-template-columns:minmax(0,1fr)}          /* 首頁分頁內單欄卡片 */
+.span-all{grid-column:1/-1}                             /* 並排卡片下方的共同說明 */
+.page-tabs{margin:12px 0 4px;overflow-x:auto}          /* 首頁、個股頁分頁 */
+.page-tabs .seg button{padding:6px 16px;font-size:14px;white-space:nowrap}
 .night-old{opacity:.7}               /* P20：前一夜盤淡化 */
 .al{display:inline-block;font-style:normal;font-size:10px;line-height:15px;padding:0 3px;border-radius:3px;margin-left:4px;color:#fff;vertical-align:1px}
 .al-d{background:var(--up)}.al-n{background:var(--amber)}

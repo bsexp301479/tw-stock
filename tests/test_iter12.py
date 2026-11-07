@@ -80,7 +80,7 @@ def test_f124_cap_turnover():
 def test_f12_site():
     js = (ROOT / "site" / "stock.js").read_text(encoding="utf-8")
     assert "右側刻度只適用融資；融券、借券各自縮放" in js                                                    # F12-1 P26
-    assert "...mtCards, ...mgCards, ...slCards" in js and "MT?.mc == null ? '--'" in js                   # F12-4
+    assert "...mtCards]" in js and "...mgCards, ...slCards]" in js and "MT?.mc == null ? '--'" in js        # F12-4（分頁後：市值在走勢、信用在籌碼）
     app = (ROOT / "site" / "app.js").read_text(encoding="utf-8")
     assert "function wpeLine(V)" in app and "${wpeLine(V)}" in app and "不是證交所公布的數字" in app            # F12-2
     assert "function etfSblLine(B)" in app and "${etfSblLine(L.sbl_etf)}" in app and "不等於看空" in app      # F12-3
@@ -88,6 +88,25 @@ def test_f12_site():
     assert "['to', '週轉率', 'to', -1, 'x']" in app and "'rs20', 'to']]" in app and "to: ['to', 'mc']" in app
     assert "{ id: 'mc', g: '流動性'" in app and "{ id: 'to', g: '流動性'" in app
     assert "'lb', 'lp', 'mc', 'to'].includes(k)" in app
+
+
+
+def test_page_tabs():
+    """首頁、個股頁分頁（第 12 輪後的版面調整）：分頁清單、記住選擇、只在該分頁畫圖。"""
+    app = (ROOT / "site" / "app.js").read_text(encoding="utf-8")
+    assert "const TODAY_TABS = [['ov', '總覽'], ['flow', '法人資金'], ['credit', '信用估值'], ['fut', '期貨']];" in app
+    assert "pageTab('todayTab', TODAY_TABS)" in app and "${body[tab]}" in app
+    assert "if (tab === 'fut') { drawFutures(L.futures); drawOI(L.futures_oi); }" in app
+    assert "disposeFuturesChart(); renderToday();" in app
+    js = (ROOT / "site" / "stock.js").read_text(encoding="utf-8")
+    assert "const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];" in js
+    assert "pageTab('stockTab', STOCK_TABS)" in js and "if (tab !== 'k') return;" in js
+    assert "window.disposeStockCharts(); window.renderStock(code);" in js
+    assert ".page-tabs" in (ROOT / "site" / "app.css").read_text(encoding="utf-8")
+    # 左右兩塊：三大法人上市／上櫃、信用交易／估值、月營收／季報；月營收今年 vs 去年
+    assert "三大法人　上櫃，官方，含 ETF" in app and "${marginCard(L) && valCard(L) ? 'g2' : 'g-one'}" in app
+    assert "<section class=\"sec grid ${F ? 'g2' : 'g-one'}\">" in js and "function renderRevenueYoY(rows, amt, pc)" in js
+    assert "[['yoy', '今年 vs 去年'], ['36', '近 36 個月']]" in js and "barmode: 'group'" in js
 
 
 if __name__ == "__main__":

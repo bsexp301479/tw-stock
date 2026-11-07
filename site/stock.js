@@ -15,6 +15,8 @@ window.disposeStockCharts = () => {
 
 const MARGIN_NOTE = { O: '停止融資', X: '停止融券', '@': '融資分配', '%': '融券分配', '!': '停止買賣' };   // 上市註記
 
+const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];
+
 window.renderStock = async function (code) {
   const s = App.latest.stocks[code];
   let data;
@@ -49,6 +51,7 @@ window.renderStock = async function (code) {
   const F = data.fin;
   const finUp = F && isNum(F.e4) && isNum(F.e4p) && F.e4 > 0 && (F.e4p <= 0 || F.e4 >= F.e4p * 1.5);
   const watching = App.watch.has(code);
+  const tab = pageTab('stockTab', STOCK_TABS);          // 分頁：走勢／籌碼／基本面（頁首永遠顯示）
   const fd = md(App.latest.flow_date);
   const hlFrom = s?.hf ?? App.latest.hl_from;          // null → 已滿 52 週
   const hlSub = hlFrom ? '自 ' + hlFrom.replaceAll('-', '/') : '';
@@ -108,20 +111,25 @@ window.renderStock = async function (code) {
       </div>
     </section>
 
+    ${pageTabsHTML('stockTabSeg', STOCK_TABS, tab)}
     <section class="sec metrics">
-      ${[['開盤', pfmt(P.o[last])], ['最高', pfmt(P.h[last]), 'up'], ['最低', pfmt(P.l[last]), 'dn'], ['昨收', pfmt(prev)],
-         ['成交量', fmt(P.v[last]) + ' 張'], ['本益比', fmt(fund.pe, 2), '', subs(fundSub(fund.pe), valSub('pe', fund.pe))], ['股價淨值比', fmt(fund.pb, 2), '', subs(fundSub(fund.pb, false), valSub('pb', fund.pb))],
-         ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', subs(fundSub(fund.dy), valSub('dy', fund.dy))],
+      ${(tab === 'k' ? [['開盤', pfmt(P.o[last])], ['最高', pfmt(P.h[last]), 'up'], ['最低', pfmt(P.l[last]), 'dn'], ['昨收', pfmt(prev)],
+         ['成交量', fmt(P.v[last]) + ' 張'],
          [hlFrom ? '區間高' : '52週高', pfmt(s?.h52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
-         [hlFrom ? '區間低' : '52週低', pfmt(s?.l52), '', hlFrom ? hlSub + '，還原' : '還原權值'],
-         ['法人1日', yi(s?.n1), cls(s?.n1), fd], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
-         ['外資5日', yi(s?.f5), cls(s?.f5), '至 ' + fd], ['投信5日', yi(s?.t5), cls(s?.t5), '至 ' + fd], ...mtCards, ...mgCards, ...slCards]
+         [hlFrom ? '區間低' : '52週低', pfmt(s?.l52), '', hlFrom ? hlSub + '，還原' : '還原權值'], ...mtCards]
+        : tab === 'chip' ? [['法人1日', yi(s?.n1), cls(s?.n1), fd], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
+         ['外資5日', yi(s?.f5), cls(s?.f5), '至 ' + fd], ['投信5日', yi(s?.t5), cls(s?.t5), '至 ' + fd], ...mgCards, ...slCards]
+        : [['本益比', fmt(fund.pe, 2), '', subs(fundSub(fund.pe), valSub('pe', fund.pe))], ['股價淨值比', fmt(fund.pb, 2), '', subs(fundSub(fund.pb, false), valSub('pb', fund.pb))],
+         ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', subs(fundSub(fund.dy), valSub('dy', fund.dy))]])
         .map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
     </section>
-    ${SL ? `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。占股本以目前發行股數計算。借券資料晚上 8 點半以後才更新。</div>` : ''}
-    ${VAL ? `<div class="muted small val-note">一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}</div>` : ''}
+    ${tab === 'chip' ? `${SL ? `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。占股本以目前發行股數計算。借券資料晚上 8 點半以後才更新。</div>` : ''}
+    ${acHTML}` : tab === 'fund' ? `${VAL ? `<div class="muted small val-note">一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}</div>` : ''}
     ${finUp ? `<div class="small val-note fin-note">近 4 季 EPS 一年前 ${fmt(F.e4p, 2)} 元 → 現在 ${fmt(F.e4, 2)} 元（${F.e4p <= 0 ? '轉盈' : fmt(F.e4 / F.e4p, 1) + ' 倍'}）：本益比會因獲利增加而下降，位置低不代表股價便宜；請看下方季報卡的單季 EPS 是否已經轉弱。</div>` : ''}
-    ${acHTML}
+    <section class="sec grid ${F ? 'g2' : 'g-one'}">
+      <div class="card"><div class="sec-h"><h2>月營收</h2><span class="sp"></span><span id="revSegBox"></span></div><div id="revBox"></div></div>
+      ${F ? `<div class="card"><div class="sec-h"><h2>季報</h2><span class="muted small">${qName(F.q.at(-1)[0])}${F.c.fs ? `｜本站收錄 ${md(F.c.fs)}` : ''}｜${FIN_TBL[F.t] || ''}</span></div><div id="finBox"></div></div>` : ''}
+    </section>` : `
 
     <section class="sec card">
       <div class="sec-h">
@@ -143,12 +151,9 @@ window.renderStock = async function (code) {
       <div id="mC" class="chart-box" style="height:120px"></div>
     </section>
 
-    <section class="sec grid g2">
-      <div class="card"><div class="sec-h"><h2>月營收</h2><span class="muted small">柱：營收（億），紅／綠 = 年增正／負；線：累計年增（%，右軸）</span></div><div id="revBox"></div></div>
-      <div class="card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></div>
-    </section>
-    ${F ? `<section class="sec card"><div class="sec-h"><h2>季報</h2><span class="muted small">${qName(F.q.at(-1)[0])}${F.c.fs ? `｜本站收錄 ${md(F.c.fs)}` : ''}｜${FIN_TBL[F.t] || ''}</span></div><div id="finBox"></div></section>` : ''}`;
+    <section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>`}`;
 
+  onSeg('stockTabSeg', v => { localStore('stockTab', null, v); window.disposeStockCharts(); window.renderStock(code); });
   $('#starBtn').addEventListener('click', () => {
     App.watch.has(code) ? App.watch.delete(code) : App.watch.add(code);
     saveWatch();
@@ -156,6 +161,8 @@ window.renderStock = async function (code) {
     $('#starBtn').classList.toggle('on', on);
     $('#starBtn').textContent = on ? '★ 已加入自選' : '☆ 加入自選';
   });
+  if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
+  if (tab !== 'k') return;
   $('#adjSeg').title = '還原：依除權息、減資、面額變更調整歷史價格，最新收盤不變。均線訊號與 52 週高低一律以還原價格計算';
   // 日／週／月與還原／原始切換都重畫；技術面訊號一律用還原價（P13）
   const draw = () => {
@@ -169,8 +176,6 @@ window.renderStock = async function (code) {
   CHART_IDS.filter(id => $('#' + id)).forEach((id, idx) => ['mouseenter', 'pointerdown', 'touchstart', 'wheel'].forEach(t =>
     $('#' + id).addEventListener(t, () => { syncLeader = charts[idx]; }, { passive: true })));
 
-  renderRevenue(data.revenue);
-  if (F) renderFin(F);
   draw();
 };
 
@@ -474,13 +479,49 @@ function renderRevenue(rows) {
   const ym = r => `${r[0]}/${String(r[1]).padStart(2, '0')}`;
   const amt = v => fmt(v / 1e5, v >= 1e7 ? 0 : v >= 1e5 ? 1 : 2);        // 千元 → 億
   const pc = v => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v) + '%'}</td>`;
-  box.innerHTML = `<div id="revC" style="height:220px"></div>
+  // 檢視切換：今年 vs 去年同期（預設）／近 36 個月；切換時只重畫營收這一塊
+  const view = localStore('revView', 'yoy') === '36' ? '36' : 'yoy';
+  $('#revSegBox').innerHTML = segHTML('revSeg', [['yoy', '今年 vs 去年'], ['36', '近 36 個月']], view);
+  onSeg('revSeg', v => { localStore('revView', null, v); if (window.Plotly) Plotly.purge('revC'); renderRevenue(rows); });
+  if (view === 'yoy') return renderRevenueYoY(rows, amt, pc);
+  box.innerHTML = `<div class="muted small">柱：營收（億），紅／綠 = 年增正／負；線：累計年增（%，右軸）</div>
+    <div id="revC" style="height:220px"></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>年月</th><th>營收（億）</th><th>月增</th><th>年增</th><th>累計年增</th></tr></thead><tbody>` +
     rows.slice(-12).reverse().map(r => `<tr><td>${ym(r)}</td>
       <td class="num">${amt(r[2])}${r[6] ? `<span class="hi" title="近 ${r[6]} 年新高">★</span>` : ''}</td>${pc(r[3])}${pc(r[4])}${pc(r[5])}</tr>`).join('') +
     `</tbody></table></div>
     <div class="muted small" style="margin-top:6px">★ 近 N 年新高：營收高於之前所有月份（N 依資料涵蓋年數計算）。累計年增 = 當年 1 月至該月合計 ÷ 去年同期 − 1。</div>`;
   drawRevenue(rows.slice(-36), ym);
+}
+
+// 今年 vs 去年同期：最新資料的年度 1～M 月逐月對照去年同月（圖上去年畫滿 12 個月當參考），累計只算兩年都有資料的同期月份
+function renderRevenueYoY(rows, amt, pc) {
+  const last = rows.at(-1), Y = last[0], M = last[1];
+  const by = new Map(rows.map(r => [r[0] * 100 + r[1], r]));
+  const cur = m => by.get(Y * 100 + m), prev = m => by.get((Y - 1) * 100 + m);
+  const months = Array.from({ length: M }, (_, i) => i + 1);
+  const both = months.filter(m => cur(m) && prev(m));
+  const sc = both.reduce((a, m) => a + cur(m)[2], 0), sp = both.reduce((a, m) => a + prev(m)[2], 0);
+  const cy = sp > 0 ? (sc / sp - 1) * 100 : null;
+  const rng = both.length === M ? `1～${M} 月` : `${both.length} 個同期月份`;
+  $('#revBox').innerHTML = `<div class="s num" style="margin-bottom:4px">${Y} 年 ${rng}累計 <b>${amt(sc)}</b> 億，去年同期 ${amt(sp)} 億，<span class="${cls(cy)}">${cy == null ? '--' : sgn(cy) + '%'}</span></div>
+    <div id="revC" style="height:220px"></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>月份</th><th>${Y}（億）</th><th>${Y - 1}（億）</th><th>年增</th></tr></thead><tbody>` +
+    months.slice().reverse().map(m => `<tr><td>${m} 月</td><td class="num">${cur(m) ? amt(cur(m)[2]) : '--'}</td><td class="num">${prev(m) ? amt(prev(m)[2]) : '--'}</td>${pc(cur(m)?.[4] ?? null)}</tr>`).join('') +
+    `<tr><td><b>累計</b></td><td class="num"><b>${amt(sc)}</b></td><td class="num">${amt(sp)}</td>${pc(cy)}</tr></tbody></table></div>
+    <div class="muted small" style="margin-top:6px">柱：${Y} 年（藍）與 ${Y - 1} 年（灰）同月營收；去年 ${M + 1 <= 12 ? `${M + 1}～12 月只有去年，供參考` : '全年對照'}。年增 = 今年該月 ÷ 去年同月 − 1；累計只算兩年都有資料的月份。</div>`;
+  if (!window.Plotly) { $('#revC').innerHTML = '<div class="empty">圖表元件載入失敗，請檢查網路後重新整理</div>'; return; }
+  const x = Array.from({ length: 12 }, (_, i) => `${i + 1}月`), text2 = css('--text2'), grid = css('--border');
+  const ys = y => x.map((_, i) => { const r = by.get(y * 100 + i + 1); return r ? r[2] / 1e5 : null; });
+  Plotly.newPlot('revC', [
+    { type: 'bar', x, y: ys(Y - 1), name: `${Y - 1}`, marker: { color: text2, opacity: 0.55 }, hovertemplate: `${Y - 1} %{y:,.2f} 億<extra></extra>` },
+    { type: 'bar', x, y: ys(Y), name: `${Y}`, marker: { color: '#378ADD' }, hovertemplate: `${Y} %{y:,.2f} 億<extra></extra>` },
+  ], {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { size: 10, color: text2 },
+    margin: { l: 44, r: 8, t: 24, b: 28 }, barmode: 'group', bargap: 0.25, hovermode: 'x unified', dragmode: false,
+    showlegend: true, legend: { orientation: 'h', x: 0, y: 1.15 },
+    xaxis: { type: 'category', fixedrange: true }, yaxis: { gridcolor: grid, fixedrange: true, rangemode: 'tozero' },
+  }, { responsive: true, displayModeBar: false });
 }
 
 function drawRevenue(rows, ym) {
