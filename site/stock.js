@@ -45,7 +45,7 @@ window.renderStock = async function (code) {
   const VAL = data.val;
   const valSub = (k, v) => { const x = VAL?.[k]; if (!x || v == null) return '';
     const [p, lo, hi] = x, f = n => fmt(n, 2) + (k === 'dy' ? '%' : '');
-    return `一年位置 ${v <= lo ? '最低' : v >= hi ? '最高' : p + '%'}（${f(lo)}～${f(hi)}）`; };
+    return `一年位置 ${v <= lo ? '最低' : v >= hi ? '最高' : p + '%'}（${f(lo)}～${f(hi)}）${k === 'dy' && v > lo && v < hi ? '<br>越高 = 殖利率相對越高' : ''}`; };   // 第 14 輪 F14-4
   const subs = (...a) => a.filter(Boolean).join('<br>');
   // 第 10 輪 B5：季報（沒有任何季報的股票沒有 fin）；近 4 季 EPS 明顯高於一年前（一年前 ≤ 0 且現在 > 0，或 ≥ 1.5 倍）時加獲利說明一行
   const F = data.fin;
@@ -86,7 +86,7 @@ window.renderStock = async function (code) {
         <td class="num">${fmt(a.l)}</td><td class="num">${fmt(a.w, 2)}%</td>
         <td class="num ${cls(a.d1)}">${a.d1 == null ? '--' : sgn(a.d1, 0)}</td><td class="num ${cls(a.d5)}">${a.d5 == null ? '--' : sgn(a.d5, 0)}</td>
         <td class="num">${md(a.d)}</td></tr>`).join('') +
-      '</tbody></table></div><div class="muted small" style="margin-top:6px">' + noteHTML('張數增減包含申購贖回的影響，不一定代表看好', '張數增減包含申購贖回的影響：申購多的日子，經理人會用申購資金加碼，不一定代表看好（可對照持股頁的「單位數 1 日」）。權重為占該 ETF 淨資產 %，含股價漲跌影響。') + '</div></section>');
+      '</tbody></table></div><div class="muted small note-dup" style="margin-top:6px">' + noteHTML('張數增減包含申購贖回的影響，不一定代表看好', '張數增減包含申購贖回的影響：申購多的日子，經理人會用申購資金加碼，不一定代表看好（可對照持股頁的「單位數 1 日」）。權重為占該 ETF 淨資產 %，含股價漲跌影響。') + '</div></section>');
 
   $('#view').innerHTML = `
     <section class="sec card">
@@ -454,7 +454,7 @@ const qShort = k => `${String(k).slice(2, 4)}Q${k % 100}`;              // 20260
 function renderFin(F) {
   const Q = F.q, L = Q.at(-1), k = L[0], q = k % 100;
   const base = Q.find(r => r[0] === k - 100);                             // 去年同季（近 8 季內才有）
-  const ey = (v, cur, b) => v != null ? sgn(v, 1) + '%' : b != null && b <= 0 && cur > 0 ? '轉盈' : '--';
+  const ey = (v, cur, b) => v != null ? (epsLow(v, b) ? `基期低（去年同季 ${fmt(b, 2)} 元）` : sgn(v, 1) + '%') : b != null && b <= 0 && cur > 0 ? '轉盈' : '--';   // 第 14 輪 F14-2
   const pc1 = v => v == null ? '--' : fmt(v, 1) + '%';
   const stats = [['單季 EPS', fmt(L[1], 2), cls(L[2]), `年增 ${ey(L[2], L[1], base?.[1])}`],
     ['累計 EPS', fmt(F.c.e, 2), '', `${q === 4 ? '全年' : `1～${q * 3} 月`}，年增 ${F.c.ey == null ? '--' : sgn(F.c.ey, 1) + '%'}`],
@@ -509,7 +509,7 @@ function renderRevenueYoY(rows, amt, pc) {
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>月份</th><th>${Y}（億）</th><th>${Y - 1}（億）</th><th>年增</th></tr></thead><tbody>` +
     months.slice().reverse().map(m => `<tr><td>${m} 月</td><td class="num">${cur(m) ? amt(cur(m)[2]) : '--'}</td><td class="num">${prev(m) ? amt(prev(m)[2]) : '--'}</td>${pc(cur(m)?.[4] ?? null)}</tr>`).join('') +
     `<tr><td><b>累計</b></td><td class="num"><b>${amt(sc)}</b></td><td class="num">${amt(sp)}</td>${pc(cy)}</tr></tbody></table></div>
-    <div class="muted small" style="margin-top:6px">${noteHTML(`柱：${Y} 年（藍）、${Y - 1} 年（灰）同月營收`, `柱：${Y} 年（藍）與 ${Y - 1} 年（灰）同月營收；去年 ${M + 1 <= 12 ? `${M + 1}～12 月只有去年，供參考` : '全年對照'}。年增 = 今年該月 ÷ 去年同月 − 1；累計只算兩年都有資料的月份。`)}</div>`;
+    <div class="muted small note-dup" style="margin-top:6px">${noteHTML(`柱：${Y} 年（藍）、${Y - 1} 年（灰）同月營收`, `柱：${Y} 年（藍）與 ${Y - 1} 年（灰）同月營收；去年 ${M + 1 <= 12 ? `${M + 1}～12 月只有去年，供參考` : '全年對照'}。年增 = 今年該月 ÷ 去年同月 − 1；累計只算兩年都有資料的月份。`)}</div>`;
   if (!window.Plotly) { $('#revC').innerHTML = '<div class="empty">圖表元件載入失敗，請檢查網路後重新整理</div>'; return; }
   const x = Array.from({ length: 12 }, (_, i) => `${i + 1}月`), text2 = css('--text2'), grid = css('--border');
   const ys = y => x.map((_, i) => { const r = by.get(y * 100 + i + 1); return r ? r[2] / 1e5 : null; });

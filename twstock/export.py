@@ -22,7 +22,8 @@ from . import db
 from .analysis.flow import LONG, group_flows, load_concepts, streak
 from .analysis.forecast import build_forecast, load_oi
 from .config import SITE_DATA_DIR, tw_now
-from .health import HOLDINGS, build_status, fin_quarter_for, prev_quarter
+from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, prev_quarter
+from .tradingcal import is_trading_day, load_closed, trading_days
 
 REPLAY = 20                    # 泡泡圖回放天數
 FUTURES_DAYS = 500             # 首頁台指期日 K 匯出天數
@@ -46,7 +47,7 @@ NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
-               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to")
+               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to", "rb", "eb")
 VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
 VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
 VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
@@ -936,6 +937,30 @@ def fin_progress(counts: dict, d):
     return {"q": fq[0] * 100 + fq[1], "n": n, "p": {m: counts.get((*pq, m), 0) for m in ("TWSE", "TPEx")}}
 
 
+# ─── 第 14 輪 F14-1、F14-2、F14-4：基期與截止日（另立函式：舊測試逐鍵比對 revenue_stats、fin_screen、fin_progress 的回傳值）───
+def rev_base(rows):
+    """去年同月營收（千元）：rows = _revenue_rows 的輸出，取最新一個月 (y, m) 的 (y−1, m)；沒有該月或沒有營收 → None。"""
+    if not rows:
+        return None
+    y, m = rows[-1][:2]
+    return next((r[2] for r in rows if r[0] == y - 1 and r[1] == m), None)
+
+
+def fin_base(cum: dict):
+    """最新一季的去年同季單季 EPS（和個股 fin.q 每列第 7 欄同一口徑）；沒有季報或去年同季算不出 → None。"""
+    if not cum:
+        return None
+    y, q = max(cum)
+    b = fin_single(cum, y - 1, q)
+    return _f(b and b[4])
+
+
+def fin_due_dates(qk: int) -> list:
+    """季別 YYYYQQ 的申報截止日 [一般業, 金融業]（health.FIN_DUE；Q4 在次年）。"""
+    y, q = divmod(qk, 100)
+    return [str(date(y + (q == 4), *md)) for md in FIN_DUE[q]]
+
+
 def _load_financials(cur) -> tuple:
     """({代號: {(年, 季): (營收, 毛利, 營益, 淨利, EPS)}}, {代號: (最新一季業別, 最新一季 first_seen)}, {(年, 季, 市場): 家數})。"""
     fin, meta, counts = defaultdict(dict), {}, Counter()
@@ -1005,6 +1030,28 @@ def _load_futures(cur, commodity="TX"):
         "night": {"date": str(n[0]), "m": n[2], "o": _f(n[3]), "h": _f(n[4]), "l": _f(n[5]),
                   "c": _f(n[6]), "ch": _f(n[7]), "v": n[8]} if n else None,
     }
+
+
+# ─── 第 14 輪 F14-3：期現貨價差、結算日 ───────────────────────────
+def settle_day(y: int, m: int, closed) -> date:
+    """台指期 y 年 m 月契約的結算日（本站推算）：第三個週三；遇休市順延到下一個交易日。closed = 休市日集合。"""
+    d = date(y, m, 15 + (2 - date(y, m, 1).weekday()) % 7)         # 第三個週三落在 15～21 日
+    while not is_trading_day(d, closed):
+        d += timedelta(days=1)
+    return d
+
+
+def next_settle(d: date, closed) -> dict:
+    """資料日 d 之後（含當天）的下一個結算日 {d, n}；n = d 之後到結算日（含）的交易日數，0 = 今天結算。"""
+    s = settle_day(d.year, d.month, closed)
+    if d > s:
+        s = settle_day(d.year + d.month // 12, d.month % 12 + 1, closed)
+    return {"d": str(s), "n": len(trading_days(d + timedelta(days=1), s, closed))}
+
+
+def futures_spread(days, closes, taiex: dict):
+    """和 days 對齊的價差（近月日盤收盤 − 同一天加權指數收盤）；任一邊沒有收盤 → None（不補、不估）。taiex = {日期字串: 收盤}。"""
+    return [_f(c - float(taiex[d])) if c is not None and taiex.get(d) is not None else None for d, c in zip(days, closes)]
 
 
 def _load_futures_oi(cur, oi: dict):
@@ -1084,6 +1131,8 @@ def export_all() -> float:
     for code, d, c, ch in cur.execute(
             "SELECT index_code, trade_date, close_price, change FROM market_index ORDER BY index_code, trade_date"):
         index_rows[code].append((d, c, ch))
+    if futures:                                                 # 第 14 輪 F14-3：價差（和 d 對齊）
+        futures["sp"] = futures_spread(futures["d"], futures["c"], {str(d): c for d, c, _ in index_rows.get("TAIEX", [])})
     amount = amount_by_market(cur.execute("SELECT trade_date, market, unit, net_amount FROM insti_amount"))
     alerts = defaultdict(list)
     for code, kind, ann, start, end, reason, measure in cur.execute("""
@@ -1113,6 +1162,7 @@ def export_all() -> float:
     fin, fin_meta, fin_counts = _load_financials(cur)          # 第 10 輪 B5
     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
     edates, esbl, esbl_m = _load_etf_sbl(cur)                  # 第 12 輪 ETF 借券
+    closed = load_closed(cur)                                  # 第 14 輪 F14-3：結算日推算用的休市日
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
@@ -1283,7 +1333,8 @@ def export_all() -> float:
                         "pbp": (stock_val.get(code) or {}).get("pb", [None])[0],     # F9-4：淨值比一年位置（cap 由前端估值規則排除）
                         **fin_screen(fin.get(code)),                                  # 第 10 輪 B5
                         **{k: (sbl or {}).get(k) for k in ("lb", "l1", "l5", "lp")},   # 第 11 輪 B14
-                        "mc": mc, "to": to}                                               # 第 12 輪 B11
+                        "mc": mc, "to": to,                                               # 第 12 輪 B11
+                        "rb": rev_base(rev_rows), "eb": fin_base(fin.get(code))}          # 第 14 輪 F14-1、F14-2：基期
 
     industries = defaultdict(list)
     for code in snapshot:
@@ -1296,6 +1347,8 @@ def export_all() -> float:
               if mdates.get(m)} or None
     etf_margin_rows = {code: (mp, mb, sp, sb) for m, d in mlast.items() for code, mp, mb, sp, sb in metfs[m].get(d, [])}
 
+    if futures:
+        futures["stl"] = next_settle(date.fromisoformat(futures["d"][-1]), closed)   # 第 14 輪 F14-3：下次結算日
     replay_dates = [str(d) for d in dates[-REPLAY:]]
     latest = {
         "updated_at": status["collected_at"],     # 最後成功收集時間，不是匯出時間
@@ -1308,7 +1361,7 @@ def export_all() -> float:
         "insti_official": _insti_official(amount["TWSE"]),
         "insti_official_tpex": _insti_official(amount["TPEx"]),      # 第 9 輪 F9-1：上櫃官方（結構同 insti_official）
         "valuation": valuation,                                      # 第 9 輪 F9-4：市場估值一年位置
-        "fin_progress": fin_progress(fin_counts, latest_date),       # 第 10 輪 B5：季報公布進度（窗口外 null）
+        "fin_progress": {**fp, "due": fin_due_dates(fp["q"])} if (fp := fin_progress(fin_counts, latest_date)) else None,   # 第 10 輪 B5；第 14 輪加截止日
         "insti_otc": {k: round(v, 1) for k, v in insti_otc.items()},
         "index": {code: {"date": str(rows[-1][0]), "c": _f(rows[-1][1]), "ch": _f(rows[-1][2]),
                          "p": _f(_pct(rows[-1][1], rows[-1][2])), "from": str(rows[-INDEX_DAYS:][0][0]),

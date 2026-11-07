@@ -308,7 +308,7 @@ function etfSblLine(B) {
   const wan = n => `<b title="${fmt(n)} 張">${fmt(n / 1e4, n >= 1e6 ? 0 : 1)}</b> 萬張`;
   const one = (x, name) => !x ? '' : `${name} ${wan(x.lb)} <span class="${cls(x.l1)}">${sgn(x.l1, 0)}</span>`;
   return `<div class="s num">ETF 借券賣出　${[one(B.TWSE, '上市'), one(B.TPEx, '上櫃')].filter(Boolean).join('　')}　<a class="muted small" href="#/etf">ETF 頁 →</a></div>
-      ${noteHTML('ETF 借券賣出多為造市、套利與避險，不等於看空', 'ETF 借券賣出多為造市、套利與避險（例如價格高於淨值時借券賣出，申購後還券），不等於看空')}`;
+      <div class="note-dup">${noteHTML('ETF 借券賣出多為造市、套利與避險，不等於看空', 'ETF 借券賣出多為造市、套利與避險（例如價格高於淨值時借券賣出，申購後還券），不等於看空')}</div>`;
 }
 
 // 市場寬度卡（A3＋A8）：全部為網站自算（還原收盤、股票、不含 ETF）；官方家數在成交額卡
@@ -331,7 +331,8 @@ function valCard(L) {
   const V = L.valuation;
   if (!V || !(V.TWSE || V.TPEx)) return '';
   const pos = x => !x ? '--' : x.v <= x.lo ? '一年最低' : x.v >= x.hi ? '一年最高' : `一年位置 ${fmt(x.p, 1)}%`;
-  const row = (x, name) => !x ? '' : `<div class="s num">${name}　本益比 <b>${fmt(x.pe?.v, 2)}</b>（${pos(x.pe)}）　淨值比 <b>${fmt(x.pb?.v, 2)}</b>（${pos(x.pb)}）　殖利率 <b>${x.dy ? fmt(x.dy.v, 2) + '%' : '--'}</b>（${pos(x.dy)}）</div>`;
+  const dyPos = x => pos(x) + (x && x.v > x.lo && x.v < x.hi ? '，越高 = 殖利率相對越高' : '');     // 第 14 輪 F14-4：方向和本益比、淨值比相反
+  const row = (x, name) => !x ? '' : `<div class="s num">${name}　本益比 <b>${fmt(x.pe?.v, 2)}</b>（${pos(x.pe)}）　淨值比 <b>${fmt(x.pb?.v, 2)}</b>（${pos(x.pb)}）　殖利率 <b>${x.dy ? fmt(x.dy.v, 2) + '%' : '--'}</b>（${dyPos(x.dy)}）</div>`;
   const T = V.TWSE || V.TPEx;
   return `<div class="card stat idx val">
       <div class="l">估值位置（官方，股票中位數）<span class="muted">　${md(T.d)}</span></div>
@@ -339,7 +340,7 @@ function valCard(L) {
       ${wpeLine(V)}
       ${spark(V.TWSE?.s)}${V.TWSE?.s?.length > 1 ? `<div class="s">上市本益比中位數，近 ${V.TWSE.s.length} 個交易日（${md(V.TWSE.sf)} 起）</div>` : ''}
       ${finLine(L.fin_progress)}
-      ${noteHTML('股票中位數，不是加權指數本益比；只是位置，不是買賣訊號', `一年位置 = 近 ${T.days} 個交易日（${T.from.replaceAll('-', '/')} 起）中，中位數小於或等於今天的天數比例。中位數只計本益比、淨值比大於 0 的股票（上市 ${fmt(V.TWSE?.n)}、上櫃 ${fmt(V.TPEx?.n)} 檔），不是加權指數本益比；本益比用近 4 季 EPS，財報公布期間 EPS 變化也會改變位置；殖利率用去年股利。只是位置，不是買賣訊號`)}
+      <div class="note-dup">${noteHTML('股票中位數，不是加權指數本益比；只是位置，不是買賣訊號', `一年位置 = 近 ${T.days} 個交易日（${T.from.replaceAll('-', '/')} 起）中，中位數小於或等於今天的天數比例。中位數只計本益比、淨值比大於 0 的股票（上市 ${fmt(V.TWSE?.n)}、上櫃 ${fmt(V.TPEx?.n)} 檔），不是加權指數本益比；本益比用近 4 季 EPS，財報公布期間 EPS 變化也會改變位置；殖利率用去年股利。只是位置，不是買賣訊號`)}</div>
     </div>`;
 }
 
@@ -351,15 +352,18 @@ function wpeLine(V) {
   const one = (x, name) => !x ? '' : `${name} <b>${fmt(x.v, 2)}</b>（${pos(x)}）`;
   const big = T?.t ? `最大的 ${esc(App.latest.stocks?.[T.t[0]]?.n || T.t[0])} 占上市 ${fmt(T.t[1], 1)}%` : '';
   return `<div class="s num">加權本益比（市值加權）　${[one(T, '上市'), one(O, '上櫃')].filter(Boolean).join('　')}</div>
-      ${noteHTML(`大型股影響大${big ? `（${big}）` : ''}；本站計算，不是證交所公布的數字`, `加權本益比 = 市值合計 ÷ Σ（市值 ÷ 本益比），大型股影響大${big ? `（${big}）` : ''}；中位數反映一般股票。本站以目前股數計算、不含虧損公司，不是證交所公布的數字`)}`;
+      <div class="note-dup">${noteHTML(`大型股影響大${big ? `（${big}）` : ''}；本站計算，不是證交所公布的數字`, `加權本益比 = 市值合計 ÷ Σ（市值 ÷ 本益比），大型股影響大${big ? `（${big}）` : ''}；中位數反映一般股票。本站以目前股數計算、不含虧損公司，不是證交所公布的數字`)}</div>`;
 }
 
 // 第 10 輪 B5：季報公布進度（資料日在季報收集期間、當季已有資料時才有 fin_progress）
 function finLine(P) {
   if (!P) return '';
   const q = P.q % 100, name = q === 4 ? `${Math.floor(P.q / 100)} 年報` : `第 ${q} 季財報`;
-  return `<div class="s">${name}已收：上市 ${fmt(P.n.TWSE)}、上櫃 ${fmt(P.n.TPEx)} 家（前一季 ${fmt(P.p.TWSE)}、${fmt(P.p.TPEx)} 家）；本益比中位數會隨 EPS 更新而變動</div>`;
+  return `<div class="s">${name}已收：上市 ${fmt(P.n.TWSE)}、上櫃 ${fmt(P.n.TPEx)} 家（前一季 ${fmt(P.p.TWSE)}、${fmt(P.p.TPEx)} 家${P.due ? '；' + dueTxt(P.due, App.latest.date) : ''}）；本益比中位數會隨 EPS 更新而變動</div>`;
 }
+// 第 14 輪 F14-4：申報截止日 [一般業, 金融業]；相同（年報）只寫一次；資料日已過的寫「已截止」
+const dueTxt = ([g, f], d) => g === f ? `${md(g)} ${d > g ? '已截止' : '截止'}`
+  : d > f ? `一般業 ${md(g)}、金融業 ${md(f)} 已截止` : d > g ? `一般業 ${md(g)} 已截止、金融業 ${md(f)} 截止` : `一般業 ${md(g)}、金融業 ${md(f)} 截止`;
 
 // 三大法人卡：上市（A2）、上櫃（第 9 輪 F9-1）都用官方金額；上櫃官方還沒有任何資料時退回估算一行；上市也沒有時維持第 1 輪估算卡
 function instiCard(L) {
@@ -408,8 +412,9 @@ function futuresHTML(F) {
     night = `<span class="${old ? 'night-old' : ''}">${old ? '前一夜盤' : '最新夜盤'}（${from ? md(from) + ' 15:00～' : ''}${md(N.date)} 05:00）　收 <b class="num ${cls(N.ch)}">${fmt(N.c)}</b>
       <span class="num ${cls(N.ch)}">${sgn(N.ch, 0)} (${sgn(np)}%)</span></span>`;
   }
+  const roll = k > 0 && F.m[k] !== F.m[k - 1];                 // 第 14 輪 F14-3：近月和前一個交易日不同 = 今天換月
   return `<section class="sec card">
-      <div class="sec-h"><h2>${esc(F.name)}</h2><span class="muted small">日盤・契約 ${F.m[k]}</span>
+      <div class="sec-h"><h2>${esc(F.name)}</h2><span class="muted small">日盤・契約 ${F.m[k]}${roll ? '<i class="al al-r">今天換月</i>' : ''}</span>
         <span class="sp"></span><span class="muted small">拖曳平移、滾輪縮放</span></div>
       <div class="fut-head">
         <span class="s-price num ${cls(ch)}" style="font-size:26px">${fmt(c)}</span>
@@ -418,9 +423,37 @@ function futuresHTML(F) {
       </div>
       <div class="fut-sub muted small">${old ? night : ''}<span>成交量 <b class="num">${fmt(F.v[k])}</b> 口</span>
         <span>未平倉 <b class="num">${fmt(F.oi[k])}</b> 口</span>${old ? '' : night}</div>
+      ${spreadHTML(F, k, roll)}
       <div class="kleg" id="fLegend"></div>
       <div id="fC" class="chart-box" style="height:300px"></div>
     </section>`;
+}
+
+// 第 14 輪 F14-3：期現貨價差（近月日盤收盤 − 同一天加權指數收盤）、下次結算日（本站推算）、近 60 日價差迷你圖
+function spreadHTML(F, k, roll) {
+  const sp = F.sp?.[k], S = F.stl;
+  if (!F.sp && !S) return '';
+  const tag = [S?.n === 0 ? '結算日' : '', roll ? '換月' : ''].filter(Boolean).join('、');
+  const v = sp == null ? '<span class="nw">價差 --（加權指數沒有同一天的收盤）</span>'
+    : `<span class="nw">價差 <b class="num ${cls(sp)}">${sgn(sp)}</b> 點</span><span class="nw">（${sp > 0 ? '正價差' : sp < 0 ? '逆價差' : '平價'}，${fmt(Math.abs(sp / (F.c[k] - sp) * 100), 2)}%${tag ? '，' + tag : ''}）</span>`;
+  const wd = S ? '日一二三四五六'[new Date(S.d + 'T00:00:00').getDay()] : '';
+  const st = !S ? '' : S.n === 0 ? `<span class="nw">今天結算（${md(S.d)}，週${wd}）</span>`
+    : `<span class="nw">${md(S.d)}（週${wd}）結算</span><span class="nw">，還有 ${S.n} 個交易日${wd !== '三' ? '（遇休市順延）' : ''}</span>`;
+  const n = Math.min(60, F.d.length), s60 = (F.sp || []).slice(-n), short = '期貨 13:45、加權指數 13:30 收盤，時間不同；結算日是本站推算，以期交所公告為準';
+  return `<div class="fut-sp small"><div>${v}　${st}</div>
+      ${spreadSpark(s60, F.m.slice(-n))}${s60.filter(x => x != null).length > 1 ? `<div class="muted">價差近 ${n} 個交易日（${md(F.d.at(-n))}～${md(F.d[k])}），虛線 = 換月</div>` : ''}
+      ${noteHTML(short, '價差 = 台指期近月日盤收盤 − 同一天加權指數收盤（夜盤不比），正值為正價差、負值為逆價差，百分比 = 價差 ÷ 加權指數。期貨日盤 13:45 收盤、加權指數 13:30 收盤，尾盤變化大時價差會失真。近月 = 當天有成交的最近到期月份：結算日當天仍是到期月份，下一個交易日換到下個月份，換月當天的價差跳動來自契約不同，不是行情。結算日依「每月第三個週三，遇休市順延到下一個交易日」推算，臨時休市或期交所另行公告時以官方為準。')}</div>`;
+}
+// 價差迷你圖：含 0 軸；換月的日子畫虛線；沒有價差的日子不畫點
+function spreadSpark(v, m) {
+  const ok = v.filter(x => x != null);
+  if (ok.length < 2) return '';
+  const lo = Math.min(0, ...ok), hi = Math.max(0, ...ok), n = v.length;
+  const X = i => (i / (n - 1) * 100).toFixed(2), Y = x => (2 + (hi - x) / (hi - lo || 1) * 30).toFixed(2);
+  const ln = (x1, x2, y1, y2, st) => `<line x1="${x1}" x2="${x2}" y1="${y1}" y2="${y2}" ${st} vector-effect="non-scaling-stroke"/>`;
+  return `<svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true">${ln(0, 100, Y(0), Y(0), 'stroke="var(--border2)"')}` +
+    m.map((c, i) => i && c !== m[i - 1] ? ln(X(i), X(i), 0, 34, 'stroke="var(--text3)" stroke-dasharray="2 2"') : '').join('') +
+    `<polyline points="${v.map((x, i) => x == null ? '' : `${X(i)},${Y(x)}`).filter(Boolean).join(' ')}" fill="none" stroke="var(--blue)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
 function drawFutures(F) {
@@ -447,6 +480,7 @@ function drawFutures(F) {
   });
   const kSer = futChart.addCandlestickSeries({ upColor: UP, downColor: DN, borderUpColor: UP, borderDownColor: DN, wickUpColor: UP, wickDownColor: DN, priceFormat: intFmt });
   kSer.setData(T.map((t, i) => ({ time: t, open: F.o[i], high: F.h[i], low: F.l[i], close: F.c[i] })));
+  kSer.setMarkers(T.flatMap((t, i) => i && F.m[i] !== F.m[i - 1] ? [{ time: t, position: 'aboveBar', color: css('--text2'), shape: 'arrowDown', text: `換${Number(F.m[i].slice(4))}月` }] : []));   // 第 14 輪 F14-3
   const line = (vals, color) => futChart.addLineSeries({ color, lineWidth: 1, priceFormat: intFmt, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
     .setData(vals.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
   line(ma5, '#888780'); line(ma20, '#EF9F27');
@@ -462,6 +496,7 @@ function drawFutures(F) {
     legend.innerHTML = `<span><b>${T[i]}</b></span><span>開 <b>${fmt(F.o[i])}</b></span><span>高 <b class="up">${fmt(F.h[i])}</b></span>` +
       `<span>低 <b class="dn">${fmt(F.l[i])}</b></span><span>收 <b class="${c}">${fmt(F.c[i])}</b></span>` +
       `<span class="${c}">${sgn(ch, 0)} (${sgn(p)}%)</span><span>量 <b>${fmt(F.v[i])}</b></span>` +
+      `<span>契約 ${F.m[i]}${F.sp?.[i] != null ? `　價差 <b>${sgn(F.sp[i])}</b>` : ''}</span>` +
       ma('MA5', ma5[i], '#888780') + ma('MA20', ma20[i], '#EF9F27');
   };
   show(n - 1);
@@ -723,7 +758,7 @@ const RANKS = [
 const RANK_GROUPS = [['法人', ['n+', 'n-', 'f+', 'f-', 't+', 't-', 'd+', 'd-', 'fs', 'ts', 's']], ['價量', ['p+', 'p-', 'tv', 'vr', 'nh', 'rs20', 'to']],
   ['基本面', ['ry', 'dy', 'pe']], ['融資融券', ['m+', 'm-', 'mr', 's+', 's-', 'sr', 'mu']], ['借券', ['l+', 'lp']]];
 // screen.json 排行的額外篩選與表格欄位
-const RANK_FILTER = { nh: x => x.nh > 0, dy: x => isNum(x.pe) && x.pe > 0 && x.cap !== 1, pe: x => x.pe > 0 && x.cap !== 1, sr: x => isNum(x.mb) && x.mb >= MARGIN_BASE };
+const RANK_FILTER = { ry: x => !(x.rm < revMonth()), nh: x => x.nh > 0, dy: x => isNum(x.pe) && x.pe > 0 && x.cap !== 1, pe: x => x.pe > 0 && x.cap !== 1, sr: x => isNum(x.mb) && x.mb >= MARGIN_BASE };
 const RANK_COLS = { vr: ['vr'], nh: ['nh'], rs20: ['rs20'], ry: ['ry'], dy: ['dy', 'pe', 'pb'], pe: ['pe', 'pb', 'dy'], to: ['to', 'mc'] };
 const streakTxt = v => v ? (v > 0 ? '買' : '賣') + Math.abs(v) : '--';
 const modeSeg = v => segHTML('modeSeg', [['rank', '排行'], ['screen', '選股']], v);
@@ -781,7 +816,7 @@ async function renderRank(arg) {
       table = `<div class="muted small tbl-cap">融資增加 ${fmt(cnt('m' + span, 1))} 家、減少 ${fmt(cnt('m' + span, -1))} 家；融券增加 ${fmt(cnt('s' + span, 1))} 家、減少 ${fmt(cnt('s' + span, -1))} 家（${span} 日，股票，融資融券 ${mds || '--'}）</div>` +
         marginTable(list, span, by);
       foot = `融資融券資料日：上市 ${S.md.TWSE ? md(S.md.TWSE) : '--'}、上櫃 ${S.md.TPEx ? md(S.md.TPEx) : '--'}。估算金額 = 張數 × 1,000 × 收盤，是估算，不是官方融資金額。5 日增減遇到面額變更、減資時，以官方換算後的 5 日前餘額計算。融資增加率的基期（1 日或 5 日前餘額）至少 1,000 張；券資比只列融資 1,000 張以上；使用率不列限額 0 或無限額的股票。不含 ETF。`;
-    } else table = screenTable(list, RANK_COLS[by]);
+    } else table = screenTable(list, RANK_COLS[by]) + (by === 'ry' ? revNote(inMkt, Number(minTv)) : '');
   }
   if (!foot) foot = '金額 = 買賣超張數 × 當日收盤，不含 ETF。成交額門檻以資料日成交額篩選，套用到所有排行。「1日／5日」只切換法人、外資、投信、自營買賣超排行與表格法人欄位的天數；漲幅、跌幅、成交額與連買排行不受影響。連買為連續買超天數，天數相同時以近 5 日金額排序。' +
     (S ? '量比、創新高、相對強勢、營收、估值排行的資料日見「選股」頁；殖利率、本益比排行已排除虧損（官方本益比空白）與 90 天內股本變動的股票。週轉率 = 今日成交股數 ÷ 目前發行股數，市值 = 收盤 × 目前發行股數；增資、減資前後可能失真。' : '');
@@ -871,6 +906,16 @@ const finQ = () => Object.entries(App.screen?.fqd || {}).sort((a, b) => b[1] - a
 const finMixed = S => revMixed({ rmd: S.fqd });
 const finTag = x => x.fq && String(x.fq) !== finQ() ? `<span class="muted small">（Q${x.fq % 100}）</span>` : '';
 
+// 第 14 輪 F14-1、F14-2：基期門檻。營收：去年同月 < 1,000 萬元（10,000 千元）；EPS：去年同季單季 EPS > 0 且 < 0.1 元（≤ 0 時年增為 null，照舊「轉盈」或 --）
+const REV_BASE = 10000, EPS_BASE = 0.1;
+const revLow = x => isNum(x.ry) && isNum(x.rb) && x.rb < REV_BASE;
+const epsLow = (v, b) => isNum(v) && isNum(b) && b < EPS_BASE;
+// 營收年增排行表下一行：比欄名月份舊而未列入的檔數（市場、成交額門檻同排行）與基期低的定義
+function revNote(inMkt, minTv) {
+  const M = revMonth(), n = M ? screenRows().filter(x => isNum(x.ry) && x.rm < M && inMkt(x) && (x.tv ?? 0) >= minTv).length : 0;
+  return `<div class="muted small" style="margin-top:6px">${n ? `另有 ${fmt(n)} 檔的最新營收早於 ${Number(M.slice(4))} 月，未列入排行（選股的營收條件仍包含）。` : ''}「基期低」= 去年同月營收不到 1,000 萬元，年增率容易很大。</div>`;
+}
+
 // 結果表的動態欄：[欄名, 取值, 格式, 預設方向（1 遞增）]
 const spct = v => v == null ? '--' : sgn(v) + '%';
 const int0 = v => v ? fmt(v) : '--';
@@ -889,11 +934,12 @@ const SCR_COLS = {
   m5: ['融資5日', x => x.m5, v => sgn(v, 0)],
   m5p: ['融資5日%', x => isNum(x.m5) && isNum(x.mb) && x.mb - x.m5 > 0 ? x.m5 / (x.mb - x.m5) * 100 : null, spct],
   sr: ['券資比', x => x.sr, v => v == null ? '--' : fmt(v, 2) + '%'], mu: ['使用率', x => x.mu, v => v == null ? '--' : fmt(v, 2) + '%'],
-  ry: ['營收年增', x => x.ry, (v, x) => spct(v) + (x.rm && String(x.rm) !== revMonth() ? `<span class="muted small">（${x.rm % 100}月）</span>` : '')],
+  ry: ['營收年增', x => x.ry, (v, x) => { const old = x.rm && String(x.rm) !== revMonth(), low = revLow(x);     // 第 14 輪：月份小字與基期低放第二行（欄寬）
+    return spct(v) + (old || low ? `<span class="sub2">${old ? `（${x.rm % 100}月）` : ''}${low ? `<i class="al al-b" title="去年同月營收 ${fmt(x.rb)} 千元">基期低</i>` : ''}</span>` : ''); }],
   rc: ['累計年增', x => x.rc, spct], rh: ['營收新高(年)', x => x.rh, int0], r3: ['連3月年增', x => x.r3, v => v === 1 ? '✓' : '--'],
   pe: ['本益比', x => x.pe, v => fmt(v, 2), 1], dy: ['殖利率', x => x.dy, spct], pb: ['淨值比', x => x.pb, v => fmt(v, 2), 1],
   pbp: ['淨值比位置', x => x.pbp, v => fmt(v) + '%', 1],
-  eq: ['單季EPS', x => x.eq, (v, x) => fmt(v, 2) + finTag(x)], ey: ['EPS年增', x => x.ey, (v, x) => spct(v) + finTag(x)],
+  eq: ['單季EPS', x => x.eq, (v, x) => fmt(v, 2) + finTag(x)], ey: ['EPS年增', x => x.ey, (v, x) => epsLow(v, x.eb) ? `基期低${finTag(x)}<span class="sub2">去年同季 ${fmt(x.eb, 2)} 元</span>` : spct(v) + finTag(x)],
   e4: ['近4季EPS', x => x.e4, v => fmt(v, 2)], gm: ['毛利率', x => x.gm, (v, x) => fmt(v, 1) + '%' + finTag(x)],
   gmy: ['毛利率年增', x => x.gmy, (v, x) => sgn(v, 1) + '點' + finTag(x)], eh: ['EPS新高(季)', x => x.eh, int0],
   mc: ['市值', x => x.mc, v => fmt(v, 0) + '億'], to: ['週轉率', x => x.to, v => fmt(v, 2) + '%'],   // 第 12 輪 B11

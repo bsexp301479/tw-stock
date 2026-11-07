@@ -244,3 +244,13 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 /* 第 13 輪 QA 後修正：兩張成交額卡＋共同說明包成一組（佔 2 欄），市場寬度卡仍在同一列右側 */
 .g-mk .mk-pair{grid-column:span 2;display:flex;flex-direction:column;gap:6px}
 .mk-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+/* 第 14 輪 F14-1、F14-2：營收、EPS 年增欄的第二行（月份、基期低、去年同季），欄寬不被撐開 */
+.tbl .sub2{display:block;font-size:11px;line-height:1.3;color:var(--text2)}
+.al-b{background:var(--flat)}.al-r{background:var(--blue)}
+/* F14-3：期貨卡價差一行與迷你圖 */
+.fut-sp{margin:0 0 8px;color:var(--text2)}
+.fut-sp b{font-weight:500}
+.fut-sp .spark{display:block;width:100%;height:36px;margin:4px 0 2px}
+/* F14-4：原文已包含短句的說明（外層 .note-dup），展開時隱藏短句、只留「說明 ▴」；短句、原文都不改 */
+.note-dup .note[open] summary{font-size:0}
+.note-dup .note[open] summary i{font-size:12px;margin-left:0}
