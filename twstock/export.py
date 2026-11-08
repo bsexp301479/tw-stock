@@ -12,6 +12,7 @@
 """
 import json
 import os
+import re
 import statistics
 import time
 from bisect import bisect_left
@@ -137,6 +138,52 @@ def alert_board(alerts):
         if notes:
             n.append([code, _short(notes[-1]["r"])])
     return {"d": sorted(d, key=lambda x: (x[2], x[0])), "n": sorted(n)}
+
+
+# 第 17 輪 F17-2：注意累計預警（依注意款別推算，不是官方判斷）
+_CLAUSE = re.compile(r"第([一二三四五六七八九十]{1,3})款")
+_CN = {c: i for i, c in enumerate("一二三四五六七八九", 1)}
+COUNT_DOWN = True          # 第一款跌幅也算「第一款連 3 日」（Q17-1：11/09 後依 2360、3532 是否被處置確認）
+WATCH_RULES = ((3, "第一款連 {} 日"), (5, "第 1～8 款連 {} 日"), (6, "10 日內 {} 次"), (12, "30 日內 {} 次"))
+
+
+def clauses(reason):
+    """注意原因 →（款別集合, 第一款是否為跌幅）；「第十三款」→ 13。解析不到為空集合（不計入）。"""
+    out = set()
+    for t in _CLAUSE.findall(reason or ""):
+        tens, _, ones = t.rpartition("十")
+        out.add((_CN.get(tens, 1) * 10 if "十" in t else 0) + _CN.get(ones, 0))
+    return out, 1 in out and "跌幅" in (reason or "").split("第一款")[0].rsplit("款", 1)[-1]   # 第一款那一段的文字
+
+
+def watch_counts(notes, days):
+    """notes：{日期: (款別, 第一款跌幅)}；days：交易日（舊到新，最後一天 = 資料日）→ [第一款連, 1～8 款連, 10 日, 30 日]。"""
+    def ok1(k):
+        return k is not None and 1 in k[0] and (COUNT_DOWN or not k[1])
+
+    def ok8(k):
+        return k is not None and bool(k[0] & set(range(1, 9)))
+
+    def run(ok):
+        n = 0
+        while n < len(days) and ok(notes.get(days[-1 - n])):
+            n += 1
+        return n
+    return [run(ok1), run(ok8), sum(ok8(notes.get(d)) for d in days[-10:]), sum(ok8(notes.get(d)) for d in days[-30:])]
+
+
+def alert_watch(notes, days, skip):
+    """[[代號, 1 = 已達條件／0 = 差一次, 條件文字]]：已達條件在前、同級依代號；skip（處置中、即將處置）不列。"""
+    out = []
+    for code, n in notes.items():
+        if code in skip:
+            continue
+        c = watch_counts(n, days)
+        hit = [t.format(x) for x, (need, t) in zip(c, WATCH_RULES) if x >= need]
+        near = [t.format(x) for x, (need, t) in zip(c, WATCH_RULES) if x == need - 1]
+        if hit or near:
+            out.append([code, 1 if hit else 0, "、".join(hit or near)])
+    return sorted(out, key=lambda x: (-x[1], x[0]))
 
 
 def _price_events(d_, c, ch, market, official):
@@ -1238,6 +1285,13 @@ def export_all() -> float:
         if _alert_status(kind, ann, start, end, latest_date):
             alerts[code].append({"t": kind, "a": str(ann), "s": start and str(start), "e": end and str(end),
                                  "r": reason, "m": measure})
+    watch_days = [r[0] for r in cur.execute(
+        "SELECT DISTINCT TOP 30 trade_date FROM daily_prices WHERE trade_date <= ? ORDER BY trade_date DESC", latest_date)][::-1]
+    watch_notes = defaultdict(dict)
+    for code, ann, reason in cur.execute("""
+        SELECT s.stock_code, a.announce_date, a.reason FROM stock_alerts a JOIN stocks s ON s.stock_id = a.stock_id
+        WHERE a.alert_type = 'notice' AND a.announce_date >= ? AND a.announce_date <= ?""", watch_days[0], latest_date):
+        watch_notes[code][ann] = clauses(reason)
     events = defaultdict(list)
     for code, d, t, p, r, src in cur.execute("""
         SELECT s.stock_code, e.event_date, e.event_type, e.prev_close, e.ref_price, e.source
@@ -1497,6 +1551,9 @@ def export_all() -> float:
         "alerts": alert_board(alerts),                          # 第 16 輪 F16-3：今日頁處置／注意清單
         "stocks": snapshot,
     }
+    # 第 17 輪 F17-2：注意累計預警（推算）；處置中、即將處置不列
+    latest["alerts"]["w"] = alert_watch(watch_notes, watch_days,
+                                        {c for c, v in alerts.items() if any(a["t"] == "disposal" for a in v)})
     # screen.json 在 latest.json 之前寫：中途失敗時前端比對 d／fd 會顯示不同步
     S = screen_build(screen, {"d": str(latest_date), "fd": str(dates[-1]), "md": {m: str(d) for m, d in mlast.items()},
                               "sd": {m: str(d) for m, d in slast.items()}})

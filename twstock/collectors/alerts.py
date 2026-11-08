@@ -91,8 +91,14 @@ def fetch_twse_notice(end: date, days: int = NOTICE_DAYS) -> list:
 
 
 def fetch_alerts() -> list:
-    """5 個來源全部抓完才回傳；每筆加上 market 供輸出分市場。"""
-    rows = [dict(a, market="TWSE") for a in fetch_twse_notice(date.today())]
+    """5 個來源全部抓完才回傳；每筆加上 market 供輸出分市場。
+    上市注意（證交所網站）失敗只略過它並印警告，其他 4 個來源照常（第 17 輪 F17-1：每次查 30 天，下次收集會補上）；
+    OpenAPI 4 個來源任一失敗仍整批不寫。"""
+    try:
+        rows = [dict(a, market="TWSE") for a in fetch_twse_notice(date.today())]
+    except FetchError as e:
+        print(f"  ⚠️ 上市注意股抓取失敗，本次略過（其他來源照常寫入；下次收集會補最近 {NOTICE_DAYS} 天）：{e}")
+        rows = []
     for url, kind, *fields in _SOURCES:
         data = request("GET", url)
         if not isinstance(data, list):
@@ -103,12 +109,13 @@ def fetch_alerts() -> list:
     return list({(a["stock_code"], a["alert_type"], a["announce_date"]): a for a in rows}.values())
 
 
-def alert_summary(rows) -> list:
-    """收集輸出：分市場筆數；某個來源 0 筆時加一行提醒（只提醒，不算失敗）。"""
+def alert_summary(rows, days_label=False) -> list:
+    """收集輸出：分市場筆數；某個來源 0 筆時加一行提醒（只提醒，不算失敗）。
+    days_label：上市注意數字後加「（近 30 天）」（第 17 輪 F17-1；collect_alerts 用，預設關閉讓輸出格式相容）。"""
     n = {(m, k): sum(a["market"] == m and a["alert_type"] == k for a in rows)
          for m in ("TWSE", "TPEx") for k in ("disposal", "notice")}
     out = [f"  🚨 處置 上市 {n['TWSE', 'disposal']}／上櫃 {n['TPEx', 'disposal']} 筆、"
-           f"注意 上市 {n['TWSE', 'notice']}／上櫃 {n['TPEx', 'notice']} 筆（未在股票清單的代號不寫入）"]
+           f"注意 上市 {n['TWSE', 'notice']}{f'（近 {NOTICE_DAYS} 天）' if days_label else ''}／上櫃 {n['TPEx', 'notice']} 筆（未在股票清單的代號不寫入）"]
     if n["TWSE", "notice"] == 0:
         out.append(f"  ⚠️ 上市注意股最近 {NOTICE_DAYS} 天 0 筆，來源可能異常，請檢查")
     if n["TPEx", "notice"] == 0:
@@ -147,5 +154,5 @@ def collect_alerts() -> int:
     """5 個來源全部抓完才寫入。"""
     rows = fetch_alerts()
     write_alerts(rows)
-    print("\n".join(alert_summary(rows)))
+    print("\n".join(alert_summary(rows, days_label=True)))
     return len(rows)
