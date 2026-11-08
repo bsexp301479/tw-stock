@@ -112,6 +112,33 @@ def _alert_status(kind, announce, start, end, today):
     return "notice" if announce == today else None
 
 
+def disposal_span(items):
+    """有效處置（可能多段重疊）→ [最早起日, 最晚迄日]；沒有處置回傳 None。第 16 輪 F16-2。"""
+    d = [a for a in items if a["t"] == "disposal"]
+    return [min(a["s"] for a in d), max(a["e"] for a in d)] if d else None
+
+
+def _short(text, n=60):
+    """原因只取第一句，超過 n 字裁短；完整原文在 stocks/{代號}.json 的 alerts。"""
+    t = str(text or "").split("。")[0].strip().removeprefix("該有價證券之交易，")
+    return t if len(t) <= n else t[:n] + "…"
+
+
+def alert_board(alerts):
+    """今日頁處置／注意清單（第 16 輪 F16-3）：d = [代號, 起, 迄, 措施, 原因]（依迄日、代號），
+    n = [代號, 原因]（依代號）。同一檔多段處置合併成一列，措施、原因取最後公告的那段。"""
+    d, n = [], []
+    for code, items in alerts.items():
+        span = disposal_span(items)
+        if span:
+            last = max((a for a in items if a["t"] == "disposal"), key=lambda a: a["a"])
+            d.append([code, *span, last["m"], _short(last["r"])])
+        notes = [a for a in items if a["t"] == "notice"]
+        if notes:
+            n.append([code, _short(notes[-1]["r"])])
+    return {"d": sorted(d, key=lambda x: (x[2], x[0])), "n": sorted(n)}
+
+
 def _price_events(d_, c, ch, market, official):
     """
     個股的價格調整事件（舊到新）：[{i, d, t, p, r}]。i = 生效的資料列索引（事件日當天或之後第一列），
@@ -1389,9 +1416,8 @@ def export_all() -> float:
             "l52": _f(min(x[1] for x in w52)) if w52 else None,
             # 個股第一筆日線晚於「全市場起點」與「52 週起點」兩者時，才另外標示高低點起算日
             **({"hf": str(d_[0])} if d_[0] > max(db_first, w52_start) else {}),
-            # 有效的處置 [起日, 迄日]（多筆取起日最早者）與資料日當天的注意股
-            **({"dsp": min([a["s"], a["e"]] for a in alerts[code] if a["t"] == "disposal")}
-               if any(a["t"] == "disposal" for a in alerts.get(code, [])) else {}),
+            # 有效的處置 [最早起日, 最晚迄日]（多段重疊時合併，第 16 輪 F16-2）與資料日當天的注意股
+            **({"dsp": disposal_span(alerts[code])} if disposal_span(alerts.get(code, [])) else {}),
             **({"ntc": 1} if any(a["t"] == "notice" for a in alerts.get(code, [])) else {}),
             **({"pe": _f(fund[code][0]), "pb": _f(fund[code][1]), "dy": _f(fund[code][2])}
                if code in fund else {}),
@@ -1468,6 +1494,7 @@ def export_all() -> float:
             "chain": group_flows(chains, daily, dates, REPLAY),
             "concept": group_flows(concepts, daily, dates, REPLAY),
         },
+        "alerts": alert_board(alerts),                          # 第 16 輪 F16-3：今日頁處置／注意清單
         "stocks": snapshot,
     }
     # screen.json 在 latest.json 之前寫：中途失敗時前端比對 d／fd 會顯示不同步

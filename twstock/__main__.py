@@ -2,7 +2,7 @@
 台股資料收集與網站產生工具（Mac / Windows 通用）
 
   python -m twstock setup-db                         建立資料庫與資料表
-  python -m twstock collect [--date 2026-10-28]      收集單日（全部重抓覆寫：行情、本益比、法人、月營收、指數、台指期、處置／注意股、除權息事件、三大法人金額（上市、上櫃）；季報收集期間另收季報）並匯出網站資料
+  python -m twstock collect [--date 2026-10-28]      收集單日（全部重抓覆寫：行情、本益比、法人、月營收、指數、台指期、處置／注意股（上市注意股查最近 30 天）、除權息事件、三大法人金額（上市、上櫃）；季報收集期間另收季報）並匯出網站資料
   python -m twstock collect --catch-up [--days 10]   補齊最近 N 個交易日缺的資料（各資料集獨立判斷，可重複執行；季報收集期間每天收一次季報），有新資料才匯出；排程用這個
   python -m twstock check [--days 20]                檢查各資料集的完整性（唯讀、不連外）：開頭列最後一次收集與排程狀態，有異常時印建議指令並回傳 1
   python -m twstock history --start 2026-01-01       補抓歷史（行情、本益比、法人、ETF、融資融券；只補缺的，可中斷重跑）
@@ -16,7 +16,7 @@
   python -m twstock history --start 2024-01-01 --only financials  只補季報（季底日在範圍內的季別，每季上市、上櫃各 1 個請求；已有的季別自動略過）
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
   python -m twstock events --start 2025-10-30        補抓除權息／減資／面額變更事件（還原價格用）
-  python -m twstock export                           從資料庫匯出網站 JSON（site/data：latest.json、screen.json、stocks/、etfs/、etfp/；含季報、期現貨價差與下次結算日、營收與 EPS 基期、ETF 個股頁）
+  python -m twstock export                           從資料庫匯出網站 JSON（site/data：latest.json、screen.json、stocks/、etfs/、etfp/；含季報、期現貨價差與下次結算日、營收與 EPS 基期、ETF 個股頁、處置／注意股清單）
   python -m twstock serve                            本機預覽網站 http://localhost:8000
   python -m twstock futures --start 2025-01-01       台指期日 K 與期貨三大法人未平倉
   python -m twstock chains                           更新產業鏈族群（櫃買產業價值鏈平台）

@@ -212,6 +212,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .al-d{background:var(--up)}.al-n{background:var(--amber)}
 .pill.al-d{background:var(--up-bg);border-color:var(--up);color:var(--up)}
 .pill.al-n{background:color-mix(in srgb,var(--amber) 15%,transparent);border-color:var(--amber);color:var(--amber)}
+.al-grp{margin-top:8px}.al-grp h3{font-size:13px;margin:0 0 4px}                 /* 第 16 輪 F16-3 */
+.al-row{display:block;padding:5px 0;border-top:1px solid var(--border);color:inherit;text-decoration:none}
+.al-l{display:flex;align-items:baseline;gap:6px}.al-l .sp{flex:1}.al-why{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .al-new{background:var(--blue)}                                  /* E2-4：新建倉 */
 .pill.hold{margin-left:6px;border-color:var(--blue);color:var(--blue)}
 .tbl .nm .pill{font-size:10px;margin-left:6px}

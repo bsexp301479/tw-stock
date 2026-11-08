@@ -2,7 +2,7 @@
 處置股與注意股（證交所、櫃買 OpenAPI）。端點只提供最近的公告，每天收一次、保留歷史。
 """
 import re
-from datetime import date
+from datetime import date, timedelta
 
 from .. import db
 from ..fetch import FetchError, is_valid_stock_code, request
@@ -18,13 +18,18 @@ _SOURCES = (
     ("https://www.tpex.org.tw/openapi/v1/tpex_trading_warning_information", "notice",
      "SecuritiesCompanyCode", "Date", None, "TradingInformation", None),
 )
+# 第 16 輪：上市注意股另查證交所網站「公布注意交易資訊」（上面的 OpenAPI notice 第 1～15 輪實測都只回傳空白佔位列）。
+# 可指定日期區間，每天查最近 NOTICE_DAYS 天，漏收的日子會自動補上
+TWSE_NOTICE = ("https://www.twse.com.tw/rwd/zh/announcement/notice", "notice", "證券代號", "日期", None, "注意交易資訊", None)
+NOTICE_DAYS = 30
+_TAG = re.compile(r"<[^>]+>")
 _REASON = re.compile(r"處置原因：(.+?)。")
 _MATCHING = re.compile(r"約每[^，。；;()（）]{1,5}分鐘撮合一次")
 
 
 def roc_date(s):
-    """民國日期 1151029、115/10/29 或 115年10月29日 → date；空白或格式不符回傳 None。"""
-    s = str(s or "").strip().replace("年", "/").replace("月", "/").replace("日", "")
+    """民國日期 1151029、115/10/29、115.10.29 或 115年10月29日 → date；空白或格式不符回傳 None。"""
+    s = str(s or "").strip().replace("年", "/").replace("月", "/").replace("日", "").replace(".", "/")
     if "/" in s:
         parts = s.split("/")
     elif s.isdigit() and len(s) == 7:
@@ -49,7 +54,7 @@ def parse_alert(row, kind, code_f, date_f, period_f, text_f, reason_f):
     code, announce = str(row.get(code_f) or "").strip(), roc_date(row.get(date_f))
     if not is_valid_stock_code(code) or announce is None:
         return None
-    text = str(row.get(text_f) or "")
+    text = _TAG.sub("", str(row.get(text_f) or ""))
     item = {"stock_code": code, "alert_type": kind, "announce_date": announce.isoformat(),
             "start_date": None, "end_date": None, "reason": None, "measure": None}
     if kind == "notice":
@@ -67,20 +72,52 @@ def parse_alert(row, kind, code_f, date_f, period_f, text_f, reason_f):
     return item
 
 
+def parse_twse_notice(data) -> list:
+    """證交所網站注意股查詢回應（{stat, fields, data}）→ 寫入用 dict。
+    stat 不是 OK（例如「沒有符合條件的資料」）當作 0 筆，由 alert_summary 提醒；回應不是 dict 才丟 FetchError。"""
+    if not isinstance(data, dict) or not isinstance(data.get("data") or [], list):
+        raise FetchError("上市注意股回應格式不符")
+    if data.get("stat") != "OK":
+        return []
+    fields = data.get("fields") or []
+    return [a for a in (parse_alert(dict(zip(fields, r)), *TWSE_NOTICE[1:]) for r in data.get("data") or []) if a]
+
+
+def fetch_twse_notice(end: date, days: int = NOTICE_DAYS) -> list:
+    data = request("GET", TWSE_NOTICE[0], params={
+        "querytype": "1", "stockNo": "", "selectType": "", "proceType": "", "sortKind": "STKNO", "response": "json",
+        "startDate": f"{end - timedelta(days=days):%Y%m%d}", "endDate": f"{end:%Y%m%d}"})
+    return parse_twse_notice(data)
+
+
 def fetch_alerts() -> list:
-    rows = []
+    """5 個來源全部抓完才回傳；每筆加上 market 供輸出分市場。"""
+    rows = [dict(a, market="TWSE") for a in fetch_twse_notice(date.today())]
     for url, kind, *fields in _SOURCES:
         data = request("GET", url)
         if not isinstance(data, list):
             raise FetchError(f"處置／注意股回應格式不符：{url}")
-        rows += [a for a in (parse_alert(r, kind, *fields) for r in data) if a]
+        market = "TWSE" if "twse" in url else "TPEx"
+        rows += [dict(a, market=market) for a in (parse_alert(r, kind, *fields) for r in data) if a]
     # 同一檔同一天同類型只留一筆，避免 MERGE 同一列被更新兩次
     return list({(a["stock_code"], a["alert_type"], a["announce_date"]): a for a in rows}.values())
 
 
-def collect_alerts() -> int:
-    """4 個端點全部抓完才寫入；只寫入 stocks 表已有的股票。"""
-    rows = fetch_alerts()
+def alert_summary(rows) -> list:
+    """收集輸出：分市場筆數；某個來源 0 筆時加一行提醒（只提醒，不算失敗）。"""
+    n = {(m, k): sum(a["market"] == m and a["alert_type"] == k for a in rows)
+         for m in ("TWSE", "TPEx") for k in ("disposal", "notice")}
+    out = [f"  🚨 處置 上市 {n['TWSE', 'disposal']}／上櫃 {n['TPEx', 'disposal']} 筆、"
+           f"注意 上市 {n['TWSE', 'notice']}／上櫃 {n['TPEx', 'notice']} 筆（未在股票清單的代號不寫入）"]
+    if n["TWSE", "notice"] == 0:
+        out.append(f"  ⚠️ 上市注意股最近 {NOTICE_DAYS} 天 0 筆，來源可能異常，請檢查")
+    if n["TPEx", "notice"] == 0:
+        out.append("  ⚠️ 上櫃注意股 0 筆：若今天是交易日，請留意來源是否異常")
+    return out
+
+
+def write_alerts(rows) -> None:
+    """MERGE 進 stock_alerts；只寫入 stocks 表已有的股票。"""
     if rows:
         conn = db.connect()
         try:
@@ -104,6 +141,11 @@ def collect_alerts() -> int:
             conn.commit()
         finally:
             conn.close()
-    n = sum(a["alert_type"] == "disposal" for a in rows)
-    print(f"  🚨 處置 {n} 筆、注意 {len(rows) - n} 筆（未在股票清單的代號不寫入）")
+
+
+def collect_alerts() -> int:
+    """5 個來源全部抓完才寫入。"""
+    rows = fetch_alerts()
+    write_alerts(rows)
+    print("\n".join(alert_summary(rows)))
     return len(rows)

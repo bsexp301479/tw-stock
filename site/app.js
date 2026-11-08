@@ -164,7 +164,8 @@ function renderToday() {
       <a class="quads" href="#/bubble">
         ${QUADS.map(([q, d]) => `<div class="quad q-${q}"><div class="t">${q}</div><div class="n num">${counts[q]}</div><div class="d">${d}</div></div>`).join('')}
       </a>
-    </section>`,
+    </section>
+    ${alertBoard(L)}`,
     credit: `<section class="sec grid ${marginCard(L) && valCard(L) ? 'g2' : 'g-one'}">${marginCard(L)}${valCard(L)}</section>`,   // 信用交易、估值左右並排
     fut: fut.trim() || '<div class="empty">沒有期貨資料</div>',
   };
@@ -197,6 +198,7 @@ function renderToday() {
   if ($('#grpSeg')) onSeg('grpSeg', v => { setGroup(v); renderToday(); });
   if ($('#spanSeg')) onSeg('spanSeg', v => { localStore('span', null, v); renderToday(); });
   $('#flowMore')?.addEventListener('click', () => { App.flowAll = !App.flowAll; renderToday(); });
+  $('#alMore')?.addEventListener('click', () => { App.alertAll = !App.alertAll; renderToday(); });
   $('#view').addEventListener('click', onRowClick);
   if (tab === 'fut') { drawFutures(L.futures); drawOI(L.futures_oi); }
 }
@@ -308,6 +310,25 @@ function etfSblLine(B) {
   const one = (x, name) => !x ? '' : `${name} ${wan(x.lb)} <span class="${cls(x.l1)}">${sgn(x.l1, 0)}</span>`;
   return `<div class="s num">ETF 借券賣出　${[one(B.TWSE, '上市'), one(B.TPEx, '上櫃')].filter(Boolean).join('　')}　<a class="muted small" href="#/etf">ETF 頁 →</a></div>
       <div class="note-dup">${noteHTML('ETF 借券賣出多為造市、套利與避險，不等於看空', 'ETF 借券賣出多為造市、套利與避險（例如價格高於淨值時借券賣出，申購後還券），不等於看空')}</div>`;
+}
+
+// 第 16 輪 F16-3：處置／注意清單（即將處置、處置中、今日注意）；注意預設 10 檔
+function alertBoard(L) {
+  const A = L.alerts;
+  if (!A) return '';
+  // 每檔兩行：名稱、代號、市場、處置期間；措施與原因一行（超出截斷，完整內容在提示與個股頁）
+  const S = L.stocks, row = (c, span, r) => `<a class="al-row" href="#/stock/${c}" title="${esc(r)}">
+      <div class="al-l"><b>${esc(S[c]?.n || c)}</b><span class="muted small">${c}・${S[c]?.m === 'TWSE' ? '上市' : '上櫃'}</span><span class="sp"></span>${span ? `<span class="small num">${span}</span>` : ''}</div>
+      <div class="muted small al-why">${esc(r)}</div></a>`;   // 不用 .al-r（期貨「今天換月」已用）
+  const dsp = x => row(x[0], `${md(x[1])}～${md(x[2])}`, [x[3], x[4]].filter(Boolean).join('｜'));
+  const up = A.d.filter(x => x[1] > L.date), on = A.d.filter(x => x[1] <= L.date);
+  const nShow = App.alertAll ? A.n.length : 10;
+  const grp = (t, list, n = list.length) => `<div class="al-grp"><h3>${t}　<span class="muted small">${n} 檔</span></h3>${list.join('') || '<div class="muted small">無</div>'}</div>`;
+  return `<section class="sec card">
+      <div class="sec-h"><h2>處置／注意股</h2><span class="muted small">${md(L.date)}</span><span class="sp"></span>${A.n.length > 10 ? `<button class="chip" id="alMore">${App.alertAll ? '注意只顯示 10 檔' : '注意顯示全部'}</button>` : ''}</div>
+      ${grp('即將處置', up.map(dsp))}${grp('處置中', on.map(dsp))}${grp('今日注意', A.n.slice(0, nShow).map(x => row(x[0], '', x[1])), A.n.length)}
+      <div class="muted small">依證交所、櫃買中心公告；處置期間撮合間隔較長，買賣可能需預收款券。點股票看完整原因</div>
+    </section>`;
 }
 
 // 市場寬度卡（A3＋A8）：全部為網站自算（還原收盤、股票、不含 ETF）；官方家數在成交額卡
