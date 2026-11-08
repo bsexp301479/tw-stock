@@ -8,6 +8,7 @@
   stocks/{代號}.json 個股：完整日線、法人買賣超、月營收、本益比、所屬產業鏈、最新融資融券、主動 ETF 持有（active）、
                      融資融券序列（mg）、投信買超中的主動 ETF（act）、季報（fin，第 10 輪）
   etfs/{代號}.json   主動 ETF 持股：近 HOLD_DAYS 個持股日的張數與權重、最新一天的增減
+  etfp/{代號}.json   ETF 個股頁（第 15 輪）：完整日線（原始價）、推測的價格調整日（gx）、融資融券、借券
 """
 import json
 import os
@@ -613,6 +614,60 @@ def etf_block(latest, margin_rows, sbl_rows=None):
     return {"dates": {m: str(d) for m, (d, _) in latest.items()}, "rows": rows}
 
 
+# ─── 第 15 輪 F15-2：ETF 個股頁（etfp/{代號}.json；原始價，本站沒有 ETF 除息資料）──────
+def _load_etf_hist(cur):
+    """ETF 完整歷史：({代號: [(日期, 開, 高, 低, 收, 量（股）, 官方漲跌)]}, 融資融券 {代號: {日期: (資前, 資餘, 資限額, 券前, 券餘, 註記)}},
+    借券 {代號: {日期: (前日, 餘額, 限額, 備註)}}（股）, {市場: 借券日期（舊到新）})。不改 _load_margin、_load_etf_sbl（市場合計、ETF 列表在用）。"""
+    px, mg, sb, sd = defaultdict(list), defaultdict(dict), defaultdict(dict), defaultdict(set)
+    for code, *r in cur.execute("""
+        SELECT e.etf_code, x.trade_date, x.open_price, x.high_price, x.low_price, x.close_price, x.volume, x.change
+        FROM etf_daily x JOIN etfs e ON e.etf_id = x.etf_id ORDER BY e.etf_code, x.trade_date"""):
+        px[code].append(tuple(r))
+    for code, d, *r in cur.execute("""
+        SELECT e.etf_code, x.trade_date, x.margin_prev, x.margin_balance, x.margin_limit, x.short_prev, x.short_balance, x.note
+        FROM etf_margin x JOIN etfs e ON e.etf_id = x.etf_id"""):
+        mg[code][d] = tuple(r)
+    for code, m, d, *r in cur.execute("""
+        SELECT e.etf_code, e.market_type, x.trade_date, x.sbl_prev, x.sbl_balance, x.sbl_limit, x.note
+        FROM etf_sbl x JOIN etfs e ON e.etf_id = x.etf_id"""):
+        sb[code][d] = tuple(r)
+        sd[m].add(d)
+    return px, mg, sb, {m: sorted(v) for m, v in sd.items()}
+
+
+def etf_gaps(d_, c, ch, market):
+    """
+    上市 ETF 的價格調整推測日（K 線「息?」「調?」標記）：前一個資料列有成交、官方漲跌有值，且 |收盤 − 官方漲跌 − 前一日收盤| ≥ 0.005
+    （官方漲跌 0 = 不比價，多為除息；漲跌不是 0 而參考價改變，多為分割）。只是推測，沒有配息金額。
+    上櫃 ETF 一律 []：櫃買的漲跌 = 收盤 − 前一日收盤（除息日也一樣），無法辨識。
+    """
+    if market != "TWSE":
+        return []
+    return [str(d_[i]) for i in range(1, len(d_)) if c[i] is not None and c[i - 1] is not None and ch[i] is not None
+            and abs(float(c[i]) - float(ch[i]) - float(c[i - 1])) >= 0.005]
+
+
+def etf_export(code, name, market, rows, mrows, srows, mdate, md5, sdate, sd5):
+    """
+    etfp/{代號}.json。prices 同個股格式（原始價；量為張；ch = 官方漲跌，推測調整日且官方為 0 → null「不比價」）；
+    gx = etf_gaps（沒有就不輸出）；margin、sbl、mg 沿用 stock_margin、stock_sbl、margin_series（ETF 沒有換算紀錄、沒有股數）。
+    mdate、md5：該市場最新／往前第 5 個融資融券日；sdate、sd5：該市場 ETF 最新／往前第 5 個借券日。
+    """
+    d_, o, h, l, c, v, ch = zip(*rows)
+    gx = etf_gaps(d_, c, ch, market)
+    zero = {d for d, x in zip(d_, ch) if x is not None and x == 0 and str(d) in gx}
+    sbl = stock_sbl(srows, sdate, sd5, None, (mrows.get(sdate) or (None,) * 5)[4])
+    mg = margin_series(d_, mrows, (), srows)
+    return {"code": code, "name": name, "market": market,
+            "prices": {"d": [str(x) for x in d_], "o": [_f(x) for x in o], "h": [_f(x) for x in h],
+                       "l": [_f(x) for x in l], "c": [_f(x) for x in c],
+                       "v": [round(x / 1000) if x else 0 for x in v], "ch": [None if d in zero else _f(x) for d, x in zip(d_, ch)]},
+            **({"gx": gx} if gx else {}),
+            **({"margin": stock_margin(mrows, mdate, md5)} if mdate else {}),     # null = 不在信用交易清單
+            **({"sbl": sbl} if sbl else {}),
+            **({"mg": mg} if mg else {})}
+
+
 def _load_holdings(cur):
     """{ETF 代號: (持股日 [舊到新], {持股日: 彙總列}, {持股日: {(類別, 代號): (名稱, 股數, 權重)}})}，各取最近 HOLD_DAYS 個持股日。"""
     summary = defaultdict(dict)
@@ -955,6 +1010,14 @@ def fin_base(cum: dict):
     return _f(b and b[4])
 
 
+def fin_cum_base(cum: dict):
+    """第 15 輪 F15-1：最新一季的去年同期累計 EPS（fin.c.eb，和 c.ey 同一個基期）；沒有季報或沒有去年同期 → None。"""
+    if not cum:
+        return None
+    y, q = max(cum)
+    return _f(cum.get((y - 1, q), (None,) * 5)[4])
+
+
 def fin_due_dates(qk: int) -> list:
     """季別 YYYYQQ 的申報截止日 [一般業, 金融業]（health.FIN_DUE；Q4 在次年）。"""
     y, q = divmod(qk, 100)
@@ -1047,6 +1110,11 @@ def next_settle(d: date, closed) -> dict:
     if d > s:
         s = settle_day(d.year + d.month // 12, d.month % 12 + 1, closed)
     return {"d": str(s), "n": len(trading_days(d + timedelta(days=1), s, closed))}
+
+
+def settle_closed(closed, d: date) -> set:
+    """第 15 輪 F15-3：結算日推算用的休市集合 = closed ∪ {d 下一年的 1/1}（元旦每年休市；下一年官方表還沒有時不會多算 1 天）。"""
+    return set(closed) | {date(d.year + 1, 1, 1)}
 
 
 def futures_spread(days, closes, taiex: dict):
@@ -1163,6 +1231,7 @@ def export_all() -> float:
     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
     edates, esbl, esbl_m = _load_etf_sbl(cur)                  # 第 12 輪 ETF 借券
     closed = load_closed(cur)                                  # 第 14 輪 F14-3：結算日推算用的休市日
+    epx, emg, esb, esd = _load_etf_hist(cur)                   # 第 15 輪 F15-2：ETF 個股頁
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
@@ -1239,7 +1308,9 @@ def export_all() -> float:
                       "t": [round(x / 1000) if x is not None else None for x in tn],
                       "dl": [round(x / 1000) if x is not None else None for x in dn]},
             "revenue": rev_rows[-REVENUE_MONTHS:],
-            **({"fin": fb} if (fb := fin_stock(fin.get(code), *fin_meta.get(code, (None, None)))) else {}),   # 第 10 輪 B5
+            # 第 10 輪 B5；第 15 輪 F15-1：c 加 eb（去年同期累計 EPS）
+            **({"fin": {**fb, "c": {**fb["c"], "eb": fin_cum_base(fin[code])}}}
+               if (fb := fin_stock(fin.get(code), *fin_meta.get(code, (None, None)))) else {}),
             "fund": dict(zip(("pe", "pb", "dy"), map(_f, fund[code][:3])), date=str(fund[code][3]))
                     if code in fund else None,
             **({"capchg": cap} if cap else {}),
@@ -1346,9 +1417,19 @@ def export_all() -> float:
     margin = {m: market_margin(mdates[m], mofficial[m], mstocks[m], metfs[m], close) for m in ("TWSE", "TPEx")
               if mdates.get(m)} or None
     etf_margin_rows = {code: (mp, mb, sp, sb) for m, d in mlast.items() for code, mp, mb, sp, sb in metfs[m].get(d, [])}
+    # 第 15 輪 F15-2：ETF 個股檔 = latest.json etfs.rows 的 ETF（已下市、最新一天沒有列的不匯出）
+    n_etf = kb_etf = 0
+    for m, (_, items) in (etf_latest or {}).items():
+        ds = esd.get(m, [])
+        for code, name, *_ in items:
+            p = SITE_DATA_DIR / "etfp" / f"{code}.json"
+            _write(p, etf_export(code, name, m, epx[code], emg.get(code, {}), esb.get(code, {}), mlast.get(m), m5.get(m),
+                                 ds[-1] if ds else None, ds[-6] if len(ds) >= 6 else None))
+            n_etf, kb_etf = n_etf + 1, kb_etf + p.stat().st_size / 1024
 
     if futures:
-        futures["stl"] = next_settle(date.fromisoformat(futures["d"][-1]), closed)   # 第 14 輪 F14-3：下次結算日
+        fd_ = date.fromisoformat(futures["d"][-1])
+        futures["stl"] = next_settle(fd_, settle_closed(closed, fd_))   # 第 14 輪 F14-3：下次結算日；第 15 輪 F15-3 加下一年元旦
     replay_dates = [str(d) for d in dates[-REPLAY:]]
     latest = {
         "updated_at": status["collected_at"],     # 最後成功收集時間，不是匯出時間
@@ -1399,6 +1480,7 @@ def export_all() -> float:
           "、".join(f"{k[:4]}/{k[4:]} {v:,} 檔" for k, v in S["rmd"].items()) + "；季報 " +
           ("、".join(f"{k[:4]}Q{k[5]} {v:,} 檔" for k, v in S["fqd"].items()) or "無") + "）")
     print(f"  📌 還原事件 {n_ev} 筆（上櫃反推 {n_inferred} 筆）")
+    print(f"  📌 ETF 個股 {n_etf} 檔，{kb_etf / 1024:.1f} MB（etfp/，原始價）")
     if bad_all:
         print(f"⚠️  還原係數超出 {ADJ_MIN}～{ADJ_MAX}，未採用 {len(bad_all)} 筆：" +
               "、".join(f"{c} {d}（{f}）" for c, d, f in bad_all[:10]))

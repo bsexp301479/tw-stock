@@ -37,8 +37,8 @@ async function getJSON(url) {
   if (!r.ok) throw new Error(`${url} ${r.status}`);
   return r.json();
 }
-async function loadStock(code) {
-  if (!App.stockCache[code]) App.stockCache[code] = await getJSON(`data/stocks/${code}.json`);
+async function loadStock(code, dir = 'stocks') {     // 第 15 輪 F15-2：ETF 個股頁讀 data/etfp/
+  if (!App.stockCache[code]) App.stockCache[code] = await getJSON(`data/${dir}/${code}.json`);
   return App.stockCache[code];
 }
 function saveWatch() { localStore('watch', null, JSON.stringify([...App.watch])); }
@@ -89,16 +89,15 @@ function setupSearch() {
   const go = code => { list.hidden = true; input.value = ''; input.blur(); location.hash = '#/stock/' + code; };
   const draw = () => {
     list.innerHTML = hits.map(([c, s], i) =>
-      `<a href="#/stock/${c}" class="${i === active ? 'on' : ''}"><span class="code">${c}</span>${esc(s.n)}<span class="muted small" style="margin-left:auto">${esc(s.i)}</span></a>`).join('');
+      `<a href="#/stock/${c}" class="${i === active ? 'on' : ''}"><span class="code">${c}</span>${esc(s.n)}<span class="muted small" style="margin-left:auto">${esc(s.i ?? 'ETF')}</span></a>`).join('');
     list.hidden = !hits.length;
   };
   input.addEventListener('input', () => {
     const q = input.value.trim().toLowerCase();
     if (!q || !App.latest) { hits = []; return draw(); }
-    const all = Object.entries(App.latest.stocks);
-    hits = all.filter(([c]) => c.startsWith(q))
-      .concat(all.filter(([c, s]) => !c.startsWith(q) && s.n.toLowerCase().includes(q)))
-      .slice(0, 12);
+    // 第 15 輪 F15-2：股票照舊在前（代號開頭 → 名稱包含），ETF（latest.json etfs.rows）同規則接在後面
+    const pick = all => all.filter(([c]) => c.toLowerCase().startsWith(q)).concat(all.filter(([c, s]) => !c.toLowerCase().startsWith(q) && s.n.toLowerCase().includes(q)));   // 代號轉小寫：00981A
+    hits = pick(Object.entries(App.latest.stocks)).concat(pick(Object.entries(App.latest.etfs?.rows || {}))).slice(0, 12);
     active = 0;
     draw();
   });
@@ -359,11 +358,17 @@ function wpeLine(V) {
 function finLine(P) {
   if (!P) return '';
   const q = P.q % 100, name = q === 4 ? `${Math.floor(P.q / 100)} 年報` : `第 ${q} 季財報`;
-  return `<div class="s">${name}已收：上市 ${fmt(P.n.TWSE)}、上櫃 ${fmt(P.n.TPEx)} 家（前一季 ${fmt(P.p.TWSE)}、${fmt(P.p.TPEx)} 家${P.due ? '；' + dueTxt(P.due, App.latest.date) : ''}）；本益比中位數會隨 EPS 更新而變動</div>`;
+  return `<div class="s">${name}已收：上市 ${fmt(P.n.TWSE)}、上櫃 ${fmt(P.n.TPEx)} 家（前一季 ${fmt(P.p.TWSE)}、${fmt(P.p.TPEx)} 家${P.due ? '；' + dueTxt(P.due, App.latest.date) + dueWk(P.due, App.latest.date) : ''}）；本益比中位數會隨 EPS 更新而變動</div>`;
 }
 // 第 14 輪 F14-4：申報截止日 [一般業, 金融業]；相同（年報）只寫一次；資料日已過的寫「已截止」
-const dueTxt = ([g, f], d) => g === f ? `${md(g)} ${d > g ? '已截止' : '截止'}`
-  : d > f ? `一般業 ${md(g)}、金融業 ${md(f)} 已截止` : d > g ? `一般業 ${md(g)} 已截止、金融業 ${md(f)} 截止` : `一般業 ${md(g)}、金融業 ${md(f)} 截止`;
+// 第 15 輪 F15-4：「已截止」改用 dueRoll（週六、週日順延到下週一；平日的國定假日不處理）判斷；星期與可能順延的日期由 dueWk 接在後面
+const dueTxt = ([g, f], d) => { const [G, F] = [g, f].map(dueRoll); return g === f ? `${md(g)} ${d > G ? '已截止' : '截止'}`
+  : d > F ? `一般業 ${md(g)}、金融業 ${md(f)} 已截止` : d > G ? `一般業 ${md(g)} 已截止、金融業 ${md(f)} 截止` : `一般業 ${md(g)}、金融業 ${md(f)} 截止`; };
+const dueRoll = s => { const t = new Date(s + 'T00:00:00Z'), w = t.getUTCDay(); t.setUTCDate(t.getUTCDate() + (w === 6 ? 2 : w === 0 ? 1 : 0)); return t.toISOString().slice(0, 10); };
+const dueWk = ([g, f], d) => { const u = g === f ? [g] : [g, f], r = u.filter(x => dueRoll(x) !== x && d <= dueRoll(x));
+  const lab = r.length && r.length < u.length ? (r[0] === g ? '一般業' : '金融業') : '';
+  return `，${u.length > 1 ? '分別是' : '當天是'}${u.map(x => '週' + '日一二三四五六'[new Date(x + 'T00:00:00Z').getUTCDay()]).join('、')}` +
+    (r.length ? `，${lab}遇假日可能順延到 ${r.map(x => md(dueRoll(x))).join('、')}` : ''); };
 
 // 三大法人卡：上市（A2）、上櫃（第 9 輪 F9-1）都用官方金額；上櫃官方還沒有任何資料時退回估算一行；上市也沒有時維持第 1 輪估算卡
 function instiCard(L) {
@@ -451,7 +456,7 @@ function spreadSpark(v, m) {
   const lo = Math.min(0, ...ok), hi = Math.max(0, ...ok), n = v.length;
   const X = i => (i / (n - 1) * 100).toFixed(2), Y = x => (2 + (hi - x) / (hi - lo || 1) * 30).toFixed(2);
   const ln = (x1, x2, y1, y2, st) => `<line x1="${x1}" x2="${x2}" y1="${y1}" y2="${y2}" ${st} vector-effect="non-scaling-stroke"/>`;
-  return `<svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true">${ln(0, 100, Y(0), Y(0), 'stroke="var(--border2)"')}` +
+  return `<svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true">${ln(0, 100, Y(0), Y(0), 'stroke="var(--text2)"')}` +   // 第 15 輪 F15-3：0 軸用 --text2（對比 ≥ 3:1）
     m.map((c, i) => i && c !== m[i - 1] ? ln(X(i), X(i), 0, 34, 'stroke="var(--text3)" stroke-dasharray="2 2"') : '').join('') +
     `<polyline points="${v.map((x, i) => x == null ? '' : `${X(i)},${Y(x)}`).filter(Boolean).join(' ')}" fill="none" stroke="var(--blue)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
 }
@@ -1180,7 +1185,7 @@ function renderEtf() {
         <select id="etfSel" class="sel" aria-label="排序">${ETF_SORT.map(x => `<option value="${x[0]}"${x[0] === by ? ' selected' : ''}>${x[1]}</option>`).join('')}</select></div>
       <div class="card"><div class="tbl-wrap"><table class="tbl etf-tbl"><thead><tr>
         <th>ETF</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>成交額</th><th>融資餘額</th><th>融資增減</th><th>融券餘額</th><th>融券增減</th><th>借券餘額</th><th>借券增減</th></tr></thead><tbody>` +
-      list.map(([c, r]) => `<tr${App.latest.holdings?.[c] ? ` data-etf="${c}"` : ''}><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
+      list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
         <td class="num ${cls(r.ch)}">${pfmt(r.c)}</td>
         <td class="num ${cls(r.ch)}">${r.c == null ? '無成交' : sgn(r.p) + '%'}</td>
         <td class="num">${fmt(r.v)}</td><td class="num">${fmt(r.tv, 2)}億</td>
@@ -1192,7 +1197,8 @@ function renderEtf() {
   keyCol({ tv: 4, p: 2, m1: 6, s1: 8, l1: 10, lb: 9 }[f]);
   $('#etfSel').addEventListener('change', e => { localStore('etfSort', null, e.target.value); renderEtf(); });
   onSeg('etfMktSeg', v => { localStore('etfMkt', null, v); renderEtf(); });
-  $('#view').addEventListener('click', e => { const tr = e.target.closest('tr[data-etf]'); if (tr) location.hash = '#/etf/' + tr.dataset.etf; });
+  // 第 15 輪 F15-2：整列 → ETF 個股頁；列內的「持股」小標（<a>）照舊連到持股頁
+  $('#view').addEventListener('click', e => { const tr = e.target.closest('tr[data-etf]'); if (tr && !e.target.closest('a')) location.hash = '#/stock/' + tr.dataset.etf; });
 }
 
 // ─── F7-2：主動 ETF 彙總排行 ─────────────────────────────
@@ -1258,6 +1264,7 @@ const HOLD_SORT = [['pw', '權重'], ['d1', '張數增減'], ['w1', '權重變�
 async function renderHoldings(code) {
   // 不在支援清單就不請求（避免 404）
   const H = App.latest.holdings?.[code] && await getJSON(`data/etfs/${code}.json`);
+  if (!H && App.latest.etfs?.rows?.[code]) { location.replace('#/stock/' + code); return; }     // 第 15 輪 F15-2：沒有持股資料的 ETF 改看 ETF 個股頁
   if (!H) { $('#view').innerHTML = `<div class="empty">${esc(code)} 的持股資料尚未支援（目前支援統一、群益投信 8 檔主動 ETF）</div>`; return; }
   const S = H.sum, by = localStore('holdSort', 'pw'), unit = r => r.tw ? '張' : '股';
   const rows = [...H.rows].sort((a, b) => (b[by] ?? -Infinity) - (a[by] ?? -Infinity));
@@ -1266,7 +1273,7 @@ async function renderHoldings(code) {
   const name = r => r.tw ? `<b>${esc(r.n)}</b><span>${esc(r.c)}</span>` : `<b>${esc(r.n)}</b><span>${esc(r.c)}（海外）</span>`;
   $('#view').innerHTML = `<section class="sec card">
       <div class="sec-h"><h2>${esc(H.n)}</h2><span class="muted small">${code}　${H.m === 'TWSE' ? '上市' : '上櫃'}　持股日 ${md(S.d)}${H.delay ? '（跨境，晚一個交易日公布）' : ''}</span>
-        <span class="sp"></span><a class="muted small" href="#/etf">← ETF 列表</a></div>
+        <span class="sp"></span><a class="muted small" href="#/stock/${code}">行情 →</a>　<a class="muted small" href="#/etf">← ETF 列表</a></div>
       <div class="grid g-stats">
         ${[['淨資產', fmt(S.nav, 1) + ' 億'], ['每單位淨值', fmt(S.nu, 2) + ' 元'], ['股票權重合計', fmt(S.sw, 2) + '%'], ['持股檔數', fmt(S.n) + ' 檔'],
            ['單位數 1 日', S.u1 == null ? '--' : sgn(S.u1) + '%', prev ? `相對 ${md(prev)}` : ''],

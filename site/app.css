@@ -121,6 +121,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl td{padding:8px;text-align:right;border-bottom:1px solid var(--border);white-space:nowrap}
 .tbl tr[data-code]{cursor:pointer}
 .tbl tr[data-code]:hover td{background:var(--card2)}
+.tbl tr[data-etf]{cursor:pointer}.tbl tr[data-etf]:hover td{background:var(--card2)}   /* 第 15 輪：ETF 列表整列進 ETF 個股頁 */
 .tbl .nm b{font-weight:500}
 .tbl .nm span{color:var(--text3);font-size:11px;margin-left:6px}
 .pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--card2);border:1px solid var(--border);color:var(--text2)}
