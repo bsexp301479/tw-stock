@@ -12,23 +12,25 @@ EVENT_TYPES = ("息", "權", "權息", "減", "面")
 CHUNK_DAYS = 183      # 每次查詢的日期區間（實測 TWT49U 10 個月、櫃買 1 年一次可查；保守取半年）
 LOOKBACK_DAYS = 7     # 每日 collect 往回查的天數，補抓晚公告或前幾天漏抓的事件
 
-# 來源：(方法, 網址, 日期參數格式, (日期欄, 代號欄, 前收欄, 參考價欄, 類型欄), 固定類型)
+# 來源：(方法, 網址, 日期參數格式, (日期欄, 代號欄, 前收欄, 參考價欄, 類型欄), 固定類型, 減除股利參考價欄)
+# 第 19 輪：減除股利參考價是選用欄位，找不到時存 NULL，其他欄位照常寫入
 _SOURCES = {
     "TWT49U": ("GET", "https://www.twse.com.tw/rwd/zh/exRight/TWT49U", "%Y%m%d",
-               ("資料日期", "股票代號", "除權息前收盤價", "除權息參考價", "權/息"), None),
+               ("資料日期", "股票代號", "除權息前收盤價", "除權息參考價", "權/息"), None, "減除股利參考價"),
     "TWTAUU": ("GET", "https://www.twse.com.tw/rwd/zh/reducation/TWTAUU", "%Y%m%d",
-               ("恢復買賣日期", "股票代號", "停止買賣前收盤價格", "恢復買賣參考價", None), "減"),
+               ("恢復買賣日期", "股票代號", "停止買賣前收盤價格", "恢復買賣參考價", None), "減", None),
     "TWTB8U": ("GET", "https://www.twse.com.tw/rwd/zh/change/TWTB8U", "%Y%m%d",
-               ("恢復買賣日期", "股票代號", "停止買賣前收盤價格", "恢復買賣參考價", None), "面"),
+               ("恢復買賣日期", "股票代號", "停止買賣前收盤價格", "恢復買賣參考價", None), "面", None),
     "TPEX_EX": ("POST", "https://www.tpex.org.tw/www/zh-tw/bulletin/exDailyQ", "%Y/%m/%d",
-                ("除權息日期", "代號", "除權息前收盤價", "除權息參考價", "權/息"), None),
+                ("除權息日期", "代號", "除權息前收盤價", "除權息參考價", "權/息"), None, "減除股利參考價"),
 }
 
 
 def parse_events(source: str, fields, rows) -> list:
-    """官方事件表 → 寫入用 dict；非一般股票、日期或價格無法解析、類型不明的列略過；欄位缺漏回傳 []。"""
-    names, fixed = _SOURCES[source][3], _SOURCES[source][4]
+    """官方事件表 → 寫入用 dict；非一般股票、日期或價格無法解析、類型不明的列略過；必要欄位缺漏回傳 []（減除股利參考價缺漏只存 None）。"""
+    names, fixed, dcol = _SOURCES[source][3:6]
     idx = {f: i for i, f in enumerate(fields or [])}
+    j = idx.get(dcol)
     need = [n for n in names if n]
     if not all(n in idx for n in need):
         return []
@@ -39,10 +41,11 @@ def parse_events(source: str, fields, rows) -> list:
         code, d = str(row[idx[names[1]]]).strip(), roc_date(row[idx[names[0]]])
         prev, ref = clean_number(row[idx[names[2]]]), clean_number(row[idx[names[3]]])
         kind = fixed or str(row[idx[names[4]]]).strip().lstrip("除")     # 櫃買為「除權息」→「權息」
+        div = clean_number(row[j]) if j is not None and j < len(row) else None
         if not is_valid_stock_code(code) or d is None or not prev or not ref or kind not in EVENT_TYPES:
             continue
         out.append({"stock_code": code, "event_date": d.isoformat(), "event_type": kind,
-                    "prev_close": prev, "ref_price": ref, "source": source})
+                    "prev_close": prev, "ref_price": ref, "source": source, **({"div_ref": div} if div else {})})
     return out
 
 
@@ -76,16 +79,17 @@ def collect_events(start, end) -> int:
                     SELECT st.stock_id, j.*
                     FROM OPENJSON(?) WITH (
                         stock_code NVARCHAR(10), event_date DATE, event_type NVARCHAR(4),
-                        prev_close DECIMAL(10,2), ref_price DECIMAL(10,2), source NVARCHAR(10)
+                        prev_close DECIMAL(10,2), ref_price DECIMAL(10,2), div_ref DECIMAL(10,2), source NVARCHAR(10)
                     ) AS j
                     JOIN stocks st ON st.stock_code = j.stock_code
                 ) AS s
                 ON t.stock_id = s.stock_id AND t.event_date = s.event_date AND t.source = s.source
                 WHEN MATCHED THEN UPDATE SET
-                    event_type = s.event_type, prev_close = s.prev_close, ref_price = s.ref_price
+                    event_type = s.event_type, prev_close = s.prev_close, ref_price = s.ref_price,
+                    div_ref = COALESCE(s.div_ref, t.div_ref)     -- 欄位暫時找不到時不清掉已存的值
                 WHEN NOT MATCHED THEN
-                    INSERT (stock_id, event_date, event_type, prev_close, ref_price, source)
-                    VALUES (s.stock_id, s.event_date, s.event_type, s.prev_close, s.ref_price, s.source);
+                    INSERT (stock_id, event_date, event_type, prev_close, ref_price, div_ref, source)
+                    VALUES (s.stock_id, s.event_date, s.event_type, s.prev_close, s.ref_price, s.div_ref, s.source);
             """, db.to_json(rows))
             conn.commit()
         finally:

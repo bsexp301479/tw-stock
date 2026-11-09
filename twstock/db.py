@@ -508,6 +508,8 @@ DDL = [
     """,
     # 第 11 輪：發行股數（update_industry 一併寫入；目前股數，不保留歷史）
     "IF COL_LENGTH('stocks', 'shares') IS NULL ALTER TABLE stocks ADD shares BIGINT NULL",
+    # 第 19 輪：減除股利參考價（只扣股利、不扣現金增資；TWT49U、TPEX_EX 才有，其他來源 NULL），分辨配股與現金增資
+    "IF COL_LENGTH('price_events', 'div_ref') IS NULL ALTER TABLE price_events ADD div_ref DECIMAL(10,2) NULL",
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",

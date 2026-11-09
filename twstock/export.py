@@ -186,26 +186,37 @@ def alert_watch(notes, days, skip):
     return sorted(out, key=lambda x: (-x[1], x[0]))
 
 
+def rights_kind(t, p, r, dr):
+    """
+    F19-1：「權」「權息」依減除股利參考價 dr（只扣股利、不扣現金增資）分類；容差 0.005 元（兩者都是 2 位小數）。
+    dr = 參考價 → "s"（沒有現增）；dr = 前收 → "c"（只有現增）；其他 → "sc"（股利＋現增）。
+    其他類型、dr 空白、參考價 = 前收、dr 高於前收（資料異常）→ None（畫面照舊）。
+    """
+    if t not in ("權", "權息") or not dr or abs(r - p) < 0.005 or dr > p + 0.005:
+        return None
+    return "s" if abs(dr - r) < 0.005 else "c" if abs(dr - p) < 0.005 else "sc"
+
+
 def _price_events(d_, c, ch, market, official):
     """
     個股的價格調整事件（舊到新）：[{i, d, t, p, r}]。i = 生效的資料列索引（事件日當天或之後第一列），
-    d = 該列日期字串，t = 類型，p = 事件前收盤，r = 參考價。另回傳因係數不合理而略過的 [(日期, 係數)]。
+    d = 該列日期字串，t = 類型，p = 事件前收盤，r = 參考價，k = 除權類型（rights_kind，有值才有）。另回傳因係數不合理而略過的 [(日期, 係數)]。
     官方事件在第一筆資料之前或最後一筆之後的略過；上櫃另以「收盤 − 官方漲跌」反推（類型「調」），
     只在前一列有成交、漲跌有數值時計算，與官方事件同一列時以官方為準。
     """
     at, bad = {}, []
 
-    def add(i, t, p, r):
+    def add(i, t, p, r, k=None):
         f = r / p
         if ADJ_MIN <= f <= ADJ_MAX:
-            at[i] = {"i": i, "d": str(d_[i]), "t": t, "p": p, "r": r}
+            at[i] = {"i": i, "d": str(d_[i]), "t": t, "p": p, "r": r, **({"k": k} if k else {})}
         else:
             bad.append((str(d_[i]), round(f, 4)))
 
     for e in sorted(official, key=lambda e: (e["d"], _SRC_RANK.get(e["src"], 1))):
         i = bisect_left(d_, e["d"])
         if 0 < i < len(d_) and i not in at:
-            add(i, e["t"], e["p"], e["r"])
+            add(i, e["t"], e["p"], e["r"], e.get("k"))
     if market == "TPEx":
         for i in range(1, len(d_)):
             if i in at or c[i] is None or c[i - 1] is None or ch[i] is None:
@@ -1346,11 +1357,12 @@ def export_all() -> float:
         WHERE a.alert_type = 'notice' AND a.announce_date >= ? AND a.announce_date <= ?""", watch_days[0], latest_date):
         watch_notes[code][ann] = clauses(reason)
     events = defaultdict(list)
-    for code, d, t, p, r, src in cur.execute("""
-        SELECT s.stock_code, e.event_date, e.event_type, e.prev_close, e.ref_price, e.source
+    for code, d, t, p, r, src, dr in cur.execute("""
+        SELECT s.stock_code, e.event_date, e.event_type, e.prev_close, e.ref_price, e.source, e.div_ref
         FROM price_events e JOIN stocks s ON s.stock_id = e.stock_id
         ORDER BY s.stock_code, e.event_date"""):
-        events[code].append({"d": d, "t": t, "p": float(p), "r": float(r), "src": src})
+        events[code].append({"d": d, "t": t, "p": float(p), "r": float(r), "src": src,
+                             "k": rights_kind(t, float(p), float(r), dr and float(dr))})
     mdates, mofficial, mstocks, metfs, mper = _load_margin(cur)
     first_m = min((ds[0] for ds in mdates.values()), default=latest_date)
     etf_px, etf_latest = _load_etfs(cur, first_m - timedelta(days=60))
@@ -1437,7 +1449,7 @@ def export_all() -> float:
             "prices": {"d": [str(x) for x in d_], "o": [_f(x) for x in o], "h": [_f(x) for x in h],
                        "l": [_f(x) for x in l], "c": [_f(x) for x in c],
                        "v": [round(x / 1000) if x else 0 for x in v], "ch": chs},   # 張
-            "ev": [{k: e[k] for k in ("d", "t", "p", "r")} for e in ev],
+            "ev": [{k: e[k] for k in ("d", "t", "p", "r", "k") if k in e} for e in ev],
             "insti": {"f": [round(x / 1000) if x is not None else None for x in fn],   # 張
                       "t": [round(x / 1000) if x is not None else None for x in tn],
                       "dl": [round(x / 1000) if x is not None else None for x in dn]},

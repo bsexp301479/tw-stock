@@ -44,7 +44,7 @@ window.renderStock = async function (code) {
   const adjMode = localStore('kadj', '還原');
   const fund = data.fund || {};
   // P16：股本變動事件 90 天內，本益比與殖利率加註
-  const cap = data.capchg, capSub = cap ? `${md(cap.d)} ${EV_LABEL[cap.t]}，官方值可能尚未調整` : '';
+  const cap = data.capchg, capSub = cap ? `${md(cap.d)} ${evName((data.ev || []).find(e => e.d === cap.d) || cap)}，官方值可能尚未調整` : '';
   // P9：本益比、殖利率卡的資料日（與 P16 註記並列）；值為空時說明是官方未提供
   // 第 10 輪 P24：淨值比卡也標資料日（cap = false：股本變動註記照舊只在本益比、殖利率卡）
   const fundSub = (v, cap = true) => [v == null && fund.date ? '官方未提供' : '', fund.date ? '資料 ' + md(fund.date) : '', cap ? capSub : ''].filter(Boolean).join('；');
@@ -175,7 +175,7 @@ window.renderStock = async function (code) {
   });
   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
   if (tab !== 'k') return;
-  if (!E) $('#adjSeg').title = '還原：依除權息、減資、面額變更調整歷史價格，最新收盤不變。均線訊號與 52 週高低一律以還原價格計算';
+  if (!E) $('#adjSeg').title = '還原：依除權息、減資、面額變更調整歷史價格（現金增資除權也依官方參考價調整），最新收盤不變。均線訊號與 52 週高低一律以還原價格計算';
   // 日／週／月與還原／原始切換都重畫；技術面訊號一律用還原價（P13）
   const draw = () => {
     const m = localStore('kmode', '日'), adj = !E && localStore('kadj', '還原') === '還原';   // ETF 一律原始價、沒有技術面訊號
@@ -203,6 +203,11 @@ function adjFactors(dates, ev) {
   return af;
 }
 const EV_LABEL = { '息': '除息', '權': '除權', '權息': '除權息', '減': '減資', '面': '面額變更', '調': '股本變動' };
+// 第 19 輪 F19-1：「權」「權息」依匯出的 k 細分（s 沒有現增、c 只有現增、sc 股利＋現增）；沒有 k 照舊
+const evName = e => e.t === '權' && e.k ? `除權（${{ s: '配股', c: '現金增資', sc: '配股＋現金增資' }[e.k]}）`
+  : e.t === '權息' && /c/.test(e.k || '') ? '除權息（含現金增資）' : EV_LABEL[e.t];
+const evMark = e => e.t === '權' && e.k === 'c' ? '現增' : e.t;
+const CASH_INC_TIP = '現金增資除權：股東可依持股比例出錢認購新股（不是無償配股），參考價依認購價計算';
 
 // ─── 日線 → 週線 / 月線（法人買賣超加總）；adj = 是否用還原價 ─────
 function aggregate(data, mode, adj) {
@@ -255,6 +260,16 @@ function aggregate(data, mode, adj) {
     }
   }
   return [...out.values()];
+}
+
+// 第 19 輪 F19-2（Q19-3）：K 棒的 [漲跌, 漲跌幅 %, 係數]。日線用匯出值；週／月線含推測調整（gx）不比價；
+// 原始價的週／月線含官方事件時，前一根收盤先乘上每筆（參考價 ÷ 前收）再相減，漲跌幅與還原價相同
+function barChange(raw, i, mode, adj) {
+  if (mode === '日') return [raw[i].ch, raw[i].pc, 1];
+  if (raw[i].gx) return [null, null, 1];
+  if (!i) return [0, 0, 1];
+  const f = adj ? 1 : raw[i].ev.reduce((a, e) => a * e.r / e.p, 1), base = raw[i - 1].c * f;
+  return [raw[i].c - base, (raw[i].c - base) / base * 100, f];
 }
 
 function calcMA(arr, p) {
@@ -332,9 +347,10 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   // 無成交的一字線用灰色
   kSer.setData(raw.map((r, i) => ({ time: T[i], open: O[i], high: H[i], low: L[i], close: C[i],
     ...(NT[i] ? { color: FLAT, borderColor: FLAT, wickColor: FLAT } : {}) })));
-  // 除權息、減資、面額變更標記（還原／原始都顯示）；週／月線同一根有多筆時合併文字
+  // 除權息、減資、面額變更標記（還原／原始都顯示）；週／月線同一根有多筆時合併文字，第 19 輪 F19-2：週／月線寫事件日「M/D 類型」
+  const mdn = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
   kSer.setMarkers(raw.flatMap((r, i) => r.ev.length ? [{ time: T[i], position: 'belowBar', shape: 'arrowUp',
-    color: css('--blue'), text: [...new Set(r.ev.map(e => e.t))].join('・') }]
+    color: css('--blue'), text: [...new Set(r.ev.map(e => (mode === '日' ? '' : mdn(e.d) + ' ') + evMark(e)))].join('・') }]
     : r.gx ? [{ time: T[i], position: 'belowBar', shape: 'arrowUp', color: css('--text2'), text: r.gx }] : []));   // 第 15 輪：ETF 推測的價格調整日
   line(kc, ma5, '#888780'); line(kc, ma20, '#EF9F27'); line(kc, ma60, '#7F77DD');
 
@@ -418,19 +434,17 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   const showLegend = i => {
     // 日線用匯出的漲跌（事件日相對參考價、前一日無成交相對最後成交）；找不到事件的不比價日為 null。週／月線用前一根收盤
     // 第 15 輪 QA-01：週／月線含推測價格調整（gx）的那一根不用原始價相減，改寫「不比價」，避免除息、分割被讀成下跌
-    const gxBar = mode !== '日' && raw[i].gx;
-    const chg = mode === '日' ? raw[i].ch : gxBar ? null : i ? C[i] - C[i - 1] : 0;
-    const p = mode === '日' ? raw[i].pc : i ? chg / C[i - 1] * 100 : 0;
+    const gxBar = mode !== '日' && raw[i].gx, [chg, p, f] = barChange(raw, i, mode, adj);
     const c = cls(chg);
     const ma = (label, v, color) => v == null ? '' : `<span style="color:${color}">${label} <b style="color:${color}">${pfmt(v)}</b></span>`;
-    legend.innerHTML = `<span><b>${T[i]}</b></span><span>開 <b>${pfmt(O[i])}</b></span><span>高 <b class="up">${pfmt(H[i])}</b></span>` +
+    legend.innerHTML = `<span><b>${mode === '月' ? T[i].slice(0, 7) + ' 月' : mode === '週' ? T[i] + ' 當週' : T[i]}</b></span><span>開 <b>${pfmt(O[i])}</b></span><span>高 <b class="up">${pfmt(H[i])}</b></span>` +
       `<span>低 <b class="dn">${pfmt(L[i])}</b></span><span>收 <b class="${c}">${pfmt(C[i])}</b></span>` +
       (NT[i] ? '<span class="flat">無成交</span>'
         : chg == null ? `<span class="flat" title="${gxBar ? '期間含推測的價格調整（除息、分割等），原始價相減會失真' : '官方未提供漲跌，且找不到對應的除權息、減資、面額變更事件'}">不比價</span>`
-        : `<span class="${c}">${psgn(chg)} (${sgn(p)}%)</span>`) +
+        : `<span class="${c}"${f !== 1 ? ' title="期間含除權息等事件：前一根收盤先乘上參考價 ÷ 前收再相減"' : ''}>${psgn(chg)} (${sgn(p)}%)</span>`) +
       (mode === '日' && raw[i].rel ? `<span class="muted">相對 ${md(raw[i].rel)} 收盤</span>` : '') +
-      raw[i].ev.map(e => `<span class="ev-note"${e.t === '調' ? ' title="依櫃買官方漲跌反推的參考價調整（減資、面額變更等）"' : ''}>` +
-        `${mode === '日' ? '' : md(e.d) + ' '}${EV_LABEL[e.t]}　前收 ${pfmt(e.p)}　參考價 ${pfmt(e.r)}</span>`).join('') +
+      raw[i].ev.map(e => `<span class="ev-note"${e.t === '調' ? ' title="依櫃買官方漲跌反推的參考價調整（減資、面額變更等）"' : /c/.test(e.k || '') ? ` title="${CASH_INC_TIP}"` : ''}>` +
+        `${mode === '日' ? '' : md(e.d) + ' '}${evName(e)}　前收 ${pfmt(e.p)}　參考價 ${pfmt(e.r)}</span>`).join('') +
       (raw[i].gx ? `<span class="ev-note" title="只是推測，可能是除息、分割或合併">${mode === '日' ? '' : '期間含'}${raw[i].gx === '息?' ? '推測除息（官方不比價）' : '推測價格調整（參考價改變）'}</span>` : '') +
       `<span>量 <b>${fmt(V[i])}</b> 張</span>` +
       (N[i] != null ? `<span>法人 <b class="${cls(N[i])}">${sgn(N[i], 0)}</b> 張</span>` : '') +
