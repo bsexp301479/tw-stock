@@ -214,6 +214,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .pill.al-n{background:color-mix(in srgb,var(--amber) 15%,transparent);border-color:var(--amber);color:var(--amber)}
 .al-grp{margin-top:8px}.al-grp h3{font-size:13px;margin:0 0 4px}                 /* 第 16 輪 F16-3 */
 .al-row{display:block;padding:5px 0;border-top:1px solid var(--border);color:inherit;text-decoration:none}
+.osc-line{margin-top:8px}
 .al-near{padding:5px 0;border-top:1px solid var(--border);line-height:1.7}.al-near a{color:inherit}       /* 第 17 輪 F17-2 */
 .al-l{display:flex;align-items:baseline;gap:6px}.al-l .sp{flex:1}.al-why{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .al-new{background:var(--blue)}                                  /* E2-4：新建倉 */

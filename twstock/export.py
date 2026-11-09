@@ -49,7 +49,7 @@ NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
-               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to", "rb", "eb")
+               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to", "rb", "eb", "k", "kx", "rsi")
 VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
 VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
 VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
@@ -970,6 +970,59 @@ def price_stats(d_, adj, tv, days, idx):
     return out
 
 
+# 第 18 輪 F18-2：KD(9,3,3)、RSI(14)。和 site/stock.js 的 calcKD、calcRSI 同一套公式（改一邊要改另一邊）
+KD_N, RSI_N = 9, 14
+
+
+def calc_kd(h, l, c, n=KD_N):
+    """K、D 序列：RSV = (收 − n 日最低) ÷ (n 日最高 − n 日最低) × 100（最高 = 最低時 50）；K = 2/3 前 K + 1/3 RSV、D 同理，起始 50。前 n − 1 根為 None。"""
+    K, D, ks, ds = 50.0, 50.0, [], []
+    for i in range(len(c)):
+        if i < n - 1:
+            ks.append(None); ds.append(None); continue
+        hh, ll = max(h[i - n + 1:i + 1]), min(l[i - n + 1:i + 1])
+        rsv = 50.0 if hh == ll else (c[i] - ll) / (hh - ll) * 100
+        K = K * 2 / 3 + rsv / 3
+        D = D * 2 / 3 + K / 3
+        ks.append(K); ds.append(D)
+    return ks, ds
+
+
+def calc_rsi(c, n=RSI_N):
+    """RSI（Wilder）：第 n 根（索引 n）起，先用前 n 個漲跌的平均，之後 (前值 × (n − 1) + 本次) ÷ n；沒有跌時 100、沒有漲跌時 50。"""
+    out = [None] * len(c)
+    if len(c) <= n:
+        return out
+    up = dn = 0.0
+    for i in range(1, len(c)):
+        u, d = max(c[i] - c[i - 1], 0.0), max(c[i - 1] - c[i], 0.0)
+        if i <= n:
+            up += u / n; dn += d / n
+        else:
+            up = (up * (n - 1) + u) / n; dn = (dn * (n - 1) + d) / n
+        if i >= n:
+            out[i] = 50.0 if up == dn == 0 else 100.0 if dn == 0 else 100 - 100 / (1 + up / dn)
+    return out
+
+
+def osc_stats(o, h, l, c, af):
+    """screen.json 的 k（K 值）、kx（今日 KD 黃金交叉 1／否 0）、rsi；還原價，同個股頁 K 線：
+    開、收都有值才算成交；上市後的無成交日以前一個還原收盤畫一字線（高 = 低 = 收）；今天無成交 → 全部 None。"""
+    H, L, C, prev = [], [], [], None
+    for i in range(len(c)):
+        if c[i] is not None and o[i] is not None:
+            k = af[i]
+            H.append(float(h[i]) * k); L.append(float(l[i]) * k); C.append(float(c[i]) * k); prev = C[-1]
+        elif prev is not None:
+            H.append(prev); L.append(prev); C.append(prev)
+    if c[-1] is None or o[-1] is None or not C:
+        return {"k": None, "kx": None, "rsi": None}
+    ks, ds = calc_kd(H, L, C)
+    r = calc_rsi(C)
+    k1 = ks[-1] is not None and ks[-2] is not None if len(ks) > 1 else False
+    return {"k": _f(ks[-1], 1), "kx": int(ks[-2] <= ds[-2] and ks[-1] > ds[-1]) if k1 else None, "rsi": _f(r[-1], 1)}
+
+
 def revenue_stats(rows):
     """C3 營收欄位。rows：_revenue_rows 的輸出（舊到新）；取該股最新一個月。r3 = 最近 3 個月連續且年增都 > 0。"""
     if not rows:
@@ -1485,7 +1538,8 @@ def export_all() -> float:
                         **fin_screen(fin.get(code)),                                  # 第 10 輪 B5
                         **{k: (sbl or {}).get(k) for k in ("lb", "l1", "l5", "lp")},   # 第 11 輪 B14
                         "mc": mc, "to": to,                                               # 第 12 輪 B11
-                        "rb": rev_base(rev_rows), "eb": fin_base(fin.get(code))}          # 第 14 輪 F14-1、F14-2：基期
+                        "rb": rev_base(rev_rows), "eb": fin_base(fin.get(code)),         # 第 14 輪 F14-1、F14-2：基期
+                        **osc_stats(o, h, l, c, af)}                                      # 第 18 輪 F18-2：KD、RSI
 
     industries = defaultdict(list)
     for code in snapshot:

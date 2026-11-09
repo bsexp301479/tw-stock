@@ -965,6 +965,7 @@ const SCR_COLS = {
   nh: ['新高(日)', x => x.nh, int0], nl: ['新低(日)', x => x.nl, int0],
   hd: ['距52週高', x => isNum(x.h52) && x.h52 > 0 && isNum(x.c) ? (x.h52 - x.c) / x.h52 * 100 : null, v => v == null ? '--' : fmt(v, 2) + '%', 1],
   vr: ['量比', x => x.vr, v => fmt(v, 2)],
+  k: ['K值', x => x.k, v => fmt(v, 1)], rsi: ['RSI', x => x.rsi, v => fmt(v, 1)],   // 第 18 輪 F18-2
   rs20: ['20日相對', x => x.rs20, v => sgn(v)], rs60: ['60日相對', x => x.rs60, v => sgn(v)],
   s: ['法人連', x => x.s, streakTxt], fs: ['外資連', x => x.fs, streakTxt], ts: ['投信連', x => x.ts, streakTxt],
   f5: ['外資5日', x => x.f5, yi], t5: ['投信5日', x => x.t5, yi], n5: ['法人5日', x => x.n5, yi], n20: ['法人20日', x => x.n20, yi],
@@ -1032,6 +1033,11 @@ const SCREEN_CONDS = [
   { id: 'vr', g: '價量', label: '量比 ≥ {v} 倍', opts: [1.5, 2, 3], def: 1.5, f: scrGe('vr'), cols: ['vr'] },
   { id: 'rs20', g: '價量', label: '20 日相對大盤 > {v} 百分點', opts: 'num', def: 0, f: (x, v) => isNum(x.rs20) && x.rs20 > v, cols: ['rs20'] },
   { id: 'rs60', g: '價量', label: '60 日相對大盤 > {v} 百分點', opts: 'num', def: 0, f: (x, v) => isNum(x.rs60) && x.rs60 > v, cols: ['rs60'] },
+  // 第 18 輪 F18-2：KD(9,3,3)、RSI(14)（還原價）；急漲急跌時會大量出現，結果上方列全市場比例
+  { id: 'kx', g: '技術', label: 'KD 黃金交叉（K < {v}）', opts: [20, 30, 50], def: 20, f: (x, v) => x.kx === 1 && isNum(x.k) && x.k < v, cols: ['k'], osc: 1,
+    title: '今日 K 由下往上穿過 D，且 K 低於門檻；急跌期常一次出現上百檔' },
+  { id: 'rl', g: '技術', label: 'RSI(14) ≤ {v}', opts: [20, 30], def: 30, f: (x, v) => isNum(x.rsi) && x.rsi <= v, cols: ['rsi'], osc: 1 },
+  { id: 'ru', g: '技術', label: 'RSI(14) ≥ {v}', opts: [70, 80], def: 70, f: (x, v) => isNum(x.rsi) && x.rsi >= v, cols: ['rsi'], osc: 1 },
   { id: 's', g: '法人', label: '法人連買 ≥ {v} 日', opts: [3, 5, 10], def: 3, f: scrGe('s'), cols: ['s'] },
   { id: 'fs', g: '法人', label: '外資連買 ≥ {v} 日', opts: [3, 5, 10], def: 3, f: scrGe('fs'), cols: ['fs'] },
   { id: 'ts', g: '法人', label: '投信連買 ≥ {v} 日', opts: [3, 5, 10], def: 3, f: scrGe('ts'), cols: ['ts'] },
@@ -1073,7 +1079,7 @@ const SCREEN_CONDS = [
   { id: 'xc', g: '排除', label: '估值條件排除 90 天內股本變動', sw: true, f: null, n: x => x.cap === 1 },   // 不單獨篩選
   { id: 'xm', g: '排除', label: '排除停資停券（上市註記 O、X）', sw: true, f: x => !(x.mnt && /[OX]/.test(x.mnt)) },
 ];
-const SCREEN_GROUPS = ['流動性', '價量', '法人', '信用', '基本面', '排除'];
+const SCREEN_GROUPS = ['流動性', '價量', '技術', '法人', '信用', '基本面', '排除'];
 // [id, 按鈕, 條件]；套用時取代全部條件並加上 xd、xn、xc；r1、r2 為參考組（風險檢查）
 const SCREEN_PRESETS = [
   ['1', '法人連買＋營收創新高', 's=3&rh=1&tv=0.5'], ['2', '投信認養', 'ts=3&t5=1&t5r=5&tv=0.5'], ['3', '帶量突破', 'nh=60&vr=1.5&tv=1'],
@@ -1083,6 +1089,15 @@ const SCREEN_PRESETS = [
 ];
 const SCREEN_DEFAULT = { xd: 1, xn: 1, xc: 1, o: 'tv' };
 // 條件狀態 = {條件 id: 門檻, o: 排序欄, od: 'a' 遞增／'d' 遞減（省略 = 預設方向）, ps: 套用中的預設}
+// 第 18 輪 F18-2：選了 KD、RSI 條件時，列今日全市場符合的檔數與比例（分母 = 有 K 或 RSI 值的股票），看得出是不是急漲急跌期
+function oscShare(conds, X, cnt, st) {
+  const cs = conds.filter(c => c.osc);
+  if (!cs.length) return '';
+  const base = X.filter(x => isNum(x.k) || isNum(x.rsi)).length;
+  return `<div class="flow-note">今日全市場：${cs.map(c => { const n = cnt(c);
+    return `${c.label.replace('{v}', fmt(st[c.id]))} ${fmt(n)} 檔（${base ? fmt(n / base * 100, 1) : '--'}%）`; }).join('、')}。` +
+    'KD、RSI 在急漲急跌時會大量同時出現；比例比平常高很多時，多半是整體市場的波動，不是個股訊號</div>';
+}
 function scrParse(q) {
   const st = {};
   for (const [k, v] of new URLSearchParams(q)) {
@@ -1154,10 +1169,11 @@ async function renderScreen(q) {
         <button class="chip" id="scrClear">重設</button> <button class="chip" id="scrCopy">複製條件連結</button></summary>
         ${SCREEN_GROUPS.map(g => `<div class="scr-grp"><b>${g}</b><div>${SCREEN_CONDS.filter(c => c.g === g).map(condHTML).join('')}</div></div>`).join('')}
       </details>
+      ${oscShare(conds, X, cnt, st)}
       <div class="sec-h" style="margin:8px 0"><h2>符合 ${fmt(hits.length)} 檔</h2>${hits.length > 100 ? `<span class="muted small">依「${oName}」排序顯示前 100 檔</span>` : ''}</div>
       <div class="card">${hits.length ? screenTable(hits.slice(0, 100), cols, { sort: o, cap: conds.some(c => c.val) })
         : '<div class="empty">沒有同時符合所有條件的股票。參考各條件的「單獨」檔數，放寬最少的那一個。</div>'}</div>
-      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。季報條件以各股最新一季判斷：單季 EPS 由累計相減，去年同季虧損時不計算年增，金融業沒有毛利率；財報公布期間各股季別不同（欄位會標出和欄名不同的季別）。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。</div></section>`;
+      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低、KD、RSI 都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。季報條件以各股最新一季判斷：單季 EPS 由累計相減，去年同季虧損時不計算年增，金融業沒有毛利率；財報公布期間各股季別不同（欄位會標出和欄名不同的季別）。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。</div></section>`;
     keyCol($(`#view th.sort[data-k="${o}"]`)?.cellIndex);
     const changed = () => { delete st.ps; save(); draw(); };
     onModeSeg();

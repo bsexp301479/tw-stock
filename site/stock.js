@@ -159,8 +159,7 @@ window.renderStock = async function (code) {
       <div id="iC" class="chart-box" style="height:90px"></div>`}
       ${data.mg ? `<div class="ch-label">融資／融券${data.mg.lb ? '／借券賣出' : ''}餘額<span id="gUnit"></span><span id="gLegend" style="display:contents"></span></div>
       <div id="gC" class="chart-box" style="height:90px"></div>` : ''}
-      <div class="ch-label">MACD (12, 26, 9)${E ? '，原始價' : ''}
-        <span class="lg"><i style="background:#378ADD"></i>DIF</span><span class="lg"><i style="background:#EF9F27"></i>DEA</span></div>
+      <div class="ch-label">${E ? '' : segHTML('oscSeg', OSC_OPTS, localStore('osc', 'MACD'))}<span id="oscLeg" style="display:contents"></span></div>
       <div id="mC" class="chart-box" style="height:120px"></div>
     </section>
 
@@ -180,10 +179,11 @@ window.renderStock = async function (code) {
   // 日／週／月與還原／原始切換都重畫；技術面訊號一律用還原價（P13）
   const draw = () => {
     const m = localStore('kmode', '日'), adj = !E && localStore('kadj', '還原') === '還原';   // ETF 一律原始價、沒有技術面訊號
-    buildCharts(aggregate(data, m, adj), m, data.mg, adj);
+    buildCharts(aggregate(data, m, adj), m, data.mg, adj, E ? 'MACD' : localStore('osc', 'MACD'), E);   // 第 18 輪 F18-1：子圖 MACD／KD／RSI
     if (!E) renderSignals(aggregate(data, m, true), m);
   };
   onSeg('kSeg', m => { localStore('kmode', null, m); document.querySelectorAll('#kSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === m)); draw(); });
+  if (!E) onSeg('oscSeg', v => { localStore('osc', null, v); document.querySelectorAll('#oscSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); draw(); });
   if (!E) onSeg('adjSeg', v => { localStore('kadj', null, v); document.querySelectorAll('#adjSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); draw(); });
   $('#latestBtn').addEventListener('click', () => { syncLeader = charts[0]; charts[0]?.timeScale().scrollToRealTime(); });
   CHART_IDS.filter(id => $('#' + id)).forEach((id, idx) => ['mouseenter', 'pointerdown', 'touchstart', 'wheel'].forEach(t =>
@@ -267,7 +267,32 @@ function calcMACD(closes) {
   return { dif, dea, hist: dif.map((v, i) => v - dea[i]) };
 }
 
-function buildCharts(raw, mode, G, adj) {
+// 第 18 輪 F18-1：KD(9,3,3)、RSI(14)。和 twstock/export.py 的 calc_kd、calc_rsi 同一套公式（改一邊要改另一邊）
+const OSC_OPTS = [['MACD', 'MACD'], ['KD', 'KD'], ['RSI', 'RSI']];
+function calcKD(H, L, C, n = 9) {
+  let K = 50, D = 50;
+  const k = [], d = [];
+  C.forEach((c, i) => {
+    if (i < n - 1) { k.push(null); d.push(null); return; }
+    const hh = Math.max(...H.slice(i - n + 1, i + 1)), ll = Math.min(...L.slice(i - n + 1, i + 1));
+    const rsv = hh === ll ? 50 : (c - ll) / (hh - ll) * 100;
+    K = K * 2 / 3 + rsv / 3; D = D * 2 / 3 + K / 3;
+    k.push(K); d.push(D);
+  });
+  return { k, d };
+}
+function calcRSI(C, n = 14) {
+  const out = C.map(() => null);
+  let up = 0, dn = 0;
+  for (let i = 1; i < C.length; i++) {
+    const u = Math.max(C[i] - C[i - 1], 0), d = Math.max(C[i - 1] - C[i], 0);
+    if (i <= n) { up += u / n; dn += d / n; } else { up = (up * (n - 1) + u) / n; dn = (dn * (n - 1) + d) / n; }
+    if (i >= n) out[i] = up === 0 && dn === 0 ? 50 : dn === 0 ? 100 : 100 - 100 / (1 + up / dn);
+  }
+  return out;
+}
+
+function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   disposeKCharts();
   if (!raw.length || !window.LightweightCharts) return;
   const LC = window.LightweightCharts;
@@ -356,11 +381,27 @@ function buildCharts(raw, mode, G, adj) {
   }
 
   const mc = mk('mC', true);
-  const macdFmt = { type: 'price', precision: 2, minMove: 0.01 };
-  const hSer = mc.addHistogramSeries({ priceFormat: macdFmt, priceLineVisible: false, lastValueVisible: false });
-  hSer.setData(hist.map((v, i) => ({ time: T[i], value: v, color: v >= 0 ? 'rgba(55,138,221,.65)' : 'rgba(213,90,48,.65)' })));
-  const difSer = line(mc, dif, '#378ADD', macdFmt);
-  line(mc, dea, '#EF9F27', macdFmt);
+  const lg = (c, t) => `<span class="lg"><i style="background:${c}"></i>${t}</span>`;
+  let oSer, oVal;
+  if (osc === 'KD' || osc === 'RSI') {   // 第 18 輪 F18-1：KD 20／80、RSI 30／70 參考線
+    const f1 = { type: 'price', precision: 1, minMove: 0.1 };
+    const { k, d } = calcKD(H, L, C), rsi = calcRSI(C);
+    const [vals, refs] = osc === 'KD' ? [k, [20, 80]] : [rsi, [30, 70]];
+    oSer = line(mc, vals, osc === 'KD' ? '#378ADD' : '#7F77DD', f1);
+    if (osc === 'KD') line(mc, d, '#EF9F27', f1);
+    refs.forEach(p => oSer.createPriceLine({ price: p, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: true }));
+    oVal = i => vals[i];
+    $('#oscLeg').innerHTML = osc === 'KD' ? `KD (9, 3, 3)${lg('#378ADD', 'K')}${lg('#EF9F27', 'D')}`
+      : `RSI (14)${lg('#7F77DD', 'RSI')}`;   // 參考線的值標在右側刻度
+  } else {
+    const macdFmt = { type: 'price', precision: 2, minMove: 0.01 };
+    const hSer = mc.addHistogramSeries({ priceFormat: macdFmt, priceLineVisible: false, lastValueVisible: false });
+    hSer.setData(hist.map((v, i) => ({ time: T[i], value: v, color: v >= 0 ? 'rgba(55,138,221,.65)' : 'rgba(213,90,48,.65)' })));
+    oSer = line(mc, dif, '#378ADD', macdFmt);
+    line(mc, dea, '#EF9F27', macdFmt);
+    oVal = i => dif[i];
+    $('#oscLeg').innerHTML = `MACD (12, 26, 9)${E ? '，原始價' : ''}${lg('#378ADD', 'DIF')}${lg('#EF9F27', 'DEA')}`;
+  }
 
   charts = [kc, vc, ...(ic ? [ic] : []), ...(gc ? [gc] : []), mc];   // 順序與 CHART_IDS 中存在的圖一致
 
@@ -372,7 +413,7 @@ function buildCharts(raw, mode, G, adj) {
   }));
 
   // 十字線同步 + 上方資訊列
-  const anchors = [[kc, kSer, i => C[i]], [vc, vSer, i => V[i]], ...(ic ? [[ic, iSer, i => N[i]]] : []), ...(gc ? [[gc, mbSer, i => MB[i]]] : []), [mc, difSer, i => dif[i]]];
+  const anchors = [[kc, kSer, i => C[i]], [vc, vSer, i => V[i]], ...(ic ? [[ic, iSer, i => N[i]]] : []), ...(gc ? [[gc, mbSer, i => MB[i]]] : []), [mc, oSer, oVal]];
   const legend = $('#kLegend');
   const showLegend = i => {
     // 日線用匯出的漲跌（事件日相對參考價、前一日無成交相對最後成交）；找不到事件的不比價日為 null。週／月線用前一根收盤
@@ -441,6 +482,7 @@ function renderSignals(rows, mode) {
   let n = rows.length;
   while (n > 0 && rows[n - 1].nt) n--;          // 最後一根無成交的一字線不納入判讀
   const C = rows.slice(0, n).map(r => r.c), i = n - 1, c = C[i];
+  const { k, d } = calcKD(rows.slice(0, n).map(r => r.h), rows.slice(0, n).map(r => r.l), C), rsi = calcRSI(C);   // 第 18 輪 F18-1
   const ma5 = calcMA(C, 5), ma20 = calcMA(C, 20), ma60 = calcMA(C, 60);
   const bull = [], bear = [];
   const chk = (ok, yes, no) => (ok ? bull : bear).push(ok ? yes : no);
@@ -454,15 +496,24 @@ function renderSignals(rows, mode) {
     chk(hist[i] > hist[i - 1], 'MACD 柱放大', 'MACD 柱縮小');
   }
   const total = bull.length + bear.length, lean = bull.length > bear.length ? 'bull' : bull.length < bear.length ? 'bear' : '';
-  const tags = `<div>${bull.map(t => `<span class="tag up">${t}</span>`).join('')}${bear.map(t => `<span class="tag dn">${t}</span>`).join('')}</div>`;
+  const tags = `<div>${bull.map(t => `<span class="tag up">${t}</span>`).join('')}${bear.map(t => `<span class="tag dn">${t}</span>`).join('')}</div>` + oscLine(k, d, rsi, i);
   const note = (n < rows.length && n ? `最後一根（${md(rows.at(-1).d)}）無成交，以 ${md(rows[i].d)} 判讀。` : '') +
-    '依均線與 MACD 機械判讀（還原價格），僅供參考。';
+    '依均線與 MACD 機械判讀（還原價格），僅供參考。KD、RSI 在急漲急跌時會長時間停在高檔或低檔，交叉也會反覆出現，不計入多空。';
   $('#sigBox').innerHTML = total < SIG_MIN
     ? `<div class="signal"><div style="font-weight:600;margin-bottom:6px">資料不足，無法判讀</div>${tags}
         <div class="muted small" style="margin-top:8px">${period}只有 ${n} 根 K 棒，有效訊號 ${total} 項（至少需 ${SIG_MIN} 項；MACD 需 ${MACD_MIN} 根以上）。${note}</div></div>`
     : `<div class="signal ${lean}">
         <div style="font-weight:600;margin-bottom:6px">${{ bull: '偏多', bear: '偏空', '': '中性' }[lean]}：${bull.length} 多 ${bear.length} 空</div>
         ${tags}<div class="muted small" style="margin-top:8px">${note}</div></div>`;
+}
+
+// 第 18 輪 F18-1：技術面卡「動能（不計入多空）」一行；只寫數值、區間與交叉
+function oscLine(k, d, rsi, i) {
+  const kd = k[i] == null ? 'KD 資料不足（需 9 根）'
+    : `K ${fmt(k[i], 1)}／D ${fmt(d[i], 1)}${k[i] < 20 ? '（K 低於 20）' : k[i] > 80 ? '（K 高於 80）' : ''}` +
+      (k[i - 1] == null ? '' : k[i - 1] <= d[i - 1] && k[i] > d[i] ? '，今日黃金交叉' : k[i - 1] >= d[i - 1] && k[i] < d[i] ? '，今日死亡交叉' : '');
+  const r = rsi[i] == null ? 'RSI 資料不足（需 15 根）' : `RSI ${fmt(rsi[i], 1)}${rsi[i] < 30 ? '（低於 30）' : rsi[i] > 70 ? '（高於 70）' : ''}`;
+  return `<div class="small osc-line"><b>動能（不計入多空）</b>　${kd}；${r}</div>`;
 }
 
 // ─── 第 10 輪 B5：季報卡（匯出端已把累計相減成單季；q = [季別, 單季 EPS, EPS 年增 %, 毛利率 %, 營益率 %, 單季營收（千元）]）───
