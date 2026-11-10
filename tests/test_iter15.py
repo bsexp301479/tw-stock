@@ -96,7 +96,7 @@ def test_f15_site_source():
     assert "location.hash = '#/stock/' + tr.dataset.etf" in APP and "location.replace('#/stock/' + code)" in APP
     assert 'href="#/stock/${code}">行情 →</a>' in APP and 'href="#/etf/${code}">持股 →</a>' in STK
     assert "${E ? '' : segHTML('adjSeg'" in STK and "const ic = $('#iC') ? mk('iC', false) : null;" in STK
-    assert "${E ? '' : `<button class=\"star" in STK and "if (!E) renderSignals(" in STK and "const ETF_TABS = STOCK_TABS.slice(0, 2);" in STK
+    assert "if (!E) renderSignals(" in STK and "const ETF_TABS = STOCK_TABS.slice(0, 2);" in STK
     assert ".tbl tr[data-etf]{cursor:pointer}" in CSS
     # F15-3
     spark = cut(APP, "function spreadSpark", "\n}\n")

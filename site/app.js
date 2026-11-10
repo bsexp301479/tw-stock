@@ -1216,6 +1216,9 @@ async function renderScreen(q) {
 const ETF_SORT = [['tv', '成交額', -1], ['p+', '漲幅', -1], ['p-', '跌幅', 1], ['m1', '融資增減', -1], ['s1', '融券增減', -1],
   ['l1+', '借券增加', -1], ['l1-', '借券減少', 1], ['lb', '借券餘額', -1]];     // 第 12 輪 ETF-借券
 
+// ETF 列（tr[data-etf]）→ ETF 個股頁；列內的「持股」小標（<a>）照舊連到持股頁。第 20 輪：ETF 列表與自選頁共用
+const onEtfRow = e => { const tr = e.target.closest('tr[data-etf]'); if (tr && !e.target.closest('a')) location.hash = '#/stock/' + tr.dataset.etf; };
+
 function renderEtf() {
   const E = App.latest.etfs;
   if (!E) {
@@ -1243,12 +1246,12 @@ function renderEtf() {
         <td class="num">${r.sb == null ? '--' : fmt(r.sb)}</td>${lots(r.s1)}
         <td class="num">${r.lb == null ? '--' : fmt(r.lb)}</td>${lots(r.l1)}</tr>`).join('') +
       `</tbody></table></div></div>
-      <div class="muted small" style="margin-top:6px">共 ${list.length} 檔。成交量為張、成交額為億元；融資融券為張，增減 = 今日餘額 − 前日餘額，「--」表示不在信用交易清單。借券為借券賣出（張，資料晚上 8 點半以後更新），多為造市、套利與避險，不等於看空。ETF 不計入首頁家數、成交額、類股資金流、排行、自選與股票口徑的融資融券。</div></section>`;
+      <div class="muted small" style="margin-top:6px">共 ${list.length} 檔。成交量為張、成交額為億元；融資融券為張，增減 = 今日餘額 − 前日餘額，「--」表示不在信用交易清單。借券為借券賣出（張，資料晚上 8 點半以後更新），多為造市、套利與避險，不等於看空。ETF 不計入首頁家數、成交額、類股資金流、排行與股票口徑的融資融券。</div></section>`;
   keyCol({ tv: 4, p: 2, m1: 6, s1: 8, l1: 10, lb: 9 }[f]);
   $('#etfSel').addEventListener('change', e => { localStore('etfSort', null, e.target.value); renderEtf(); });
   onSeg('etfMktSeg', v => { localStore('etfMkt', null, v); renderEtf(); });
   // 第 15 輪 F15-2：整列 → ETF 個股頁；列內的「持股」小標（<a>）照舊連到持股頁
-  $('#view').addEventListener('click', e => { const tr = e.target.closest('tr[data-etf]'); if (tr && !e.target.closest('a')) location.hash = '#/stock/' + tr.dataset.etf; });
+  $('#view').addEventListener('click', onEtfRow);
 }
 
 // ─── F7-2：主動 ETF 彙總排行 ─────────────────────────────
@@ -1346,14 +1349,26 @@ async function renderHoldings(code) {
 }
 
 function renderWatch() {
-  const S = App.latest.stocks, span = localStore('rspan', '1');
+  const S = App.latest.stocks, span = localStore('rspan', '1'), R = App.latest.etfs?.rows || {};
   const list = [...App.watch].filter(c => S[c]).map(c => [c, S[c]]);
+  const etfs = [...App.watch].filter(c => !S[c] && R[c]).map(c => [c, R[c]]);     // 第 20 輪 F20-1：自選的 ETF 另列一張表
+  const stk = list.length || !etfs.length;                                         // 只有 ETF 時不顯示股票表與 1 日／5 日
   $('#view').innerHTML = `<section class="sec">
-      <div class="sec-h"><h2>自選股</h2><span class="muted small">存在這個瀏覽器裡，換裝置不會同步</span><span class="sp"></span>${spanSeg(span)}</div>
-      <div class="card">${list.length ? stockTable(list, span)
-        : '<div class="empty">還沒有自選股。打開任一檔個股，按名稱旁的「☆ 加入自選」。</div>'}</div></section>`;
-  onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
+      <div class="sec-h"><h2>自選</h2><span class="muted small">存在這個瀏覽器裡，換裝置不會同步</span><span class="sp"></span>${stk ? spanSeg(span) : ''}</div>
+      ${stk ? `<div class="card">${list.length ? stockTable(list, span)
+        : '<div class="empty">還沒有自選股。打開任一檔個股或 ETF，按名稱旁的「☆ 加入自選」。</div>'}</div>` : ''}
+      ${etfs.length ? `<div class="sec-h" style="margin-top:12px"><h2>ETF</h2><span class="muted small">當日行情；成交量為張、成交額為億元</span></div>
+      <div class="card">${etfWatchTable(etfs)}</div>` : ''}</section>`;
+  if (stk) onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
   $('#view').addEventListener('click', onRowClick);
+  $('#view').addEventListener('click', onEtfRow);
+}
+// 第 20 輪 F20-1：自選頁的 ETF 表（ETF 列表的前 4 欄，資料為 latest.etfs.rows）
+function etfWatchTable(list) {
+  return '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>成交額</th></tr></thead><tbody>' +
+    list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
+      <td class="num ${cls(r.ch)}">${pfmt(r.c)}</td><td class="num ${cls(r.ch)}">${r.c == null ? '無成交' : sgn(r.p) + '%'}</td>
+      <td class="num">${fmt(r.v)}</td><td class="num">${fmt(r.tv, 2)}億</td></tr>`).join('') + '</tbody></table></div>';
 }
 
 // ─── 資料新鮮度（S4）────────────────────────────────────
