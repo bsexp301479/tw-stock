@@ -60,7 +60,7 @@ function groupSeg() { return segHTML('grpSeg', [['industry', '類股'], ['chain'
 const routes = {
   today: renderToday,
   bubble: renderBubble,
-  rank: arg => arg && arg.startsWith('screen') ? renderScreen(arg.slice(6)) : renderRank(arg),   // 第 8 輪：#/rank/screen 條件選股
+  rank: arg => arg && arg.startsWith('screen') ? renderScreen(arg.slice(6)) : arg === 'hl' ? renderHl() : renderRank(arg),   // 第 8 輪：#/rank/screen 條件選股；第 21 輪：#/rank/hl 新訊號
   watch: renderWatch,
   etf: code => code === 'active' ? renderActive() : code ? renderHoldings(code) : renderEtf(),   // 第 7 輪：#/etf/active 彙總排行
   stock: code => window.renderStock(code),
@@ -800,8 +800,8 @@ const RANK_GROUPS = [['法人', ['n+', 'n-', 'f+', 'f-', 't+', 't-', 'd+', 'd-',
 const RANK_FILTER = { ry: x => !(x.rm < revMonth()), nh: x => x.nh > 0, dy: x => isNum(x.pe) && x.pe > 0 && x.cap !== 1, pe: x => x.pe > 0 && x.cap !== 1, sr: x => isNum(x.mb) && x.mb >= MARGIN_BASE };
 const RANK_COLS = { vr: ['vr'], nh: ['nh'], rs20: ['rs20'], ry: ['ry'], dy: ['dy', 'pe', 'pb'], pe: ['pe', 'pb', 'dy'], to: ['to', 'mc'] };
 const streakTxt = v => v ? (v > 0 ? '買' : '賣') + Math.abs(v) : '--';
-const modeSeg = v => segHTML('modeSeg', [['rank', '排行'], ['screen', '選股']], v);
-const onModeSeg = () => onSeg('modeSeg', v => { location.hash = v === 'screen' ? '#/rank/screen' : '#/rank'; });
+const modeSeg = v => segHTML('modeSeg', [['rank', '排行'], ['screen', '選股'], ['hl', '新訊號']], v);
+const onModeSeg = () => onSeg('modeSeg', v => { location.hash = v === 'rank' ? '#/rank' : '#/rank/' + v; });
 
 function stockTable(list, span = '1') {
   const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
@@ -906,6 +906,35 @@ function sblTable(list, span) {
       <td class="num ${cls(x['la' + k])}">${isNum(x['la' + k]) ? yi(x['la' + k]) : '--'}</td><td class="num">${isNum(x.lp) ? fmt(x.lp, 2) + '%' : '--'}</td>
       <td class="num">${isNum(x.sb) ? fmt(x.sb) : '--'}</td><td class="num">${fmt(x.tv, 1)}億</td></tr>`).join('') +
     '</tbody></table></div>';
+}
+
+// ─── 第 21 輪 F21-1：近期新訊號（latest.json stocks[代號].hl；20 日均額取 screen.json）──────────
+const HL_KINDS = { nh: ['價量', '60 日新高帶量'], vu: ['價量', '量比 ≥ 2 漲 ≥ 3%'], s3: ['法人', '法人連買 3 日'], t3: ['法人', '投信連買 3 日'],
+  t5: ['法人', '投信 5 日買超 ≥ 成交額 5%'], rv: ['營收', '營收年增 ≥ 30% 創新高'], ae: ['主動ETF', '主動 ETF 新增'] };
+const hlTag = ([k, d, x]) => `<span class="hl-tag">${k === 'rv' ? `${x % 100} 月營收創新高` : k === 'ae' ? `${x} 新增` : HL_KINDS[k][1]} <i>${md(d)}</i></span>`;
+const hlDims = x => new Set(x.hl.map(e => HL_KINDS[e[0]]?.[0]).filter(Boolean)).size;
+async function renderHl() {
+  const S = await loadScreen(), min = localStore('hlmin', '3');
+  const base = S ? screenRows().filter(x => x.hl && !x.dsp && !x.nt && isNum(x.a20) && x.a20 >= 0.5).map(x => [x, hlDims(x)]) : [];
+  const cnt = n => base.filter(r => r[1] >= n).length;
+  const list = base.filter(r => r[1] >= Number(min)).sort((a, b) => b[1] - a[1] || b[0].a20 - a[0].a20);
+  const L = App.latest;
+  $('#view').innerHTML = `<section class="sec">
+      <div class="sec-h">${modeSeg('hl')}<span class="sp"></span>${segHTML('hlSeg', [['3', '面向 ≥ 3'], ['2', '面向 ≥ 2']], min)}</div>
+      <div class="muted small tbl-cap">面向 ≥ 3：${fmt(cnt(3))} 檔；≥ 2：${fmt(cnt(2))} 檔（20 日均成交額 ≥ 0.5 億，不含處置股、今日無成交）。行情 ${md(L.date)}、法人 ${md(L.flow_date)}</div>
+      <div class="card">${!S ? '<div class="empty">尚未產生選股資料（screen.json），無法計算 20 日均成交額。</div>'
+        : !list.length ? '<div class="empty">目前沒有符合的股票。</div>'
+        : `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>面向</th><th class="hl-th">近期新訊號</th><th>收盤</th><th>漲跌</th><th>20日均額</th></tr></thead><tbody>` +
+          list.map(([x, n]) => `<tr data-code="${x.code}">
+            <td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span></td>
+            <td class="num">${n}</td><td class="hl-tags">${x.hl.map(hlTag).join('')}</td>
+            <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.a20, 1)}億</td></tr>`).join('') + '</tbody></table></div>'}</div>
+      <div class="muted small" style="margin-top:6px">列出最近 5 個交易日（營收為最近 20 個交易日）在價量、法人、營收、主動 ETF 四個面向新出現的事件；同一面向有多個事件只算 1 個面向。
+        「新出現」= 當天符合、前一個交易日不符合，口徑和選股條件相同；60 日新高帶量 = 創 60 日以上新高且量比 ≥ 1.5；營收創新高 = 單月營收創新高且年增 ≥ 30%。
+        營收日期為本站首次收錄日（不一定是公司公布日）；主動 ETF 只涵蓋有持股資料的 ${Object.keys(L.holdings || {}).length} 檔。只描述發生了什麼，不代表之後的走勢。</div></section>`;
+  onModeSeg();
+  if (S) onSeg('hlSeg', v => { localStore('hlmin', null, v); renderHl(); });
+  $('#view').addEventListener('click', onRowClick);
 }
 
 // ─── 第 8 輪 F8-2：條件選股（screen.json 與 latest.json stocks 合併）──────────

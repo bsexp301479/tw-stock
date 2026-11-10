@@ -15,7 +15,7 @@ import os
 import re
 import statistics
 import time
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -46,6 +46,7 @@ HOLD_DAYS = 60                 # ETF 持股 JSON 的持股日數
 ACTIVE_TOP = 20                # 主動 ETF 彙總排行（第 7 輪 F7-2）各區塊的列數
 BREADTH_DAYS = 60              # 市場寬度走勢天數
 NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到小，取符合的最大 N）
+HL_DAYS, HL_REV_DAYS = 5, 20     # 第 21 輪 F21-1：近期新訊號看最近 5 個交易日；營收看最近 20 個交易日
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
@@ -1044,6 +1045,65 @@ def revenue_stats(rows):
     return {"rm": y * 100 + m, "ry": yoy, "rc": cum, "rh": hi, "r3": int(r3)}
 
 
+# ─── 第 21 輪 F21-1：近期新訊號（latest.json stocks[代號].hl）──────────────
+def highlights(d_, adj, tv, pct, net, trust, days, flow_days, idx):
+    """
+    近 HL_DAYS 個交易日「新出現」的價量、法人事件 [[種類, 日期], ...]（舊到新）。
+    逐日用 price_stats、streak 重算，和選股的 nh、vr、a20、s、ts、t5r 同一套口徑；新出現 = 當天符合、該股前一個資料列不符合。
+      nh 創 60 日以上新高且量比 ≥ 1.5；vu 量比 ≥ 2 且漲幅 ≥ 3%；
+      s3 法人連買達 3 日；t3 投信連買達 3 日；t5 投信 5 日買超 ≥ 5 日成交額（20 日均額 × 5）的 5%。
+    價量看行情日 days 的最後 HL_DAYS 天；法人看法人資料日 flow_days 的最後 HL_DAYS 天（法人比行情晚公布）。
+    pct：官方漲跌幅（%）；net、trust：法人、投信買賣超（億，無資料 0）。
+    """
+    if len(days) < HL_DAYS or len(flow_days) < HL_DAYS:
+        return []
+    p_from, f_from, f_to = days[-HL_DAYS], flow_days[-HL_DAYS], flow_days[-1]
+    out, prev = [], {}
+    for i in range(len(d_)):
+        if i + 1 < len(d_) and d_[i + 1] < min(p_from, f_from):
+            continue                                   # 只從窗口前一個資料列開始算
+        st = price_stats(d_[:i + 1], adj[:i + 1], tv[:i + 1], days[:bisect_right(days, d_[i])], idx)
+        vr, a20, fl = st["vr"] or 0, st["a20"], d_[i] <= f_to
+        t5 = _f(sum(trust[max(0, i - 4):i + 1]))
+        now = {"nh": st["nh"] >= 60 and vr >= 1.5,
+               "vu": vr >= 2 and pct[i] is not None and pct[i] >= 3,
+               "s3": fl and streak(net[:i + 1][-30:]) >= 3,
+               "t3": fl and streak(trust[:i + 1][-30:]) >= 3,
+               "t5": fl and a20 is not None and a20 > 0 and t5 >= a20 * 5 * 5 / 100}
+        for k, v in now.items():
+            if v and not prev.get(k, True) and d_[i] >= (p_from if k in ("nh", "vu") else f_from):
+                out.append([k, str(d_[i])])
+        prev = now
+    return out
+
+
+def highlight_revenue(rows, seen, since):
+    """營收事件 [["rv", 日期, 年月]]：最新一個月年增 ≥ 30% 且創新高（同選股 ry、rh），日期 ≥ since。
+    日期 = 本站首次收錄日；晚於法定期限（次月 10 日）5 天以上視為補抓，改用法定期限。"""
+    if not rows:
+        return []
+    y, m, _, _, yoy, _, hi = rows[-1]
+    got = seen.get((y, m))
+    if got is None or yoy is None or yoy < 30 or not hi:
+        return []
+    due = date(y + (m == 12), m % 12 + 1, 10)
+    d = got if got <= due + timedelta(days=5) else due
+    return [["rv", str(d), y * 100 + m]] if d >= since else []
+
+
+def highlight_active(holdings, tw, since):
+    """{股票代號: [["ae", 持股日, ETF 代號], ...]}：主動 ETF 相鄰兩個持股日，前一日沒有、後一日有（同持股頁「新」）；持股日 ≥ since。
+    每檔 ETF 的第一個持股日沒有前一日，不產生事件。"""
+    out = defaultdict(list)
+    for e, (hdates, _, held) in holdings.items():
+        for a, b in zip(hdates, hdates[1:]):
+            if b >= since:
+                for kind, c in held[b]:
+                    if kind == "ST" and c in tw and (kind, c) not in held[a]:
+                        out[c].append(["ae", str(b), e])
+    return out
+
+
 # ─── 第 10 輪 B5：季報（資料庫存累計值，這裡相減成單季；個股與選股共用）──────
 def _r1(a, b):
     """a ÷ b × 100，四捨五入（ROUND_HALF_UP）到 1 位小數。"""
@@ -1319,12 +1379,14 @@ def export_all() -> float:
             FROM stock_fundamentals f JOIN stocks s ON s.stock_id = f.stock_id) x
         WHERE rn = 1""")}
 
-    revenue = defaultdict(list)
+    revenue, rev_seen = defaultdict(list), defaultdict(dict)
     for r in cur.execute("""
-        SELECT s.stock_code, m.revenue_year, m.revenue_month, m.revenue, m.revenue_mom, m.revenue_yoy
+        SELECT s.stock_code, m.revenue_year, m.revenue_month, m.revenue, m.revenue_mom, m.revenue_yoy, m.created_at
         FROM monthly_revenue m JOIN stocks s ON s.stock_id = m.stock_id
         ORDER BY s.stock_code, m.revenue_year, m.revenue_month"""):
         revenue[r[0]].append([r[1], r[2], r[3], _f(r[4]), _f(r[5])])
+        if r[6] is not None:
+            rev_seen[r[0]][(r[1], r[2])] = r[6].date()       # 第 21 輪 F21-1：本站首次收錄日
     chains, chain_of = _load_chains(cur)
     futures = _load_futures(cur)
     oi = load_oi(cur)
@@ -1396,6 +1458,7 @@ def export_all() -> float:
         _write(SITE_DATA_DIR / "etfs" / f"{code}.json", holding_export(code, hdates, summary, held, tw, *etf_names[code]))
     active = stock_active(holdings, tw)
     act_lots = active_trust(holdings, tw, dates[-1])            # B16（第 8 輪 F8-1）
+    hl_act = highlight_active(holdings, tw, b_days[-HL_DAYS])   # 第 21 輪 F21-1
     idx_close = {m: {d: c for d, c, _ in index_rows.get(code, []) if c is not None}
                  for m, code in (("TWSE", "TAIEX"), ("TPEx", "TPEX"))}
     screen = {}           # 條件選股：{代號: SCREEN_KEYS 欄位}
@@ -1514,6 +1577,12 @@ def export_all() -> float:
             insti_otc["foreign"] += f_value[-1]
             insti_otc["trust"] += t_value[-1]
             insti_otc["dealer"] += d_value[-1]
+        # 第 21 輪 F21-1：近期新訊號（價量、法人、營收、主動 ETF）
+        hl = sorted(highlights(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))], tv,
+                               [None if c[i] is None else _pct(c[i], chs[i]) for i in range(len(d_))],
+                               net_value, t_value, b_days, dates, idx_close[info["market"]])
+                    + highlight_revenue(rev_rows, rev_seen.get(code, {}), b_days[-HL_REV_DAYS]) + hl_act.get(code, []),
+                    key=lambda e: e[1])
         # 52 週高低用還原價（B1）
         w52 = [(float(h[i]) * af[i], float(l[i]) * af[i]) for i in range(len(d_))
                if d_[i] >= w52_start and h[i] is not None and l[i] is not None]
@@ -1540,6 +1609,7 @@ def export_all() -> float:
             **({"ntc": 1} if any(a["t"] == "notice" for a in alerts.get(code, [])) else {}),
             **({"pe": _f(fund[code][0]), "pb": _f(fund[code][1]), "dy": _f(fund[code][2])}
                if code in fund else {}),
+            **({"hl": hl} if hl else {}),
         }
         mkt = info["market"]
         screen[code] = {**price_stats(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))],

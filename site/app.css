@@ -260,3 +260,4 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 /* F14-4：原文已包含短句的說明（外層 .note-dup），展開時隱藏短句、只留「說明 ▴」；短句、原文都不改 */
 .note-dup .note[open] summary{font-size:0}
 .note-dup .note[open] summary i{font-size:12px;margin-left:0}
+.tbl td.hl-tags,.tbl th.hl-th{white-space:normal;min-width:12em;text-align:left}.hl-tag{display:inline-block;margin:1px 8px 1px 0;font-size:12px}.hl-tag i{font-style:normal;color:var(--text2)}   /* 第 21 輪 F21-1 */
