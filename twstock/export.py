@@ -47,6 +47,7 @@ ACTIVE_TOP = 20                # 主動 ETF 彙總排行（第 7 輪 F7-2）各�
 BREADTH_DAYS = 60              # 市場寬度走勢天數
 NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到小，取符合的最大 N）
 HL_DAYS, HL_REV_DAYS = 5, 20     # 第 21 輪 F21-1：近期新訊號看最近 5 個交易日；營收看最近 20 個交易日
+HL_EPS_YOY, HL_EPS_BASE = 50, 0.1   # 第 22 輪 F22-11：EPS 年增事件門檻（%）；去年同季 < 0.1 元為基期低（同前端 EPS_BASE），不產生事件
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
@@ -1104,6 +1105,30 @@ def highlight_active(holdings, tw, since):
     return out
 
 
+def highlight_eps(cum, seen, fq, days):
+    """
+    第 22 輪 F22-11：EPS 事件 [[種類, 日期, 季別]]；只看全市場最新季別 fq（該股沒有這一季 → 不產生）。
+      et 單季 EPS 轉盈：去年同季 ≤ 0、本季 > 0（同季報卡、選股「轉盈」）；
+      eg 單季 EPS 年增 ≥ HL_EPS_YOY%：fin_yoy 達標且去年同季 ≥ HL_EPS_BASE（基期低不產生，同選股 epsLow）。
+    seen = (first_seen, created_at)：日期 = first_seen，NULL（補抓）時用 created_at（資料庫 GETDATE() 是 UTC，＋8 小時取日期）；
+    補抓且晚於該季最晚截止日（金融業）5 天以上 → 改用截止日；再對齊到 ≤ 該日的最後一個交易日 days（午夜後收集的 first_seen 可能是週六），
+    在最近 HL_REV_DAYS 個交易日內才列。
+    """
+    if fq not in cum or not seen or len(days) < HL_REV_DAYS:
+        return []
+    s, b = fin_single(cum, *fq), fin_single(cum, fq[0] - 1, fq[1])
+    v, base = s[4], b and b[4]
+    if v is None or base is None:
+        return []
+    kind = "et" if base <= 0 < v else "eg" if (fin_yoy(v, base) or 0) >= HL_EPS_YOY and _f(base) >= HL_EPS_BASE else None
+    fs, ca = seen
+    d, due = fs or (ca + timedelta(hours=8)).date(), date.fromisoformat(fin_due_dates(fq[0] * 100 + fq[1])[-1])
+    if fs is None and d > due + timedelta(days=5):
+        d = due
+    i = bisect_right(days, d) - 1
+    return [[kind, str(days[i]), fq[0] * 100 + fq[1]]] if kind and i >= 0 and days[i] >= days[-HL_REV_DAYS] else []
+
+
 # ─── 第 10 輪 B5：季報（資料庫存累計值，這裡相減成單季；個股與選股共用）──────
 def _r1(a, b):
     """a ÷ b × 100，四捨五入（ROUND_HALF_UP）到 1 位小數。"""
@@ -1223,17 +1248,19 @@ def fin_due_dates(qk: int) -> list:
 
 
 def _load_financials(cur) -> tuple:
-    """({代號: {(年, 季): (營收, 毛利, 營益, 淨利, EPS)}}, {代號: (最新一季業別, 最新一季 first_seen)}, {(年, 季, 市場): 家數})。"""
-    fin, meta, counts = defaultdict(dict), {}, Counter()
-    for code, mkt, y, q, tbl, *vals, seen in cur.execute("""
+    """({代號: {(年, 季): (營收, 毛利, 營益, 淨利, EPS)}}, {代號: (最新一季業別, 最新一季 first_seen)}, {(年, 季, 市場): 家數},
+    第 22 輪：{代號: {(年, 季): (first_seen, created_at)}})。"""
+    fin, meta, counts, seen_at = defaultdict(dict), {}, Counter(), defaultdict(dict)
+    for code, mkt, y, q, tbl, *vals, seen, created in cur.execute("""
         SELECT s.stock_code, s.market_type, f.fin_year, f.fin_quarter, f.industry_tbl,
-               f.revenue, f.gross_profit, f.op_income, f.net_income, f.eps, f.first_seen
+               f.revenue, f.gross_profit, f.op_income, f.net_income, f.eps, f.first_seen, f.created_at
         FROM quarterly_financials f JOIN stocks s ON s.stock_id = f.stock_id
         ORDER BY s.stock_code, f.fin_year, f.fin_quarter"""):
         fin[code][(y, q)] = tuple(vals)
         meta[code] = (tbl, seen)
         counts[(y, q, mkt)] += 1
-    return fin, meta, counts
+        seen_at[code][(y, q)] = (seen, created)
+    return fin, meta, counts, seen_at
 
 
 def screen_build(rows, head):
@@ -1435,7 +1462,7 @@ def export_all() -> float:
     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
     status = build_status(cur, latest_date, now)
     valuation, stock_val, val_date = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe
-    fin, fin_meta, fin_counts = _load_financials(cur)          # 第 10 輪 B5
+    fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
     edates, esbl, esbl_m = _load_etf_sbl(cur)                  # 第 12 輪 ETF 借券
     closed = load_closed(cur)                                  # 第 14 輪 F14-3：結算日推算用的休市日
@@ -1459,6 +1486,7 @@ def export_all() -> float:
     active = stock_active(holdings, tw)
     act_lots = active_trust(holdings, tw, dates[-1])            # B16（第 8 輪 F8-1）
     hl_act = highlight_active(holdings, tw, b_days[-HL_DAYS])   # 第 21 輪 F21-1
+    fq_all = max(((y, q) for y, q, _ in fin_counts), default=None)   # 第 22 輪 F22-11：全市場最新季別
     idx_close = {m: {d: c for d, c, _ in index_rows.get(code, []) if c is not None}
                  for m, code in (("TWSE", "TAIEX"), ("TPEx", "TPEX"))}
     screen = {}           # 條件選股：{代號: SCREEN_KEYS 欄位}
@@ -1581,7 +1609,8 @@ def export_all() -> float:
         hl = sorted(highlights(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))], tv,
                                [None if c[i] is None else _pct(c[i], chs[i]) for i in range(len(d_))],
                                net_value, t_value, b_days, dates, idx_close[info["market"]])
-                    + highlight_revenue(rev_rows, rev_seen.get(code, {}), b_days[-HL_REV_DAYS]) + hl_act.get(code, []),
+                    + highlight_revenue(rev_rows, rev_seen.get(code, {}), b_days[-HL_REV_DAYS])
+                    + highlight_eps(fin.get(code, {}), fin_seen[code].get(fq_all), fq_all, b_days) + hl_act.get(code, []),
                     key=lambda e: e[1])
         # 52 週高低用還原價（B1）
         w52 = [(float(h[i]) * af[i], float(l[i]) * af[i]) for i in range(len(d_))

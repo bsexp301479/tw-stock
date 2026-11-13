@@ -246,6 +246,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 /* F13-4、F13-5：不在詞中間斷行；手機隱藏期貨表的約當大台兩欄（下方圖表即為約當大台） */
 .nw{white-space:nowrap}
 .s-ohlc{margin-top:4px}
+.s-hl{margin-top:6px}.s-hl>a{margin-right:8px;white-space:nowrap}   /* 第 22 輪 F22-12 */
 @media (max-width:520px){.oi-tbl th:nth-child(n+6),.oi-tbl td:nth-child(n+6){display:none}.oi-tbl th,.oi-tbl td{padding:8px 5px}}
 /* 第 13 輪 QA 後修正：兩張成交額卡＋共同說明包成一組（佔 2 欄），市場寬度卡仍在同一列右側 */
 .g-mk .mk-pair{grid-column:span 2;display:flex;flex-direction:column;gap:6px}

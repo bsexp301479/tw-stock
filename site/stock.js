@@ -14,6 +14,20 @@ window.disposeStockCharts = () => {
 };
 
 const MARGIN_NOTE = { O: '停止融資', X: '停止融券', '@': '融資分配', '%': '融券分配', '!': '停止買賣' };   // 上市註記
+// 第 22 輪 F22-1：連續天數的文字；|n| < 2 不寫，30 = 最多看 30 日（匯出 streak 的上限）→「30 日以上」
+const runTxt = (n, up, dn) => Math.abs(n || 0) < 2 ? '' : `連${n > 0 ? up : dn} ${Math.abs(n) >= 30 ? '30 日以上' : Math.abs(n) + ' 日'}`;
+// 融資、借券餘額的連續增減天數（張；面額變更、減資依官方換算 mg.k，同還原模式的融資融券圖）；算到 to（該卡資料日），最多 30 日，增減 0 或缺值中斷
+function balStreak(G, D, key, to) {
+  const a = G?.[key], gk = d => (G.k || []).reduce((p, x) => x.d > d ? p * x.k : p, 1);
+  const v = (a || []).map((x, i) => x == null ? null : Math.round(x * gk(D[i]))).filter((_, i) => D[i] <= to).slice(-31);
+  let n = 0;
+  for (let i = v.length - 1; i > 0; i--) {
+    const x = v[i] == null || v[i - 1] == null ? 0 : v[i] - v[i - 1];
+    if (!x || (n && (x > 0) !== (n > 0))) break;
+    n += x > 0 ? 1 : -1;
+  }
+  return n;
+}
 
 const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];
 const ETF_TABS = STOCK_TABS.slice(0, 2);       // 第 15 輪 F15-2：ETF 個股頁沒有基本面
@@ -58,6 +72,8 @@ window.renderStock = async function (code) {
   const F = data.fin;
   const finUp = F && isNum(F.e4) && isNum(F.e4p) && F.e4 > 0 && (F.e4p <= 0 || F.e4 >= F.e4p * 1.5);
   const watching = App.watch.has(code);
+  // 第 22 輪 F22-12：這檔的近期新訊號（文字共用 app.js 的 hlTag；舊 app.js 沒有 hlTag 或不認得的種類不列；ETF 沒有 hl）
+  const HL = typeof hlTag === 'function' ? (s?.hl || []).filter(e => HL_KINDS[e[0]]) : [];
   const tab0 = pageTab('stockTab', STOCK_TABS), tab = E && tab0 === 'fund' ? 'k' : tab0;   // 分頁：走勢／籌碼／基本面（頁首永遠顯示）；第 15 輪：ETF 沒有基本面
   const fd = md(App.latest.flow_date);
   // 第 15 輪：ETF 的 52 週高低由原始價計算（和匯出端 h52 同樣取資料日往前 365 天）
@@ -69,7 +85,7 @@ window.renderStock = async function (code) {
   const MG = data.margin;
   const mgNote = MG?.nt && data.market === 'TWSE' ? [...MG.nt].map(ch => MARGIN_NOTE[ch]).filter(Boolean).join('、') : '';
   const mgCards = MG === undefined ? [] : MG === null ? [['信用交易', '無信用交易', 'flat', '不在融資融券清單']]
-    : [['融資餘額', fmt(MG.mb) + ' 張', '', `1日 ${sgn(MG.m1, 0)}　5日 ${MG.m5 == null ? '--' : sgn(MG.m5, 0)}`],
+    : [['融資餘額', fmt(MG.mb) + ' 張', '', subs(`1日 ${sgn(MG.m1, 0)}　5日 ${MG.m5 == null ? '--' : sgn(MG.m5, 0)}`, !E && runTxt(balStreak(data.mg, P.d, 'mb', MG.d), '增', '減'))],
        ['融券餘額', fmt(MG.sb) + ' 張', '', `1日 ${sgn(MG.s1, 0)}`],
        ['券資比', MG.sr == null ? '--' : fmt(MG.sr, 2) + '%', '', '資料 ' + md(MG.d)],
        ['融資使用率', MG.mu == null ? '--' : fmt(MG.mu, 2) + '%', '', mgNote ? '次一營業日' + mgNote : '資料 ' + md(MG.d)]];
@@ -79,7 +95,7 @@ window.renderStock = async function (code) {
   const MT = data.mt, mcTxt = v => v >= 1e4 ? fmt(v / 1e4, 2) + ' 兆' : fmt(v, v >= 100 ? 0 : 1) + ' 億';
   const mtCards = E ? [] : [['市值', MT?.mc == null ? '--' : mcTxt(MT.mc), '', MT ? '收盤 × 目前發行股數' : '沒有發行股數資料'],
     ['週轉率', MT?.to == null ? '--' : fmt(MT.to, 2) + '%', '', MT ? `${MT.d !== P.d[last] ? md(MT.d) + '，' : ''}成交股數 ÷ 目前發行股數` : '沒有發行股數資料']];
-  const slCards = !SL ? [] : [['借券賣出餘額', fmt(SL.lb) + ' 張', '', `1日 ${sgn(SL.l1, 0)}　5日 ${SL.l5 == null ? '--' : sgn(SL.l5, 0)}${E ? '　資料 ' + md(SL.d) : ''}`],
+  const slCards = !SL ? [] : [['借券賣出餘額', fmt(SL.lb) + ' 張', '', subs(`1日 ${sgn(SL.l1, 0)}　5日 ${SL.l5 == null ? '--' : sgn(SL.l5, 0)}${E ? '　資料 ' + md(SL.d) : ''}`, !E && runTxt(balStreak(data.mg, P.d, 'lb', SL.d), '增', '減'))],
     ...E ? [] : [['借券占股本', SL.lp == null ? '--' : fmt(SL.lp, 2) + '%', '', (SL.lx == null ? '' : `融券的 ${fmt(SL.lx, 1)} 倍　`) + '資料 ' + md(SL.d)]]];
 
   // E2-4：主動 ETF 持有（統一、群益投信 8 檔；沒有任何一檔持有、也沒有 act 時不顯示）
@@ -118,6 +134,7 @@ window.renderStock = async function (code) {
             <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
             ${E && E.m === 'TPEx' ? '<span class="muted small">上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日</span>' : ''}
           </div>
+          ${HL.length ? `<div class="s-hl"><a class="small" href="#/rank/hl">近期新訊號</a>${HL.map(hlTag).join('')}<span class="muted small">只描述發生了什麼，不代表之後的走勢</span></div>` : ''}
           <div class="s-ohlc small num muted"><span class="nw">開 <b>${pfmt(P.o[last])}</b></span>　<span class="nw">高 <b class="up">${pfmt(P.h[last])}</b></span>　<span class="nw">低 <b class="dn">${pfmt(P.l[last])}</b></span>　<span class="nw">昨收 <b>${pfmt(prev)}</b></span>　<span class="nw">量 <b>${fmt(P.v[last])}</b> 張</span></div>
         </div>
         <button class="star ${watching ? 'on' : ''}" id="starBtn">${watching ? '★ 已加入自選' : '☆ 加入自選'}</button>
@@ -129,8 +146,8 @@ window.renderStock = async function (code) {
       ${(tab === 'k' ? [
          [hlFrom ? '區間高' : '52週高', pfmt(E ? eHL[0] : s?.h52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'],
          [hlFrom ? '區間低' : '52週低', pfmt(E ? eHL[1] : s?.l52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'], ...mtCards]
-        : tab === 'chip' ? [...E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), fd], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
-         ['外資5日', yi(s?.f5), cls(s?.f5), '至 ' + fd], ['投信5日', yi(s?.t5), cls(s?.t5), '至 ' + fd]], ...mgCards, ...slCards]
+        : tab === 'chip' ? [...E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), subs(fd, runTxt(s?.s, '買', '賣'))], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
+         ['外資5日', yi(s?.f5), cls(s?.f5), subs('至 ' + fd, runTxt(s?.fs, '買', '賣'))], ['投信5日', yi(s?.t5), cls(s?.t5), subs('至 ' + fd, runTxt(s?.ts, '買', '賣'))]], ...mgCards, ...slCards]
         : [['本益比', fmt(fund.pe, 2), '', subs(fundSub(fund.pe), valSub('pe', fund.pe))], ['股價淨值比', fmt(fund.pb, 2), '', subs(fundSub(fund.pb, false), valSub('pb', fund.pb))],
          ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', subs(fundSub(fund.dy), valSub('dy', fund.dy))]])
         .map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
@@ -489,6 +506,9 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
 }
 
 const SIG_MIN = 3, MACD_MIN = 35;   // 有效訊號至少 3 項才下結論；MACD 需 26 + 9 根
+// 第 22 輪 F22-10：MACD 柱依昨（a）、今（b）的正負寫看到的變化；多空照舊只看柱值升降（b > a 偏多，持平偏空）
+const macdBar = (a, b) => b === a ? 'MACD 柱持平' : b > a ? (a < 0 && b > 0 ? 'MACD 柱由負翻正' : b > 0 ? 'MACD 正柱加長' : 'MACD 負柱縮短')
+  : a > 0 && b < 0 ? 'MACD 柱由正翻負' : b < 0 ? 'MACD 負柱加長' : 'MACD 正柱縮短';
 
 function renderSignals(rows, mode) {
   const period = { '日': '日線', '週': '週線', '月': '月線' }[mode];
@@ -507,7 +527,7 @@ function renderSignals(rows, mode) {
   if (n >= MACD_MIN) {
     const { dif, dea, hist } = calcMACD(C);
     chk(dif[i] > dea[i], 'DIF > DEA', 'DIF < DEA');
-    chk(hist[i] > hist[i - 1], 'MACD 柱放大', 'MACD 柱縮小');
+    chk(hist[i] > hist[i - 1], macdBar(hist[i - 1], hist[i]), macdBar(hist[i - 1], hist[i]));
   }
   const total = bull.length + bear.length, lean = bull.length > bear.length ? 'bull' : bull.length < bear.length ? 'bear' : '';
   const tags = `<div>${bull.map(t => `<span class="tag up">${t}</span>`).join('')}${bear.map(t => `<span class="tag dn">${t}</span>`).join('')}</div>` + oscLine(k, d, rsi, i);

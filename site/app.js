@@ -909,9 +909,11 @@ function sblTable(list, span) {
 }
 
 // ─── 第 21 輪 F21-1：近期新訊號（latest.json stocks[代號].hl；20 日均額取 screen.json）──────────
+// 第 22 輪 F22-11：營收面向改稱「基本面」，加 EPS 事件 et、eg（附加值為季別，標籤前加「26Q3」）
 const HL_KINDS = { nh: ['價量', '60 日新高帶量'], vu: ['價量', '量比 ≥ 2 漲 ≥ 3%'], s3: ['法人', '法人連買 3 日'], t3: ['法人', '投信連買 3 日'],
-  t5: ['法人', '投信 5 日買超 ≥ 成交額 5%'], rv: ['營收', '營收年增 ≥ 30% 創新高'], ae: ['主動ETF', '主動 ETF 新增'] };
-const hlTag = ([k, d, x]) => `<span class="hl-tag">${k === 'rv' ? `${x % 100} 月營收創新高` : k === 'ae' ? `${x} 新增` : HL_KINDS[k][1]} <i>${md(d)}</i></span>`;
+  t5: ['法人', '投信 5 日買超 ≥ 成交額 5%'], rv: ['基本面', '營收年增 ≥ 30% 創新高'], et: ['基本面', 'EPS 轉盈'], eg: ['基本面', 'EPS 年增 ≥ 50%'], ae: ['主動ETF', '主動 ETF 新增'] };
+const hlTag = ([k, d, x]) => `<span class="hl-tag">${k === 'rv' ? `${x % 100} 月營收創新高` : k === 'ae' ? `${x} 新增`
+  : (k === 'et' || k === 'eg' ? `${String(x).slice(2, 4)}Q${x % 100} ` : '') + HL_KINDS[k][1]} <i>${md(d)}</i></span>`;
 const hlDims = x => new Set(x.hl.map(e => HL_KINDS[e[0]]?.[0]).filter(Boolean)).size;
 async function renderHl() {
   const S = await loadScreen(), min = localStore('hlmin', '3');
@@ -929,9 +931,10 @@ async function renderHl() {
             <td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span></td>
             <td class="num">${n}</td><td class="hl-tags">${x.hl.map(hlTag).join('')}</td>
             <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.a20, 1)}億</td></tr>`).join('') + '</tbody></table></div>'}</div>
-      <div class="muted small" style="margin-top:6px">列出最近 5 個交易日（營收為最近 20 個交易日）在價量、法人、營收、主動 ETF 四個面向新出現的事件；同一面向有多個事件只算 1 個面向。
-        「新出現」= 當天符合、前一個交易日不符合，口徑和選股條件相同；60 日新高帶量 = 創 60 日以上新高且量比 ≥ 1.5；營收創新高 = 單月營收創新高且年增 ≥ 30%。
-        營收日期為本站首次收錄日（不一定是公司公布日）；主動 ETF 只涵蓋有持股資料的 ${Object.keys(L.holdings || {}).length} 檔。只描述發生了什麼，不代表之後的走勢。</div></section>`;
+      <div class="muted small" style="margin-top:6px">列出最近 5 個交易日（營收、EPS 為最近 20 個交易日）在價量、法人、基本面（營收、EPS）、主動 ETF 四個面向新出現的事件；同一面向有多個事件只算 1 個面向。
+        「新出現」= 當天符合、前一個交易日不符合，口徑和選股條件相同；60 日新高帶量 = 創 60 日以上新高且量比 ≥ 1.5；營收創新高 = 單月營收創新高且年增 ≥ 30%；
+        EPS 只看全市場最新一季的單季 EPS：轉盈 = 去年同季 ≤ 0、本季 > 0，年增 ≥ 50% 不含去年同季 < 0.1 元（基期低）。
+        營收、EPS 日期為本站首次收錄日（不一定是公司公布日，財報季會集中出現）；主動 ETF 只涵蓋有持股資料的 ${Object.keys(L.holdings || {}).length} 檔。只描述發生了什麼，不代表之後的走勢。</div></section>`;
   onModeSeg();
   if (S) onSeg('hlSeg', v => { localStore('hlmin', null, v); renderHl(); });
   $('#view').addEventListener('click', onRowClick);
@@ -978,6 +981,7 @@ const finTag = x => x.fq && String(x.fq) !== finQ() ? `<span class="muted small"
 const REV_BASE = 10000, EPS_BASE = 0.1;
 const revLow = x => isNum(x.ry) && isNum(x.rb) && x.rb < REV_BASE;
 const epsLow = (v, b) => isNum(v) && isNum(b) && b < EPS_BASE;
+const epsTurn = x => isNum(x.eq) && isNum(x.eb) && x.eb <= 0 && x.eq > 0;   // 第 22 輪 F22-11：單季 EPS 轉盈（同季報卡；ey 為 null）
 // 營收年增排行表下一行：比欄名月份舊而未列入的檔數（市場、成交額門檻同排行）與基期低的定義
 function revNote(inMkt, minTv) {
   const M = revMonth(), n = M ? screenRows().filter(x => isNum(x.ry) && x.rm < M && inMkt(x) && (x.tv ?? 0) >= minTv).length : 0;
@@ -1009,6 +1013,7 @@ const SCR_COLS = {
   pe: ['本益比', x => x.pe, v => fmt(v, 2), 1], dy: ['殖利率', x => x.dy, spct], pb: ['淨值比', x => x.pb, v => fmt(v, 2), 1],
   pbp: ['淨值比位置', x => x.pbp, v => fmt(v) + '%', 1],
   eq: ['單季EPS', x => x.eq, (v, x) => fmt(v, 2) + finTag(x)], ey: ['EPS年增', x => x.ey, (v, x) => epsLow(v, x.eb) ? `基期低${finTag(x)}<span class="sub2">去年同季 ${fmt(x.eb, 2)} 元</span>` : spct(v) + finTag(x)],
+  eb: ['去年同季EPS', x => x.eb, (v, x) => fmt(v, 2) + finTag(x)],   // 第 22 輪 F22-11：「單季 EPS 轉盈」的對照欄（年增無法計算）
   e4: ['近4季EPS', x => x.e4, v => fmt(v, 2)], gm: ['毛利率', x => x.gm, (v, x) => fmt(v, 1) + '%' + finTag(x)],
   gmy: ['毛利率年增', x => x.gmy, (v, x) => sgn(v, 1) + '點' + finTag(x)], eh: ['EPS新高(季)', x => x.eh, int0],
   mc: ['市值', x => x.mc, v => fmt(v, 0) + '億'], to: ['週轉率', x => x.to, v => fmt(v, 2) + '%'],   // 第 12 輪 B11
@@ -1096,6 +1101,7 @@ const SCREEN_CONDS = [
   { id: 'e4', g: '基本面', label: '近 4 季 EPS > 0', sw: true, f: scrPos('e4'), cols: ['e4'] },
   { id: 'eh', g: '基本面', label: '單季 EPS 創 {v} 季新高', opts: [4, 8], def: 4, f: scrGe('eh'), cols: ['eq', 'eh'], title: '最新一季單季 EPS 高於之前連續 N 季' },
   { id: 'ed', g: '基本面', label: '單季 EPS 比去年同季下滑', sw: true, f: x => isNum(x.ey) && x.ey < 0, cols: ['eq', 'ey'] },
+  { id: 'et', g: '基本面', label: '單季 EPS 轉盈', sw: true, f: epsTurn, cols: ['eq', 'eb'], title: '最新一季單季 EPS > 0，去年同季 ≤ 0（年增無法計算）' },
   { id: 'pe', g: '基本面', label: '0 < 本益比 ≤ {v}', opts: [10, 15, 20], def: 15, val: true, f: (x, v, st) => isNum(x.pe) && x.pe > 0 && x.pe <= v && valGuard(x, st), cols: ['pe'] },
   { id: 'dy', g: '基本面', label: '殖利率 ≥ {v}%', opts: [3, 4, 5, 6], def: 5, val: true, f: (x, v, st) => isNum(x.dy) && x.dy >= v && valGuard(x, st), cols: ['dy'] },
   { id: 'pb', g: '基本面', label: '淨值比 ≤ {v}', opts: [1, 1.5, 2], def: 1, val: true, f: (x, v, st) => isNum(x.pb) && x.pb > 0 && x.pb <= v && valGuard(x, st), cols: ['pb'] },
