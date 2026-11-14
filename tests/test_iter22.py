@@ -181,7 +181,7 @@ def test_stock_source():
     assert "!E && runTxt(balStreak(data.mg, P.d, 'lb', SL.d), '增', '減')" in STK
     # F22-12：頁首、共用 hlTag；舊 app.js 沒有 hlTag 或不認得的種類不列
     assert "const HL = typeof hlTag === 'function' ? (s?.hl || []).filter(e => HL_KINDS[e[0]]) : [];" in STK
-    assert '${HL.length ? `<div class="s-hl"><a class="small" href="#/rank/hl">近期新訊號</a>${HL.map(hlTag).join(\'\')}' in STK
+    assert '${HL.length ? `<div class="s-hl"><a class="muted small" href="#/rank/hl">近期新訊號 →</a>${HL.map(hlTag).join(\'\')}' in STK
     head = STK[STK.index('<div class="s-head">'):STK.index('id="starBtn"')]
     assert head.index('<div class="tags">') < head.index('s-hl')                    # 族群標籤下方、頁首內
     assert ".s-hl{margin-top:6px}" in CSS

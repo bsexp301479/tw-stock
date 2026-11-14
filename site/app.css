@@ -262,3 +262,5 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .note-dup .note[open] summary{font-size:0}
 .note-dup .note[open] summary i{font-size:12px;margin-left:0}
 .tbl td.hl-tags,.tbl th.hl-th{white-space:normal;min-width:12em;text-align:left}.hl-tag{display:inline-block;margin:1px 8px 1px 0;font-size:12px}.hl-tag i{font-style:normal;color:var(--text2)}   /* 第 21 輪 F21-1 */
+.hl-sub{display:none}table.pf-tbl{max-width:560px}.pf-tbl td span{display:block;color:var(--text2);font-size:11px}   /* 第 23 輪 F23-4a、F23-1 */
+@media (max-width:480px){.tbl th.hl-th,.tbl td.hl-tags{display:none}.tbl td.nm .hl-sub{display:block;white-space:normal}.tbl .nm .hl-sub span{color:var(--text);font-size:12px;margin:2px 8px 0 0}}

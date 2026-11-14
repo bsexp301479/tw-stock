@@ -799,7 +799,8 @@ const RANK_GROUPS = [['法人', ['n+', 'n-', 'f+', 'f-', 't+', 't-', 'd+', 'd-',
 // screen.json 排行的額外篩選與表格欄位
 const RANK_FILTER = { ry: x => !(x.rm < revMonth()), nh: x => x.nh > 0, dy: x => isNum(x.pe) && x.pe > 0 && x.cap !== 1, pe: x => x.pe > 0 && x.cap !== 1, sr: x => isNum(x.mb) && x.mb >= MARGIN_BASE };
 const RANK_COLS = { vr: ['vr'], nh: ['nh'], rs20: ['rs20'], ry: ['ry'], dy: ['dy', 'pe', 'pb'], pe: ['pe', 'pb', 'dy'], to: ['to', 'mc'] };
-const streakTxt = v => v ? (v > 0 ? '買' : '賣') + Math.abs(v) : '--';
+// 第 23 輪 F23-4d：匯出的連續天數最多看 30 日（streak(…[-30:])），30 寫「買30+」「賣30+」
+const streakTxt = v => v ? (v > 0 ? '買' : '賣') + Math.abs(v) + (Math.abs(v) >= 30 ? '+' : '') : '--';
 const modeSeg = v => segHTML('modeSeg', [['rank', '排行'], ['screen', '選股'], ['hl', '新訊號']], v);
 const onModeSeg = () => onSeg('modeSeg', v => { location.hash = v === 'rank' ? '#/rank' : '#/rank/' + v; });
 
@@ -928,7 +929,7 @@ async function renderHl() {
         : !list.length ? '<div class="empty">目前沒有符合的股票。</div>'
         : `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>面向</th><th class="hl-th">近期新訊號</th><th>收盤</th><th>漲跌</th><th>20日均額</th></tr></thead><tbody>` +
           list.map(([x, n]) => `<tr data-code="${x.code}">
-            <td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span></td>
+            <td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span><div class="hl-sub">${x.hl.map(hlTag).join('')}</div></td>
             <td class="num">${n}</td><td class="hl-tags">${x.hl.map(hlTag).join('')}</td>
             <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.a20, 1)}億</td></tr>`).join('') + '</tbody></table></div>'}</div>
       <div class="muted small" style="margin-top:6px">列出最近 5 個交易日（營收、EPS 為最近 20 個交易日）在價量、法人、基本面（營收、EPS）、主動 ETF 四個面向新出現的事件；同一面向有多個事件只算 1 個面向。
@@ -1389,10 +1390,10 @@ function renderWatch() {
   const etfs = [...App.watch].filter(c => !S[c] && R[c]).map(c => [c, R[c]]);     // 第 20 輪 F20-1：自選的 ETF 另列一張表
   const stk = list.length || !etfs.length;                                         // 只有 ETF 時不顯示股票表與 1 日／5 日
   $('#view').innerHTML = `<section class="sec">
-      <div class="sec-h"><h2>自選</h2><span class="muted small">存在這個瀏覽器裡，換裝置不會同步</span><span class="sp"></span>${stk ? spanSeg(span) : ''}</div>
+      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${stk ? spanSeg(span) : ''}</div>
       ${stk ? `<div class="card">${list.length ? stockTable(list, span)
         : '<div class="empty">還沒有自選股。打開任一檔個股或 ETF，按名稱旁的「☆ 加入自選」。</div>'}</div>` : ''}
-      ${etfs.length ? `<div class="sec-h" style="margin-top:12px"><h2>ETF</h2><span class="muted small">當日行情；成交量為張、成交額為億元</span></div>
+      ${etfs.length ? `${stk ? '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2><span class="muted small">當日行情；成交量為張、成交額為億元</span></div>' : ''}
       <div class="card">${etfWatchTable(etfs)}</div>` : ''}</section>`;
   if (stk) onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
   $('#view').addEventListener('click', onRowClick);

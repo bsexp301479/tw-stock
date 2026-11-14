@@ -76,7 +76,7 @@ for (const [k, w] of Object.entries({{ both: ['2330', '0056', '00981A', '00625K'
 console.log(JSON.stringify(out));"""
     o = json.loads(subprocess.run([node, "-e", js], capture_output=True, text=True, check=True).stdout)
     for k in o:
-        assert "<h2>自選</h2>" in o[k]
+        assert ("<h2>自選 ETF</h2>" if k == "etf" else "<h2>自選</h2>") in o[k]          # 第 23 輪 F23-4c：只有 ETF 時合併成「自選 ETF」
     b = o["both"]
     assert 'data-code="2330"' in b and b.count("data-etf=") == 3 and "9999" not in b      # 不存在的代號不顯示
     assert '<a class="pill hold" href="#/etf/00981A">持股</a>' in b and "rspanSeg" in b

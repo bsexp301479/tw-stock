@@ -136,7 +136,13 @@ def cmd_serve(args):
                 return
             super().handle_error(request, client_address)
 
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(SITE_DIR))
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def end_headers(self):
+            # 第 23 輪 F23-3：瀏覽器每次都向伺服器確認（沒改的檔回 304），更新程式後一般重新整理就生效
+            self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
+
+    handler = functools.partial(Handler, directory=str(SITE_DIR))
     url = f"http://localhost:{args.port}/"
     try:
         httpd = Server(("127.0.0.1", args.port), handler)

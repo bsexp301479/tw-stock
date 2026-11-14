@@ -48,6 +48,7 @@ BREADTH_DAYS = 60              # 市場寬度走勢天數
 NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到小，取符合的最大 N）
 HL_DAYS, HL_REV_DAYS = 5, 20     # 第 21 輪 F21-1：近期新訊號看最近 5 個交易日；營收看最近 20 個交易日
 HL_EPS_YOY, HL_EPS_BASE = 50, 0.1   # 第 22 輪 F22-11：EPS 年增事件門檻（%）；去年同季 < 0.1 元為基期低（同前端 EPS_BASE），不產生事件
+PF_DAYS = (5, 20, 60, 120)       # 第 23 輪 F23-1：個股頁近期表現的 N 日區間（另有今年以來 y、52 週 w、上市以來 s）
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
@@ -967,20 +968,49 @@ def price_stats(d_, adj, tv, days, idx):
     out["vr"] = _f(yi[-1] / (sum(prior) / 20)) if len(prior) == 20 and sum(prior) > 0 else None
     raw = {}
     for n in (5, 20, 60):
-        b = days[-1 - n] if len(days) > n else None
-        base = next((a for d, a in zip(reversed(d_), reversed(adj)) if d <= b and a is not None), None) \
-            if b is not None and d_[0] <= b else None
-        raw[n] = (lc / base - 1) * 100 if base and lc else None
+        raw[n] = period_return(d_, adj, lc, days[-1 - n] if len(days) > n else None)
         out[f"r{n}"] = _f(raw[n])
     for n in (20, 60):
-        b = days[-1 - n] if len(days) > n else None
-        ir = (float(idx[days[-1]]) / float(idx[b]) - 1) * 100 if b in idx and days[-1] in idx else None
+        ir = index_return(idx, days[-1 - n] if len(days) > n else None, days[-1])
         out[f"rs{n}"] = _f(raw[n] - ir) if raw[n] is not None and ir is not None else None
     for n in (20, 60):
         out[f"b{n}"] = _f((lc / (sum(px[-n:]) / n) - 1) * 100) if len(px) >= n else None
     out["nh"] = next((n for n in NH_DAYS if traded and len(px) > n and px[-1] > max(px[-n - 1:-1])), 0)
     out["nl"] = next((n for n in NH_DAYS if traded and len(px) > n and px[-1] < min(px[-n - 1:-1])), 0)
     return out
+
+
+def period_return(d_, adj, lc, b):
+    """還原報酬 %（未四捨五入）= 最後成交的還原收盤 lc ÷ 基準日 b（含）以前最後一個有成交的還原收盤 − 1；
+    b 是 None、早於第一個資料列或之前沒有成交 → None。選股 r5／r20／r60 與個股頁近期表現共用（第 23 輪抽出）。"""
+    base = next((a for d, a in zip(reversed(d_), reversed(adj)) if d <= b and a is not None), None) \
+        if b is not None and d_[0] <= b else None
+    return (lc / base - 1) * 100 if base and lc else None
+
+
+def index_return(idx, b, last):
+    """指數報酬 %（未四捨五入）= last 收盤 ÷ 基準日 b 收盤 − 1；任一天沒有指數 → None。"""
+    return (float(idx[last]) / float(idx[b]) - 1) * 100 if b in idx and last in idx else None
+
+
+def stock_perf(d_, adj, days, idx, w52_start):
+    """
+    第 23 輪 F23-1：stocks/{代號}.json 的 pf = [[區間, 基準日, 本股 %, 指數 %, 差距（百分點）]]，用法同 price_stats（days 要完整的交易日序列）。
+    區間：PF_DAYS（基準日 days[-1-N]，同選股）、"y" 今年以來（前一年最後一個交易日）、"w" 52 週（w52_start 以前最後一個交易日，同 52 週高低）；
+    本股算不出（新上市）時三個值都是 None，並在最後加 "s"：從第一個成交日的收盤起算（上市以來，不是承銷價）。
+    差距用未四捨五入的值相減，和選股 rs20、rs60 相同。
+    """
+    px = [(d, a) for d, a in zip(d_, adj) if a is not None]
+    lc, last = px[-1][1], days[-1]
+    y, w = bisect_left(days, date(last.year, 1, 1)), bisect_right(days, w52_start)
+    bases = [(n, days[-1 - n] if len(days) > n else None) for n in PF_DAYS] + [("y", days[y - 1] if y else None), ("w", days[w - 1] if w else None)]
+
+    def row(k, b):
+        r = period_return(d_, adj, lc, b)
+        i = index_return(idx, b, last) if r is not None else None
+        return [k, b and str(b), _f(r), _f(i), _f(r - i) if i is not None else None]
+    out = [row(k, b) for k, b in bases]
+    return out + [row("s", px[0][0])] if any(r[2] is None for r in out) else out
 
 
 # 第 18 輪 F18-2：KD(9,3,3)、RSI(14)。和 site/stock.js 的 calcKD、calcRSI 同一套公式（改一邊要改另一邊）
@@ -1176,16 +1206,17 @@ def fin_stock(cum: dict, tbl: str, seen):
     for _ in range(FIN_QUARTERS):
         keys.append(k)
         k = prev_quarter(*k)
-    rows = []
+    rows, nm = [], []
     for yy, qq in reversed(keys):
         if (yy, qq) not in cum:
             continue
         s, b = fin_single(cum, yy, qq), fin_single(cum, yy - 1, qq)
         rows.append([yy * 100 + qq, _f(s[4]), fin_yoy(s[4], b and b[4]), fin_margin(s[1], s[0]), fin_margin(s[2], s[0]), s[0],
                      _f(b and b[4])])   # 第 10 輪 QA-01：去年同季單季 EPS（前 4 季的去年同季不在 q 內，畫面靠它判斷「轉盈」）
+        nm.append(fin_margin(s[3], s[0]))   # 第 23 輪 F23-2：稅後淨利率 = 單季歸屬母公司淨利 ÷ 單季營收
     e, eb = cum[(y, q)][4], cum.get((y - 1, q), (None,) * 5)[4]
     return {"t": tbl, "q": rows, "c": {"e": _f(e), "ey": fin_yoy(e, eb), **({"fs": str(seen)} if seen else {})},
-            "e4": _f(fin_e4(cum, y, q)), "e4p": _f(fin_e4(cum, y - 1, q))}
+            "e4": _f(fin_e4(cum, y, q)), "e4p": _f(fin_e4(cum, y - 1, q)), **({"nm": nm} if tbl == "ci" else {})}   # nm 和 q 逐季對齊，只有一般業
 
 
 def fin_screen(cum: dict) -> dict:
@@ -1460,6 +1491,7 @@ def export_all() -> float:
     official_breadth = _load_breadth(cur, latest_date)
     # 寬度輸出 BREADTH_DAYS 天，前面多 60 天給 MA60
     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
+    p_days = sorted({r[0] for rows in prices.values() for r in rows})   # 第 23 輪 F23-1：完整交易日序列（b_days 只有 120 天，120 日要第 121 天）
     status = build_status(cur, latest_date, now)
     valuation, stock_val, val_date = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe
     fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
@@ -1562,6 +1594,9 @@ def export_all() -> float:
             **({"mt": {"d": str(latest_date), "mc": mc, "to": to}} if mc is not None else {}),   # 第 12 輪 B11
             **({"mg": mg} if mg else {}),
             **({"act": act} if act else {}),
+            # 第 23 輪 F23-1：近期表現；最後一列不是資料日（停牌、下市）或從沒成交 → 不輸出（同 latest.stocks）
+            **({"pf": stock_perf(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))], p_days,
+                                 idx_close[info["market"]], w52_start)} if d_[-1] == latest_date and any(x is not None for x in c) else {}),
         })
         # 市場寬度：還原收盤（無成交日不列入）、成交額
         b_series[info["market"]].append({d_[i]: float(c[i]) * af[i] for i in range(len(d_)) if d_[i] >= b_from and c[i] is not None})

@@ -29,6 +29,21 @@ function balStreak(G, D, key, to) {
   return n;
 }
 
+// 第 23 輪 F23-1：近期表現（匯出端 pf = [[區間, 基準日, 本股 %, 指數 %, 差距]]，和選股 5／20／60 日報酬、相對強度同一套）；停牌、ETF 沒有 pf。nt = 本股最後成交日（今天無成交時）
+const PF_NAME = { 5: '5 日', 20: '20 日', 60: '60 日', 120: '120 日', y: '今年以來', w: '52 週' };
+function perfHTML(pf, mkt, nt) {
+  const ix = mkt === 'TWSE' ? '加權指數' : '櫃買指數', ls = mkt === 'TWSE' ? '上市以來' : '上櫃以來', at = k => pf.find(r => r[0] === k)?.[1];
+  const td = (v, u) => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v) + u}</td>`;
+  const short = '還原價（含股息）；指數不含股息，長區間的差距會偏向個股';      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
+  const full = `差距 = 本股 − ${ix}（百分點）。本股用還原收盤（除權息、減資、現金增資依官方參考價調整，和 K 線、52 週高低、選股相同），今天無成交時用最後成交的收盤；${ix}是價格指數，不含股息，所以區間越長，差距越偏向本股（大約是期間的殖利率）。` +
+    `N 日 = 從往前第 N 個交易日的收盤起算，5、20、60 日和選股的 5／20／60 日報酬、20／60 日相對強度相同；今年以來從 ${at('y')} 收盤起算；52 週從 ${at('w')} 收盤起算。` +
+    `「--」= 基準日時本站還沒有這檔的成交${at('s') ? `；${ls}從本站第一個成交日 ${at('s')} 的收盤起算，不是承銷價（本站日線從 2025-10-30 起，復牌或轉換為控股公司的股票也從第一個成交日起算）` : ''}。`;
+  return `<section class="sec card"><div class="sec-h"><h2>近期表現</h2><span class="muted small">至 ${md(App.latest.date)}${nt ? `，本股最後成交 ${md(nt)}` : ''}</span></div>
+    <div class="tbl-wrap"><table class="tbl pf-tbl"><thead><tr><th>區間</th><th>本股</th><th>${ix}</th><th>差距</th></tr></thead><tbody>` +
+    pf.map(([k, b, s, i, g]) => `<tr><td>${k === 's' ? `${ls}<span>${md(b)} 起</span>` : PF_NAME[k]}</td>${td(s, '%')}${td(i, '%')}${td(g, '')}</tr>`).join('') +
+    `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
+}
+
 const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];
 const ETF_TABS = STOCK_TABS.slice(0, 2);       // 第 15 輪 F15-2：ETF 個股頁沒有基本面
 // 第 15 輪 F15-2：ETF 個股頁的價格說明（原始價；本站沒有 ETF 除息資料）。短句一定可見，完整說明收合（短句用變數：test_iter13 數 noteHTML 字面呼叫）
@@ -134,7 +149,7 @@ window.renderStock = async function (code) {
             <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
             ${E && E.m === 'TPEx' ? '<span class="muted small">上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日</span>' : ''}
           </div>
-          ${HL.length ? `<div class="s-hl"><a class="small" href="#/rank/hl">近期新訊號</a>${HL.map(hlTag).join('')}<span class="muted small">只描述發生了什麼，不代表之後的走勢</span></div>` : ''}
+          ${HL.length ? `<div class="s-hl"><a class="muted small" href="#/rank/hl">近期新訊號 →</a>${HL.map(hlTag).join('')}<span class="muted small">只描述發生了什麼，不代表之後的走勢</span></div>` : ''}
           <div class="s-ohlc small num muted"><span class="nw">開 <b>${pfmt(P.o[last])}</b></span>　<span class="nw">高 <b class="up">${pfmt(P.h[last])}</b></span>　<span class="nw">低 <b class="dn">${pfmt(P.l[last])}</b></span>　<span class="nw">昨收 <b>${pfmt(prev)}</b></span>　<span class="nw">量 <b>${fmt(P.v[last])}</b> 張</span></div>
         </div>
         <button class="star ${watching ? 'on' : ''}" id="starBtn">${watching ? '★ 已加入自選' : '☆ 加入自選'}</button>
@@ -180,6 +195,7 @@ window.renderStock = async function (code) {
       <div id="mC" class="chart-box" style="height:120px"></div>
     </section>
 
+    ${data.pf ? perfHTML(data.pf, data.market, noTrade ? P.d[lt] : null) : ''}
     ${E ? '' : '<section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>'}`}`;
 
   onSeg('stockTabSeg', v => { localStore('stockTab', null, v); window.disposeStockCharts(); window.renderStock(code); });
@@ -366,9 +382,10 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
     ...(NT[i] ? { color: FLAT, borderColor: FLAT, wickColor: FLAT } : {}) })));
   // 除權息、減資、面額變更標記（還原／原始都顯示）；週／月線同一根有多筆時合併文字，第 19 輪 F19-2：週／月線寫事件日「M/D 類型」
   const mdn = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
-  kSer.setMarkers(raw.flatMap((r, i) => r.ev.length ? [{ time: T[i], position: 'belowBar', shape: 'arrowUp',
+  const mkPos = mode === '日' ? { position: 'belowBar', shape: 'arrowUp' } : { position: 'aboveBar', shape: 'arrowDown' };   // 第 23 輪 F23-4b：週／月 K 標記在 K 棒上方
+  kSer.setMarkers(raw.flatMap((r, i) => r.ev.length ? [{ time: T[i], ...mkPos,
     color: css('--blue'), text: [...new Set(r.ev.map(e => (mode === '日' ? '' : mdn(e.d) + ' ') + evMark(e)))].join('・') }]
-    : r.gx ? [{ time: T[i], position: 'belowBar', shape: 'arrowUp', color: css('--text2'), text: r.gx }] : []));   // 第 15 輪：ETF 推測的價格調整日
+    : r.gx ? [{ time: T[i], ...mkPos, color: css('--text2'), text: r.gx }] : []));   // 第 15 輪：ETF 推測的價格調整日
   line(kc, ma5, '#888780'); line(kc, ma20, '#EF9F27'); line(kc, ma60, '#7F77DD');
 
   const vc = mk('vC', false);
@@ -566,6 +583,7 @@ function renderFin(F) {
     ['累計 EPS', fmt(F.c.e, 2), '', `${q === 4 ? '全年' : `1～${q * 3} 月`}，年增 ${cy}`],
     ...(F.t === 'ci' ? [['毛利率', pc1(L[3]), '', `去年同季 ${pc1(base?.[3])}`]] : []),
     ...(L[4] != null ? [['營益率', pc1(L[4]), '', `去年同季 ${pc1(base?.[4])}`]] : []),
+    ...(F.t === 'ci' && F.nm ? [['稅後淨利率', pc1(F.nm[F.nm.length - 1]), '', `去年同季 ${pc1(F.nm[Q.indexOf(base)])}`]] : []),   // 第 23 輪 F23-2：nm 和 q 逐季對齊；舊 JSON 沒有 nm 不顯示
     ['近 4 季 EPS', fmt(F.e4, 2), '', `一年前 ${fmt(F.e4p, 2)}`]];
   const v = Q.map(r => r[1]).filter(isNum), mx = Math.max(0, ...v), mn = Math.min(0, ...v), span = mx - mn || 1, H = 110;
   const bar = r => { const e = r[1], c = e == null ? '' : r[2] == null ? 'flat' : r[2] >= 0 ? 'up' : 'dn';
@@ -576,7 +594,7 @@ function renderFin(F) {
   $('#finBox').innerHTML = `<div class="metrics">${stats.map(([l, x, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c}" style="font-size:16px">${x}</div><div class="s">${sub}</div></div>`).join('')}</div>
     <div class="ch-label">近 ${Q.length} 季單季 EPS（元）；紅／綠 = 比去年同季增加／減少，灰 = 無法比較（去年同季虧損或沒有資料）</div>
     <div class="fin-bars">${Q.map(bar).join('')}</div>
-    <div class="muted small" style="margin-top:6px">${noteHTML('單季、近 4 季 EPS 由累計相減，可能和公司公告略有差異', `單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。官方本益比以最新股數計算，期間有增資的公司，近 4 季 EPS 會和「股價 ÷ 本益比」有差異。金融業沒有毛利率。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}`)}</div>`;
+    <div class="muted small" style="margin-top:6px">${noteHTML('單季、近 4 季 EPS 由累計相減，可能和公司公告略有差異', `單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。官方本益比以最新股數計算，期間有增資的公司，近 4 季 EPS 會和「股價 ÷ 本益比」有差異。金融業沒有毛利率。稅後淨利率（只有一般業）= 單季歸屬母公司業主的淨利 ÷ 單季營收，不含非控制權益；部分網站用合併總淨利，數字會不同。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}`)}</div>`;
 }
 
 function renderRevenue(rows) {
