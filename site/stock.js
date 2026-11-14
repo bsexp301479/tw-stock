@@ -52,12 +52,15 @@ const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除
   '上市 ETF：除息等價格調整日官方漲跌為 0（不比價），本站把「收盤 − 官方漲跌」和前一日收盤不同的日子標成「息?」（官方漲跌 0）或「調?」（漲跌不是 0，多為分割），只是推測，也可能是合併或資料更正，沒有配息金額。' +
   '上櫃 ETF：官方漲跌就是收盤減前一日收盤，除息日的漲跌含除息的跌幅，本站無法辨識除息日，不標示。'); };
 
-window.renderStock = async function (code) {
+// 第 25 輪 D25-05：產業鏈、概念股標籤只顯示前 2 個，其餘收在「+N」（點了展開，展開後按「收合」收回）
+const tagFold = t => t.slice(0, 2).join('') + (t.length > 2 ? `<span class="tag-rest" hidden>${t.slice(2).join('')}</span><button class="pill more" id="tagMore" data-n="+${t.length - 2}">+${t.length - 2}</button>` : '');
+
+window.renderStock = async function (code, sub) {
   const E = !App.latest.stocks[code] && App.latest.etfs?.rows?.[code];   // 第 15 輪 F15-2：ETF 個股頁（頁首用 etfs.rows，資料 data/etfp/）
   const s = App.latest.stocks[code] || E || undefined;
   let data;
   try { data = await loadStock(code, E ? 'etfp' : 'stocks'); }
-  catch (e) { $('#view').innerHTML = `<div class="empty">找不到 ${esc(code)} 的資料</div>`; return; }
+  catch (e) { $('#view').innerHTML = `<div class="empty">找不到 ${esc(code)} 的資料。可用上方搜尋框查代號或名稱，或<a href="#/today" style="color:var(--blue)">回今日</a></div>`; return; }
   const P = data.prices, n = P.d.length;
   const last = n - 1;
   // 最新一天沒成交（開高低收為 --）時，改顯示最後成交日的收盤，不算漲跌
@@ -89,6 +92,9 @@ window.renderStock = async function (code) {
   const watching = App.watch.has(code);
   // 第 22 輪 F22-12：這檔的近期新訊號（文字共用 app.js 的 hlTag；舊 app.js 沒有 hlTag 或不認得的種類不列；ETF 沒有 hl）
   const HL = typeof hlTag === 'function' ? (s?.hl || []).filter(e => HL_KINDS[e[0]]) : [];
+  // 第 25 輪 D25-08：網址有分頁就用網址的；換一檔股票時從「走勢」開始
+  if (STOCK_TABS.some(t => t[0] === sub)) localStore('stockTab', null, sub); else if (App.stockCode !== code) localStore('stockTab', null, 'k');
+  App.stockCode = code;
   const tab0 = pageTab('stockTab', STOCK_TABS), tab = E && tab0 === 'fund' ? 'k' : tab0;   // 分頁：走勢／籌碼／基本面（頁首永遠顯示）；第 15 輪：ETF 沒有基本面
   const fd = md(App.latest.flow_date);
   // 第 15 輪：ETF 的 52 週高低由原始價計算（和匯出端 h52 同樣取資料日往前 365 天）
@@ -133,8 +139,8 @@ window.renderStock = async function (code) {
     <section class="sec card">
       <div class="s-head">
         <div>
-          <div><span class="s-name">${esc(data.name)}</span><span class="s-code">${code}</span></div>
-          <div><span class="s-price num ${cls(change)}">${pfmt(close)}</span>
+          <div class="s-nm"><span class="s-name">${esc(data.name)}</span><span class="s-code">${code}</span></div>
+          <div class="s-px"><span class="s-price num ${cls(change)}">${pfmt(close)}</span>
             ${noTrade ? '<span class="s-chg flat">無成交</span>' : gxLast ? '<span class="s-chg flat" title="官方漲跌為 0、收盤和前一日收盤不同：推測是除息等價格調整">不比價（推測價格調整）</span>'
               : `<span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span>`}
             ${!noTrade && s?.rel ? `<span class="muted small">相對 ${md(s.rel)} 收盤（前一交易日無成交）</span>` : ''}</div>
@@ -144,8 +150,8 @@ window.renderStock = async function (code) {
               : `<span class="pill al-n" title="${esc(`${md(a.a)} 公布注意交易資訊\n${a.r || ''}`)}">注意</span>`).join('')}
             <span class="pill">${data.market === 'TWSE' ? '上市' : '上櫃'}</span><span class="pill">${E ? 'ETF' : esc(data.industry)}</span>
             ${E && App.latest.holdings?.[code] ? `<a class="pill hold" href="#/etf/${code}">持股 →</a>` : ''}
-            ${(data.chains || []).map(([chain, seg, subs]) => `<span class="pill chain" title="${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}">${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}</span>`).join('')}
-            ${(data.concepts || []).map(c => `<span class="pill">${esc(c)}</span>`).join('')}
+            ${tagFold([...(data.chains || []).map(([chain, seg, subs]) => `<span class="pill chain" title="${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}">${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}</span>`),
+            ...(data.concepts || []).map(c => `<span class="pill">${esc(c)}</span>`)])}
             <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
             ${E && E.m === 'TPEx' ? '<span class="muted small">上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日</span>' : ''}
           </div>
@@ -157,10 +163,11 @@ window.renderStock = async function (code) {
     </section>
 
     ${pageTabsHTML('stockTabSeg', E ? ETF_TABS : STOCK_TABS, tab)}
-    <section class="sec metrics">
+    <section class="sec metrics${tab === 'k' ? ' kv' : ''}">
       ${(tab === 'k' ? [
          [hlFrom ? '區間高' : '52週高', pfmt(E ? eHL[0] : s?.h52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'],
-         [hlFrom ? '區間低' : '52週低', pfmt(E ? eHL[1] : s?.l52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'], ...mtCards]
+         [hlFrom ? '區間低' : '52週低', pfmt(E ? eHL[1] : s?.l52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'],
+         ...E ? [] : [['本益比', fmt(fund.pe, 2), '', fundSub(fund.pe)], ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', fundSub(fund.dy)], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd]], ...mtCards]
         : tab === 'chip' ? [...E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), subs(fd, runTxt(s?.s, '買', '賣'))], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
          ['外資5日', yi(s?.f5), cls(s?.f5), subs('至 ' + fd, runTxt(s?.fs, '買', '賣'))], ['投信5日', yi(s?.t5), cls(s?.t5), subs('至 ' + fd, runTxt(s?.ts, '買', '賣'))]], ...mgCards, ...slCards]
         : [['本益比', fmt(fund.pe, 2), '', subs(fundSub(fund.pe), valSub('pe', fund.pe))], ['股價淨值比', fmt(fund.pb, 2), '', subs(fundSub(fund.pb, false), valSub('pb', fund.pb))],
@@ -180,7 +187,7 @@ window.renderStock = async function (code) {
         ${segHTML('kSeg', [['日', '日'], ['週', '週'], ['月', '月']], mode)}
         ${E ? '' : segHTML('adjSeg', [['還原', '還原'], ['原始', '原始']], adjMode)}
         <button class="seg" id="latestBtn" style="padding:4px 12px;font-size:12px">回到最新</button>
-        <span class="sp"></span><span class="muted small">拖曳平移、滾輪縮放</span>
+        <span class="sp"></span><span class="muted small hint">拖曳平移、滾輪縮放</span>
       </div>
       ${E ? `<div class="muted small val-note">${ETF_NOTE(E.m)}</div>` : ''}
       <div class="kleg" id="kLegend"></div>
@@ -198,7 +205,8 @@ window.renderStock = async function (code) {
     ${data.pf ? perfHTML(data.pf, data.market, noTrade ? P.d[lt] : null) : ''}
     ${E ? '' : '<section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>'}`}`;
 
-  onSeg('stockTabSeg', v => { localStore('stockTab', null, v); window.disposeStockCharts(); window.renderStock(code); });
+  onSeg('stockTabSeg', v => { localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
+  $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });
   $('#starBtn')?.addEventListener('click', () => {
     App.watch.has(code) ? App.watch.delete(code) : App.watch.add(code);
     saveWatch();
@@ -208,6 +216,8 @@ window.renderStock = async function (code) {
   });
   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
   if (tab !== 'k') return;
+  // 第 25 輪 D25-05：關鍵數字列在寬螢幕併進頁首卡、手機放到 K 線卡下方，主圖進第一屏
+  if (matchMedia('(min-width:721px)').matches) $('#view .s-head').after($('#view .metrics.kv')); else $('#kC').closest('section').after($('#view .metrics.kv'));
   if (!E) $('#adjSeg').title = '還原：依除權息、減資、面額變更調整歷史價格（現金增資除權也依官方參考價調整），最新收盤不變。均線訊號與 52 週高低一律以還原價格計算';
   // 日／週／月與還原／原始切換都重畫；技術面訊號一律用還原價（P13）
   const draw = () => {
@@ -361,7 +371,7 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   const priceFmt = { type: 'custom', minMove: 0.01, formatter: pfmt };
   const mk = (id, timeVisible, logo = false) => LC.createChart($('#' + id), {
     autoSize: true,
-    layout: { background: { type: 'solid', color: 'transparent' }, textColor: text2, fontSize: 10, attributionLogo: logo },
+    layout: { background: { type: 'solid', color: 'transparent' }, textColor: text2, fontSize: 11, attributionLogo: logo },
     grid: { vertLines: { color: grid }, horzLines: { color: grid } },
     crosshair: { mode: LC.CrosshairMode.Normal },
     rightPriceScale: { borderVisible: false, minimumWidth: 76 },   // 各圖刻度同寬，K 棒才會上下對齊
@@ -446,7 +456,7 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   } else {
     const macdFmt = { type: 'price', precision: 2, minMove: 0.01 };
     const hSer = mc.addHistogramSeries({ priceFormat: macdFmt, priceLineVisible: false, lastValueVisible: false });
-    hSer.setData(hist.map((v, i) => ({ time: T[i], value: v, color: v >= 0 ? 'rgba(55,138,221,.65)' : 'rgba(213,90,48,.65)' })));
+    hSer.setData(hist.map((v, i) => ({ time: T[i], value: v, color: (v >= 0 ? UP : DN) + 'a6' })));
     oSer = line(mc, dif, '#378ADD', macdFmt);
     line(mc, dea, '#EF9F27', macdFmt);
     oVal = i => dif[i];

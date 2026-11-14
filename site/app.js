@@ -63,18 +63,19 @@ const routes = {
   rank: arg => arg && arg.startsWith('screen') ? renderScreen(arg.slice(6)) : arg === 'hl' ? renderHl() : renderRank(arg),   // 第 8 輪：#/rank/screen 條件選股；第 21 輪：#/rank/hl 新訊號
   watch: renderWatch,
   etf: code => code === 'active' ? renderActive() : code ? renderHoldings(code) : renderEtf(),   // 第 7 輪：#/etf/active 彙總排行
-  stock: code => window.renderStock(code),
+  stock: (code, sub) => window.renderStock(code, sub),   // 第 25 輪 D25-08：#/stock/代號/分頁
 };
 
 async function route() {
-  const [, page = 'today', arg] = location.hash.split('/');
+  const [, page = 'today', arg, sub] = location.hash.split('/');
+  if (page !== 'watch') App.watchUndo = App.watchEdit = null;   // 離開自選頁：清掉復原、結束編輯
   document.querySelectorAll('[data-tab]').forEach(a => a.classList.toggle('on', a.dataset.tab === page));
   const view = $('#view');
   if (window.Plotly && $('#bubble')) Plotly.purge('bubble');
   window.disposeStockCharts?.();
   disposeFuturesChart();
   try {
-    await (routes[page] || renderToday)(arg);
+    await (routes[page] || renderToday)(arg, sub);
   } catch (e) {
     console.error(e);
     view.innerHTML = `<div class="empty">載入失敗：${esc(e.message)}</div>`;
@@ -89,14 +90,19 @@ function setupSearch() {
   const go = code => { list.hidden = true; input.value = ''; input.blur(); location.hash = '#/stock/' + code; };
   const draw = () => {
     list.innerHTML = hits.map(([c, s], i) =>
-      `<a href="#/stock/${c}" class="${i === active ? 'on' : ''}"><span class="code">${c}</span>${esc(s.n)}<span class="muted small" style="margin-left:auto">${esc(s.i ?? 'ETF')}</span></a>`).join('');
-    list.hidden = !hits.length;
+      `<a href="#/stock/${c}" class="${i === active ? 'on' : ''}"><span class="code">${c}</span>${esc(s.n)}<span class="muted small ind" style="margin-left:auto">${esc(s.i ?? 'ETF')}</span>` +
+      `<span class="px num ${cls(s.p)}">${pfmt(s.c)}${s.p == null ? '' : ' ' + sgn(s.p) + '%'}</span></a>`).join('') ||
+      (input.value.trim() && App.latest ? `<div class="qnone">找不到「${esc(input.value.trim())}」，可輸入代號或名稱的一部分</div>` : '');   // 第 25 輪 D25-11
+    list.hidden = !list.innerHTML;
   };
   input.addEventListener('input', () => {
     const q = input.value.trim().toLowerCase();
     if (!q || !App.latest) { hits = []; return draw(); }
     // 第 15 輪 F15-2：股票照舊在前（代號開頭 → 名稱包含），ETF（latest.json etfs.rows）同規則接在後面
-    const pick = all => all.filter(([c]) => c.toLowerCase().startsWith(q)).concat(all.filter(([c, s]) => !c.toLowerCase().startsWith(q) && s.n.toLowerCase().includes(q)));   // 代號轉小寫：00981A
+    // 第 25 輪 D25-11：名稱開頭符合的排在名稱包含之前，兩組各依成交額由大到小
+    const byTv = (a, b) => (b[1].tv ?? 0) - (a[1].tv ?? 0), nm = s => s.n.toLowerCase();
+    const pick = all => { const rest = all.filter(([c]) => !c.toLowerCase().startsWith(q));   // 代號轉小寫：00981A
+      return all.filter(([c]) => c.toLowerCase().startsWith(q)).concat(rest.filter(([, s]) => nm(s).startsWith(q)).sort(byTv), rest.filter(([, s]) => !nm(s).startsWith(q) && nm(s).includes(q)).sort(byTv)); };
     hits = pick(Object.entries(App.latest.stocks)).concat(pick(Object.entries(App.latest.etfs?.rows || {}))).slice(0, 12);
     active = 0;
     draw();
@@ -117,8 +123,9 @@ const QUADS = [
   ['漲潮', '加速流入'], ['輪動', '流入但放緩'], ['觀望', '流出但放緩'], ['退潮', '加速流出'],
 ];
 
-function renderToday() {
+function renderToday(t) {
   const L = App.latest, groups = L.groups[App.group];
+  if (TODAY_TABS.some(x => x[0] === t)) localStore('todayTab', null, t);   // 第 25 輪 D25-08：#/today/分頁
   const span = localStore('span', '5');
   const key = span === '1' ? 'net_1d' : 'net_5d';
   const counts = Object.fromEntries(QUADS.map(([q]) => [q, groups.filter(g => g.quadrant === q).length]));
@@ -153,7 +160,7 @@ function renderToday() {
   const tab = pageTab('todayTab', TODAY_TABS);
   const fut = `${futuresHTML(L.futures)}${oiHTML(L.futures_oi, L.forecast)}`;
   const body = {
-    ov: `<section class="sec grid g-stats g-mk">
+    ov: `${sumStrip(L)}<section class="sec grid g-stats g-mk">
       <div class="mk-pair"><div class="mk-cards">${mk('TWSE', '上市')}${mk('TPEx', '上櫃')}</div>
       ${L.breadth?.TWSE?.o || L.breadth?.TPEx?.o ? '<div class="muted small">家數為官方（股票）；成交額為網站自算，不含 ETF</div>' : ''}</div>
       ${breadthCard(L)}
@@ -172,7 +179,7 @@ function renderToday() {
   body.flow = `<section class="sec grid ${L.insti_official ? 'g2' : 'g-one'}">${instiCard(L)}</section>
     <section class="sec grid g2">
       <div class="card">
-        <div class="sec-h"><h2>錢流去哪</h2><span class="muted small">估算，不含 ETF</span><span class="sp"></span>${segHTML('spanSeg', [['1', '今天'], ['5', '近 5 日']], span)}</div>
+        <div class="sec-h"><h2>錢流去哪</h2><span class="muted small">${span === '1' ? '今天' : '近 5 日'}，估算，不含 ETF</span><span class="sp"></span>${segHTML('spanSeg', [['1', '今天'], ['5', '近 5 日']], span)}</div>
         <div class="bars">${inflow.slice(0, nFlow).map(g => bar(g, 'var(--up)')).join('') || '<div class="empty">沒有淨流入的板塊</div>'}</div>
       </div>
       <div class="card">
@@ -194,13 +201,26 @@ function renderToday() {
     ${pageTabsHTML('todayTabSeg', TODAY_TABS, tab)}
     ${body[tab]}`;
 
-  onSeg('todayTabSeg', v => { localStore('todayTab', null, v); disposeFuturesChart(); renderToday(); });
+  onSeg('todayTabSeg', v => { localStore('todayTab', null, v); history.replaceState(null, '', '#/today/' + v); disposeFuturesChart(); renderToday(); });
   if ($('#grpSeg')) onSeg('grpSeg', v => { setGroup(v); renderToday(); });
   if ($('#spanSeg')) onSeg('spanSeg', v => { localStore('span', null, v); renderToday(); });
   $('#flowMore')?.addEventListener('click', () => { App.flowAll = !App.flowAll; renderToday(); });
   $('#alMore')?.addEventListener('click', () => { App.alertAll = !App.alertAll; renderToday(); });
+  $('#view details.al-box')?.addEventListener('toggle', e => { App.alOpen = e.target.open; });
   $('#view').addEventListener('click', onRowClick);
   if (tab === 'fut') { drawFutures(L.futures); drawOI(L.futures_oi); }
+}
+
+// 第 25 輪 D25-03：總覽最上方的大盤摘要。數字和口徑沿用各分頁的卡片（官方法人、期貨法人大台淨額、價差、股票融資），點了切到該分頁
+function sumStrip(L) {
+  const O = L.insti_official, P = L.insti_official_tpex, F = L.futures, k = (F?.d?.length ?? 0) - 1, sp = F?.sp?.[k];
+  const X = L.futures_oi?.inv?.find(r => r.k === 'foreign'), M = L.margin || {}, dd = x => x && x !== L.date ? `（${md(x)}）` : '';
+  const it = (tab, l, n, v, sub) => `<a class="sum-i" href="#/today/${tab}"><span class="l">${l}</span><b class="${cls(n)}">${v}</b><span class="s">${sub}</span></a>`;
+  const ins = (x, m) => x && it('flow', `三大法人 ${m}${dd(x.date)}`, x.total, sgn(x.total, 1) + '億', `外資 ${sgn(x.foreign, 1)}億・官方，含 ETF`);
+  const mg = (x, m) => x && it('credit', `融資 ${m}${dd(x.d)}`, x.m1, sgn(x.m1, 0) + ' 張', `${sgn(x.mp)}%・股票，不含 ETF`);
+  const html = [ins(O, '上市'), ins(P, '上櫃'), X && it('fut', `外資台指期淨額${dd(L.futures_oi.date)}`, X.net, sgn(X.net, 0) + ' 口', `增減 ${sgn(X.chg, 0)}・大台`),
+    sp != null && it('fut', `期現貨價差${dd(F.d[k])}`, sp, sgn(sp) + ' 點', sp > 0 ? '正價差' : sp < 0 ? '逆價差' : '平價'), mg(M.TWSE, '上市'), mg(M.TPEx, '上櫃')].filter(Boolean).join('');
+  return html ? `<section class="sec sum">${html}</section>` : '';
 }
 
 // 首頁、個股頁的分頁（記住上次選的分頁；存的值不在清單裡就用第一個）
@@ -240,9 +260,9 @@ function spark(vals) {
 }
 
 function indexCard(x, name, full = true) {   // full = false：省略迷你圖下方的區間漲跌（第 13 輪 F13-4，非總覽分頁）
-  if (!x) return `<div class="card stat idx"><div class="l">${name}</div><div class="v num">--</div><div class="s">暫無資料</div></div>`;
+  if (!x) return `<div class="card stat idx ix"><div class="l">${name}</div><div class="v num">--</div><div class="s">暫無資料</div></div>`;
   const stale = x.date < App.latest.date;
-  return `<div class="card stat idx">
+  return `<div class="card stat idx ix">
       <div class="l">${name}<span class="muted">　${md(x.date)}${stale ? '（尚未更新）' : ''}</span></div>
       <div class="v num ${cls(x.ch)}">${fmt(x.c, 2)}</div>
       <div class="s num ${cls(x.ch)}">${x.ch > 0 ? '▲' : x.ch < 0 ? '▼' : ''} ${fmt(Math.abs(x.ch ?? 0), 2)} (${sgn(x.p)}%)</div>
@@ -272,7 +292,7 @@ function marginCard(L) {
   const T = M.TWSE, O = M.TPEx, d = [T?.d, O?.d].filter(Boolean).sort().at(-1);
   const wan = n => `<b title="${fmt(n)} 張">${fmt(n / 1e4, 1)}</b> 萬張`;
   const lots = n => `<span class="${cls(n)}">${sgn(n, 0)}</span>`;
-  const row = (x, name) => !x ? '' : `<div class="s num">${name}　融資 ${wan(x.mb)} ${lots(x.m1)}（${sgn(x.mp)}%）　融券 ${wan(x.sb)} ${lots(x.s1)}　券資比 ${fmt(x.sr, 2)}%${x.d < d ? `<span class="muted">（${md(x.d)}）</span>` : ''}</div>`;
+  const row = (x, name) => !x ? '' : `<div class="s num">${name}　<span class="nw">融資 ${wan(x.mb)} ${lots(x.m1)}（${sgn(x.mp)}%）</span>　<span class="nw">融券 ${wan(x.sb)} ${lots(x.s1)}</span>　<span class="nw">券資比 ${fmt(x.sr, 2)}%</span>${x.d < d ? `<span class="muted">（${md(x.d)}）</span>` : ''}</div>`;
   const mr = x => !x ? '--' : x.mr == null ? '資料不足' : `${fmt(x.mr, 1)}%（前日 ${x.mr0 == null ? '--' : fmt(x.mr0, 1) + '%'}）`;
   const amt = x => !x ? '--' : `${fmt(x.amt, 1)} 億 <span class="${cls(x.amt1)}">${x.amt1 > 0 ? '▲' : x.amt1 < 0 ? '▼' : ''}${fmt(Math.abs(x.amt1), 1)} 億</span>`;
   const E = T?.etf;
@@ -324,11 +344,12 @@ function alertBoard(L) {
   const up = A.d.filter(x => x[1] > L.date), on = A.d.filter(x => x[1] <= L.date);
   const nShow = App.alertAll ? A.n.length : 10;
   const grp = (t, list, n = list.length) => `<div class="al-grp"><h3>${t}　<span class="muted small">${n} 檔</span></h3>${list.join('') || '<div class="muted small">無</div>'}</div>`;
-  return `<section class="sec card">
-      <div class="sec-h"><h2>處置／注意股</h2><span class="muted small">${md(L.date)}</span><span class="sp"></span>${A.n.length > 10 ? `<button class="chip" id="alMore">${App.alertAll ? '注意只顯示 10 檔' : '注意顯示全部'}</button>` : ''}</div>
+  return `<section class="sec card"><details class="al-box"${App.alOpen ? ' open' : ''}>
+      <summary class="sec-h"><h2>處置／注意股</h2><span class="muted small">${md(L.date)}　即將處置 ${up.length}　處置中 ${on.length}　今日注意 ${A.n.length}</span><span class="sp"></span><i></i></summary>
+      ${A.n.length > 10 ? `<button class="chip" id="alMore">${App.alertAll ? '注意只顯示 10 檔' : '注意顯示全部'}</button>` : ''}
       ${grp('即將處置', up.map(dsp))}${grp('處置中', on.map(dsp))}${watchGrp(A.w, S)}${grp('今日注意', A.n.slice(0, nShow).map(x => row(x[0], '', x[1])), A.n.length)}
       <div class="muted small">依證交所、櫃買中心公告；處置期間撮合間隔較長，買賣可能需預收款券。點股票看完整原因</div>
-    </section>`;
+    </details></section>`;
 }
 
 // 第 17 輪 F17-2：接近處置（依注意款別推算）；已達條件逐檔一行，差一次只列名稱（提示是條件）
@@ -349,7 +370,7 @@ function breadthCard(L) {
   const B = L.breadth;
   if (!B) return '';
   const pct = v => v == null ? '--' : fmt(v, 1) + '%';
-  const row = (x, name) => !x ? '' : `<div class="s num">${name}　站上 MA20 <b>${pct(x.ma20)}</b>（前日 ${pct(x.s20.at(-2))}）　MA60 <b>${pct(x.ma60)}</b>　20 日新高 <span class="up">${fmt(x.hi)}</span>、新低 <span class="dn">${fmt(x.lo)}</span>　量能 <b>${x.vr == null ? '--' : fmt(x.vr, 2) + ' 倍'}</b></div>`;
+  const row = (x, name) => !x ? '' : `<div class="s num">${name}　<span class="nw">站上 MA20 <b>${pct(x.ma20)}</b>（前日 ${pct(x.s20.at(-2))}）</span>　<span class="nw">MA60 <b>${pct(x.ma60)}</b></span>　<span class="nw">20 日新高 <span class="up">${fmt(x.hi)}</span>、新低 <span class="dn">${fmt(x.lo)}</span></span>　<span class="nw">量能 <b>${x.vr == null ? '--' : fmt(x.vr, 2) + ' 倍'}</b></span></div>`;
   const T = B.TWSE, s = T?.s20.filter(v => v != null) || [];
   return `<div class="card stat idx margin">
       <div class="l">市場寬度 ${md(T?.d || B.TPEx?.d)}（自算，股票，不含 ETF）</div>
@@ -454,7 +475,7 @@ function futuresHTML(F) {
   const roll = k > 0 && F.m[k] !== F.m[k - 1];                 // 第 14 輪 F14-3：近月和前一個交易日不同 = 今天換月
   return `<section class="sec card">
       <div class="sec-h"><h2>${esc(F.name)}</h2><span class="muted small">日盤・契約 ${F.m[k]}${roll ? '<i class="al al-r">今天換月</i>' : ''}</span>
-        <span class="sp"></span><span class="muted small">拖曳平移、滾輪縮放</span></div>
+        <span class="sp"></span><span class="muted small hint">拖曳平移、滾輪縮放</span></div>
       <div class="fut-head">
         <span class="s-price num ${cls(ch)}" style="font-size:26px">${fmt(c)}</span>
         <span class="s-chg num ${cls(ch)}">${ch > 0 ? '▲' : ch < 0 ? '▼' : ''} ${fmt(Math.abs(ch ?? 0))} (${sgn(pct)}%)</span>
@@ -612,6 +633,10 @@ function drawOI(O) {
 }
 
 function onRowClick(e) {
+  const u = e.target.closest('[data-unwatch]'), r = e.target.closest('#watchUndo');   // 第 25 輪 D25-09：自選頁移除、復原
+  if (u || r) { e.stopImmediatePropagation();   // QA25-01：#view 上累積的其他點擊監聽不再重複執行
+    if (u) { App.watchUndo = [...App.watch]; App.watch.delete(u.dataset.unwatch); } else if (App.watchUndo) { App.watch = new Set(App.watchUndo); App.watchUndo = null; }
+    saveWatch(); return renderWatch(); }
   const tr = e.target.closest('tr[data-code]');
   if (tr) { location.hash = '#/stock/' + tr.dataset.code; return; }
   const g = e.target.closest('[data-group]');
@@ -804,7 +829,7 @@ const streakTxt = v => v ? (v > 0 ? '買' : '賣') + Math.abs(v) + (Math.abs(v) 
 const modeSeg = v => segHTML('modeSeg', [['rank', '排行'], ['screen', '選股'], ['hl', '新訊號']], v);
 const onModeSeg = () => onSeg('modeSeg', v => { location.hash = v === 'rank' ? '#/rank' : '#/rank/' + v; });
 
-function stockTable(list, span = '1') {
+function stockTable(list, span = '1', rm = false) {   // rm：自選頁（名稱欄加移除、排序鈕，編輯模式才顯示）
   const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
   const amt = v => `<td class="num ${cls(v)}">${yi(v)}</td>`;
   const fd = md(App.latest.flow_date);
@@ -813,7 +838,7 @@ function stockTable(list, span = '1') {
       <th>股票</th><th>收盤</th><th>漲跌</th><th>成交額</th><th>外資${lbl}</th><th>投信${lbl}</th><th>自營${lbl}</th><th>法人${lbl}</th>
       <th>外資連</th><th>投信連</th><th>法人連</th></tr></thead><tbody>` +
     list.map(([c, s]) => `<tr data-code="${c}">
-      <td class="nm"><b>${esc(s.n)}</b>${alertBadge(s)}<span>${c} ${esc(s.i)}</span></td>
+      <td class="nm">${rm ? wCtl(c) : ''}<b>${esc(s.n)}</b>${alertBadge(s)}<span>${c} ${esc(s.i)}</span></td>
       <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num">${fmt(s.tv, 1)}億</td>
       ${amt(s['f' + k])}${amt(s['t' + k])}${amt(s['d' + k])}${amt(s['n' + k])}
@@ -826,7 +851,7 @@ function spanSeg(span) { return segHTML('rspanSeg', [['1', '1日'], ['5', '5日'
 
 async function renderRank(arg) {
   // 第 8 輪：#/rank/{排行代號}（例如信用交易卡的 #/rank/s-）→ 記住排行後把網址改回 #/rank
-  if (arg && RANKS.some(r => r[0] === arg)) { localStore('rank2', null, arg); history.replaceState(null, '', '#/rank'); }
+  if (arg && RANKS.some(r => r[0] === arg)) localStore('rank2', null, arg);   // 第 25 輪 D25-08：網址保留排行代號（可分享）
   const S = await loadScreen();
   const avail = RANKS.filter(r => !r[4] || S);          // screen.json 不存在時，需要它的排行不出現
   const by0 = localStore('rank2', 'n+'), mkt = localStore('mkt', 'all'), span = localStore('rspan', '1');
@@ -869,10 +894,12 @@ async function renderRank(arg) {
           .map(([v, t]) => `<option value="${v}"${v === minTv ? ' selected' : ''}>${t}</option>`).join('')}</select>
         <select id="rankSel" class="sel">${RANK_GROUPS.map(([g, ids]) => { const rs = ids.map(id => avail.find(r => r[0] === id)).filter(Boolean);
           return rs.length ? `<optgroup label="${g}">${rs.map(r => `<option value="${r[0]}"${r[0] === by ? ' selected' : ''}>${r[1]}</option>`).join('')}</optgroup>` : ''; }).join('')}</select></div>
+      <div class="rk-q">${['n+', 'f+', 't+', 'p+', 'p-', 'tv', 'm+'].filter(id => avail.some(r => r[0] === id)).map(id => `<button class="chip${id === by ? ' on' : ''}" data-rk="${id}">${RANKS.find(r => r[0] === id)[1]}</button>`).join('')}</div>
       <div class="card">${table}</div>
       <div class="muted small" style="margin-top:6px">${foot}</div></section>`;
   keyCol(rankKeyCol(by, field, src, byAmt));
-  $('#rankSel').addEventListener('change', e => { localStore('rank2', null, e.target.value); renderRank(); });
+  $('#view').querySelectorAll('[data-rk]').forEach(b => b.addEventListener('click', () => { location.hash = '#/rank/' + b.dataset.rk; }));   // D25-13 常用排行
+  $('#rankSel').addEventListener('change', e => { location.hash = '#/rank/' + e.target.value; });
   $('#tvSel').addEventListener('change', e => { localStore('rtv', null, e.target.value); renderRank(); });
   onSeg('rspanSeg', v => { localStore('rspan', null, v); renderRank(); });
   onSeg('mktSeg', v => { localStore('mkt', null, v); renderRank(); });
@@ -1215,7 +1242,7 @@ async function renderScreen(q) {
     onModeSeg();
     $('#view').querySelectorAll('[data-ps]').forEach(b => b.addEventListener('click', () => {
       st = { ...scrParse(SCREEN_PRESETS.find(p => p[0] === b.dataset.ps)[2]), xd: 1, xn: 1, xc: 1, o: 'tv', ps: b.dataset.ps };
-      save(); draw();
+      open = false; save(); draw();                                        // 第 25 輪 D25-14：收合條件，結果緊接在預設鈕下方
     }));
     $('#view').querySelectorAll('[data-c]').forEach(el => el.addEventListener('change', () => {
       const c = SCREEN_CONDS.find(x => x.id === el.dataset.c);
@@ -1253,7 +1280,7 @@ const ETF_SORT = [['tv', '成交額', -1], ['p+', '漲幅', -1], ['p-', '跌幅'
   ['l1+', '借券增加', -1], ['l1-', '借券減少', 1], ['lb', '借券餘額', -1]];     // 第 12 輪 ETF-借券
 
 // ETF 列（tr[data-etf]）→ ETF 個股頁；列內的「持股」小標（<a>）照舊連到持股頁。第 20 輪：ETF 列表與自選頁共用
-const onEtfRow = e => { const tr = e.target.closest('tr[data-etf]'); if (tr && !e.target.closest('a')) location.hash = '#/stock/' + tr.dataset.etf; };
+const onEtfRow = e => { const tr = e.target.closest('tr[data-etf]'); if (tr && !e.target.closest('a,button')) location.hash = '#/stock/' + tr.dataset.etf; };
 
 function renderEtf() {
   const E = App.latest.etfs;
@@ -1271,6 +1298,7 @@ function renderEtf() {
   $('#view').innerHTML = `<section class="sec">
       <div class="sec-h"><h2>ETF</h2><span class="muted small">${dates}</span>${App.latest.active_rank ? '<a class="pill hold" href="#/etf/active">主動 ETF 彙總</a>' : ''}<span class="sp"></span>
         ${segHTML('etfMktSeg', [['all', '全部'], ['TWSE', '上市'], ['TPEx', '上櫃']], mkt)}
+        <input id="etfQ" class="sel" type="search" placeholder="篩選代號或名稱" aria-label="篩選 ETF" value="${esc(App.etfQ || '')}">
         <select id="etfSel" class="sel" aria-label="排序">${ETF_SORT.map(x => `<option value="${x[0]}"${x[0] === by ? ' selected' : ''}>${x[1]}</option>`).join('')}</select></div>
       <div class="card"><div class="tbl-wrap"><table class="tbl etf-tbl"><thead><tr>
         <th>ETF</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>成交額</th><th>融資餘額</th><th>融資增減</th><th>融券餘額</th><th>融券增減</th><th>借券餘額</th><th>借券增減</th></tr></thead><tbody>` +
@@ -1286,6 +1314,9 @@ function renderEtf() {
   keyCol({ tv: 4, p: 2, m1: 6, s1: 8, l1: 10, lb: 9 }[f]);
   $('#etfSel').addEventListener('change', e => { localStore('etfSort', null, e.target.value); renderEtf(); });
   onSeg('etfMktSeg', v => { localStore('etfMkt', null, v); renderEtf(); });
+  const etfQ = () => { const q = (App.etfQ = $('#etfQ').value.trim()).toLowerCase();   // 第 25 輪 D25-15：只隱藏列，不重畫
+    $('#view').querySelectorAll('tr[data-etf]').forEach(tr => { tr.hidden = !!q && !(tr.dataset.etf.toLowerCase() + tr.cells[0].textContent.toLowerCase()).includes(q); }); };
+  $('#etfQ').addEventListener('input', etfQ); etfQ();
   // 第 15 輪 F15-2：整列 → ETF 個股頁；列內的「持股」小標（<a>）照舊連到持股頁
   $('#view').addEventListener('click', onEtfRow);
 }
@@ -1389,20 +1420,85 @@ function renderWatch() {
   const list = [...App.watch].filter(c => S[c]).map(c => [c, S[c]]);
   const etfs = [...App.watch].filter(c => !S[c] && R[c]).map(c => [c, R[c]]);     // 第 20 輪 F20-1：自選的 ETF 另列一張表
   const stk = list.length || !etfs.length;                                         // 只有 ETF 時不顯示股票表與 1 日／5 日
-  $('#view').innerHTML = `<section class="sec">
-      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${stk ? spanSeg(span) : ''}</div>
-      ${stk ? `<div class="card">${list.length ? stockTable(list, span)
+  const ev = list.filter(([, s]) => s.hl || s.dsp || s.ntc);                        // 第 25 輪 D25-09：自選股的近期新訊號、處置／注意
+  $('#view').innerHTML = `<section class="sec watch${App.watchEdit ? ' editing' : ''}">
+      ${App.watchUndo ? `<div class="flow-note">已從自選移除 ${esc(App.watchUndo.filter(c => !App.watch.has(c)).map(c => (S[c] || R[c])?.n || c).join('、'))}　<button class="chip" id="watchUndo">復原</button></div>` : ''}
+      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${stk ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button>` : ''}</div>
+      ${stk ? `<div class="card">${list.length ? stockTable(list, span, true)
         : '<div class="empty">還沒有自選股。打開任一檔個股或 ETF，按名稱旁的「☆ 加入自選」。</div>'}</div>` : ''}
+      ${ev.length ? `<div class="card w-ev"><div class="sec-h"><h2>近期新訊號、處置／注意</h2><span class="muted small">只描述發生了什麼，不代表之後的走勢</span></div>${ev.map(([c, s]) =>
+        `<a class="al-row" href="#/stock/${c}"><b>${esc(s.n)}</b>${alertBadge(s)}　${s.hl ? s.hl.filter(e => HL_KINDS[e[0]]).map(hlTag).join('') : ''}</a>`).join('')}</div>` : ''}
       ${etfs.length ? `${stk ? '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2><span class="muted small">當日行情；成交量為張、成交額為億元</span></div>' : ''}
-      <div class="card">${etfWatchTable(etfs)}</div>` : ''}</section>`;
+      <div class="card">${etfWatchTable(etfs)}</div>` : ''}
+      ${list.length || etfs.length ? '<div class="muted small w-tip">按「✕」從自選移除；按住「≡」上下拖曳調整順序（也可按上下鍵）。完成後按「完成」</div>' : ''}</section>`;
   if (stk) onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
+  watchGestures($('#view .watch'));
   $('#view').addEventListener('click', onRowClick);
   $('#view').addEventListener('click', onEtfRow);
+}
+// 自選頁每列：「✕」移除（走 onRowClick 的 data-unwatch，可復原）、「≡」拖曳排序；兩顆鈕只在編輯模式顯示
+const wCtl = c => `<button class="wdel" data-unwatch="${c}" title="從自選移除" aria-label="從自選移除">✕</button><button class="wh" data-drag="${c}" title="拖曳調整順序（也可按上下鍵）" aria-label="調整順序">≡</button>`;
+// 依表格目前的列序存回自選順序：股票表的代號排在前，ETF 表的排在後（兩張表分開顯示，互不影響）
+function saveWatchOrder(tb) {
+  const codes = [...tb.rows].map(r => r.dataset.code || r.dataset.etf), rest = [...App.watch].filter(c => !codes.includes(c));
+  App.watch = new Set(tb.rows[0]?.dataset.code ? [...codes, ...rest] : [...rest, ...codes]);
+  saveWatch();
+}
+// 監聽掛在每次重畫的 section 上（不掛 #view，避免累積）
+function watchGestures(sec) {
+  if (!sec) return;
+  $('#watchEdit')?.addEventListener('click', e => {
+    App.watchEdit = sec.classList.toggle('editing');
+    e.currentTarget.textContent = App.watchEdit ? '完成' : '編輯';
+  });
+  // 編輯模式：點表格列不進個股頁（「✕」照常交給 onRowClick）
+  sec.addEventListener('click', e => {
+    if (sec.classList.contains('editing') && e.target.closest('tbody tr') && !e.target.closest('.wdel')) { e.stopPropagation(); e.preventDefault(); }
+  }, true);
+  // 換位的相鄰列從原位置滑到新位置（FLIP）
+  const flip = (s, move) => {
+    const y = s.offsetTop;
+    move();
+    const d = y - s.offsetTop;
+    if (d) s.querySelectorAll('td').forEach(td => td.animate?.([{ transform: `translateY(${d}px)` }, { transform: 'none' }], { duration: 160, easing: 'ease-out' }));
+  };
+  sec.querySelectorAll('.wh').forEach(h => {
+    const tr = h.closest('tr'), tb = tr.parentElement;
+    let y0 = 0, top0 = 0;
+    h.addEventListener('pointerdown', e => {
+      e.preventDefault(); h.setPointerCapture(e.pointerId);
+      y0 = e.clientY; top0 = tr.offsetTop;
+      tr.classList.add('dragging');
+    });
+    h.addEventListener('pointermove', e => {
+      if (!tr.classList.contains('dragging')) return;
+      const c = top0 + e.clientY - y0 + tr.offsetHeight / 2, mid = r => r.offsetTop + r.offsetHeight / 2;
+      let s;            // 搬動相鄰列、不搬被拖的列（被拖的列離開 DOM 會失去 pointer capture）；一次移動很遠時連跳多列
+      while ((s = tr.previousElementSibling) && c < mid(s)) flip(s, () => tr.after(s));
+      while ((s = tr.nextElementSibling) && c > mid(s)) flip(s, () => tr.before(s));
+      tr.style.setProperty('--dy', `${top0 + e.clientY - y0 - tr.offsetTop}px`);   // 被拖的列跟著手指走
+    });
+    const end = () => {
+      if (!tr.classList.contains('dragging')) return;
+      const d = parseFloat(tr.style.getPropertyValue('--dy')) || 0;
+      tr.classList.remove('dragging'); tr.style.removeProperty('--dy');
+      if (d) tr.querySelectorAll('td').forEach(td => td.animate?.([{ transform: `translateY(${d}px)` }, { transform: 'none' }], { duration: 160, easing: 'ease-out' }));   // 放開後落回定位
+      saveWatchOrder(tb);
+    };
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => h.addEventListener(t, end));
+    h.addEventListener('keydown', e => {
+      const s = e.key === 'ArrowUp' ? tr.previousElementSibling : e.key === 'ArrowDown' ? tr.nextElementSibling : null;
+      if (!s) return;
+      e.preventDefault();
+      flip(s, () => e.key === 'ArrowUp' ? tr.after(s) : tr.before(s));
+      saveWatchOrder(tb);
+    });
+  });
 }
 // 第 20 輪 F20-1：自選頁的 ETF 表（ETF 列表的前 4 欄，資料為 latest.etfs.rows）
 function etfWatchTable(list) {
   return '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>成交額</th></tr></thead><tbody>' +
-    list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
+    list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm">${wCtl(c)}<b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
       <td class="num ${cls(r.ch)}">${pfmt(r.c)}</td><td class="num ${cls(r.ch)}">${r.c == null ? '無成交' : sgn(r.p) + '%'}</td>
       <td class="num">${fmt(r.v)}</td><td class="num">${fmt(r.tv, 2)}億</td></tr>`).join('') + '</tbody></table></div>';
 }

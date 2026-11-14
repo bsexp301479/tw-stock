@@ -1,9 +1,9 @@
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#f3f2ee;--card:#ffffff;--card2:#f8f7f3;
-  --text:#1b1b1b;--text2:#5f5f5f;--text3:#999;
+  --text:#1b1b1b;--text2:#5f5f5f;--text3:#6d6d6d;
   --border:#e3e1da;--border2:#cfcdc5;
-  --up:#d64545;--dn:#30a46c;--flat:#8a8a8a;--amber:#e8a33d;--blue:#3b82d6;--violet:#7f77dd;
+  --up:#cc3333;--dn:#247b51;--flat:#6d6d6d;--amber:#976112;--blue:#286dbf;--violet:#6b62d6;--on-fill:#fff;   /* 第 25 輪 D25-01：白底 ≥ 4.5:1 */
   --up-bg:rgba(214,69,69,.10);--dn-bg:rgba(48,164,108,.12);
   --q-rise:rgba(214,69,69,.07);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.07);--q-ebb:rgba(48,164,108,.07);
   --radius:10px;--shadow:0 1px 2px rgba(0,0,0,.04);
@@ -12,9 +12,9 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --bg:#0e0f11;--card:#17181b;--card2:#1e2023;
-    --text:#ececec;--text2:#a7a7a7;--text3:#6f6f6f;
+    --text:#ececec;--text2:#a7a7a7;--text3:#888;
     --border:#2a2c30;--border2:#3a3d42;
-    --up:#ef5b5b;--dn:#3fbf7f;--flat:#8a8a8a;
+    --up:#ef5b5b;--dn:#3fbf7f;--flat:#8a8a8a;--amber:#e8a33d;--blue:#488bd9;--violet:#7f77dd;--on-fill:#111;
     --up-bg:rgba(239,91,91,.14);--dn-bg:rgba(63,191,127,.14);
     --q-rise:rgba(239,91,91,.08);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.09);--q-ebb:rgba(63,191,127,.08);
     color-scheme:dark;
@@ -22,9 +22,9 @@
 }
 :root[data-theme="dark"]{
   --bg:#0e0f11;--card:#17181b;--card2:#1e2023;
-  --text:#ececec;--text2:#a7a7a7;--text3:#6f6f6f;
+  --text:#ececec;--text2:#a7a7a7;--text3:#888;
   --border:#2a2c30;--border2:#3a3d42;
-  --up:#ef5b5b;--dn:#3fbf7f;--flat:#8a8a8a;
+  --up:#ef5b5b;--dn:#3fbf7f;--flat:#8a8a8a;--amber:#e8a33d;--blue:#488bd9;--violet:#7f77dd;--on-fill:#111;
   --up-bg:rgba(239,91,91,.14);--dn-bg:rgba(63,191,127,.14);
   --q-rise:rgba(239,91,91,.08);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.09);--q-ebb:rgba(63,191,127,.08);
   color-scheme:dark;
@@ -86,11 +86,13 @@ button{font:inherit;color:inherit;cursor:pointer}
 .stat .l{font-size:12px;color:var(--text2)}
 .stat .v{font-size:20px;font-weight:600;margin-top:2px}
 .stat .s{font-size:12px;color:var(--text2);margin-top:2px}
+.stat .up{color:var(--up)}.stat .dn{color:var(--dn)}.stat .flat{color:var(--flat)}   /* D25-02：.stat .s 裡的漲跌色 */
+.ix .v{font-size:26px;line-height:1.2}.tbl,.kleg,.stat,.sum{font-variant-numeric:tabular-nums}
 
 /* 切換鈕 */
 .seg{display:inline-flex;background:var(--card2);border:1px solid var(--border);border-radius:999px;padding:2px}
 .seg button{border:none;background:none;padding:4px 12px;border-radius:999px;font-size:12px;color:var(--text2)}
-.seg button.on{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.seg button.on{background:var(--text);color:var(--bg)}   /* D25-10：和頂部選單同樣反白 */
 
 /* 四象限 */
 .quads{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
@@ -123,8 +125,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl tr[data-code]:hover td{background:var(--card2)}
 .tbl tr[data-etf]{cursor:pointer}.tbl tr[data-etf]:hover td{background:var(--card2)}   /* 第 15 輪：ETF 列表整列進 ETF 個股頁 */
 .tbl .nm b{font-weight:500}
-.tbl .nm span{color:var(--text3);font-size:11px;margin-left:6px}
-.pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--card2);border:1px solid var(--border);color:var(--text2)}
+.tbl .nm span{color:var(--text2);font-size:11px;margin-left:6px}
+.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:999px;background:var(--card2);border:1px solid var(--border);color:var(--text2)}
 .pill.chain{border-color:color-mix(in srgb,var(--blue) 45%,var(--border));color:var(--text)}
 
 /* 台指期 */
@@ -143,7 +145,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .s-price{font-size:34px;font-weight:600;line-height:1.1;margin-top:4px}
 .s-chg{font-size:16px;margin-left:8px}
 .star{margin-left:auto;border:1px solid var(--border2);background:var(--card);border-radius:999px;padding:6px 14px}
-.star.on{background:var(--amber);border-color:var(--amber);color:#1b1b1b}
+.star.on{background:var(--amber);border-color:var(--amber);color:var(--on-fill)}
 .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
 .metrics .card{padding:10px 12px}
@@ -208,8 +210,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .page-tabs{margin:12px 0 4px;overflow-x:auto}          /* 首頁、個股頁分頁 */
 .page-tabs .seg button{padding:6px 16px;font-size:14px;white-space:nowrap}
 .night-old{opacity:.7}               /* P20：前一夜盤淡化 */
-.al{display:inline-block;font-style:normal;font-size:10px;line-height:15px;padding:0 3px;border-radius:3px;margin-left:4px;color:#fff;vertical-align:1px}
+.al{display:inline-block;font-style:normal;font-size:11px;line-height:16px;padding:0 4px;border-radius:3px;margin-left:4px;color:var(--on-fill);vertical-align:1px}
 .al-d{background:var(--up)}.al-n{background:var(--amber)}
+.al:not([class*="al-"]){background:var(--flat)}                    /* QA25-02：沒有類別的「清」也要有底色 */
 .pill.al-d{background:var(--up-bg);border-color:var(--up);color:var(--up)}
 .pill.al-n{background:color-mix(in srgb,var(--amber) 15%,transparent);border-color:var(--amber);color:var(--amber)}
 .al-grp{margin-top:8px}.al-grp h3{font-size:13px;margin:0 0 4px}                 /* 第 16 輪 F16-3 */
@@ -219,7 +222,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .al-l{display:flex;align-items:baseline;gap:6px}.al-l .sp{flex:1}.al-why{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .al-new{background:var(--blue)}                                  /* E2-4：新建倉 */
 .pill.hold{margin-left:6px;border-color:var(--blue);color:var(--blue)}
-.tbl .nm .pill{font-size:10px;margin-left:6px}
+.tbl .nm .pill{font-size:11px;margin-left:6px}
 /* 第 8 輪 F8-2：條件選股 */
 .al-c{background:var(--violet)}                                    /* 90 天內股本變動 */
 .chip{border:1px solid var(--border2);background:var(--card);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--text)}
@@ -251,6 +254,47 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 /* 第 13 輪 QA 後修正：兩張成交額卡＋共同說明包成一組（佔 2 欄），市場寬度卡仍在同一列右側 */
 .g-mk .mk-pair{grid-column:span 2;display:flex;flex-direction:column;gap:6px}
 .mk-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+/* ─── 第 25 輪（D25-xx）────────────────────────── */
+.sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}   /* D25-03 大盤摘要 */
+.sum-i,.kv .card{box-shadow:inset -1px -1px 0 var(--border)}.sum-i{display:flex;flex-direction:column;gap:1px;padding:8px 12px}.sum-i:hover{background:var(--card2)}
+.sum-i .l,.sum-i .s{font-size:12px;color:var(--text2)}.sum-i b{font-size:17px;font-weight:600}
+.al-box>summary{list-style:none;cursor:pointer;margin-bottom:0}.al-box>summary::-webkit-details-marker{display:none}.al-box[open]>summary{margin-bottom:6px}   /* D25-04 */
+.al-box>summary i{font-style:normal;color:var(--blue);font-size:12px}.al-box>summary i::after{content:'展開 ▾'}.al-box[open]>summary i::after{content:'收合 ▴'}
+.tbl thead th{position:sticky;top:0;z-index:2;background:var(--card)}.tbl thead th:first-child{z-index:3}   /* D25-07 固定表頭 */
+.tbl-wrap:has(tbody tr:nth-child(25)){max-height:calc(100vh - 140px);overflow:auto}
+.metrics.kv{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}   /* D25-05 關鍵數字列 */
+.kv .card{border:0;border-radius:0;padding:6px 10px}.kv .s{font-size:11px;line-height:1.35}
+.s-head+.kv{margin:8px 0 0}.sec.page-tabs{margin:10px 0 0}
+@media (min-width:768px){.s-nm,.s-px{display:inline-block;vertical-align:baseline;margin-right:14px}}
+.tag-rest:not([hidden]){display:contents}.pill.more{cursor:pointer;color:var(--blue)}
+.qlist .px{margin-left:10px;white-space:nowrap}.qnone{padding:10px 12px;color:var(--text2);font-size:13px}   /* D25-11 */
+/* 自選頁：按「編輯」才顯示「✕」移除與「≡」拖曳排序；拖曳中的列浮起跟著手指走 */
+.watch:not(.editing) .wdel,.watch:not(.editing) .wh,.watch:not(.editing) .w-tip{display:none}
+.watch.editing td.nm{user-select:none;-webkit-user-select:none}
+.watch.editing td.nm b{white-space:nowrap}@media (max-width:520px){.watch.editing .tbl td.nm{max-width:176px}}   /* 名稱不被兩顆鈕擠到斷字 */
+.wdel{border:1px solid var(--border2);background:var(--card);color:var(--text2);border-radius:50%;width:22px;height:22px;padding:0;margin-right:6px;font-size:11px;line-height:20px;vertical-align:1px;cursor:pointer}
+.wdel:hover{color:var(--up);border-color:var(--up)}
+.wh{float:right;border:0;background:none;color:var(--text2);cursor:grab;touch-action:none;padding:2px 0 2px 10px;font-size:18px;line-height:1}
+.wh:focus-visible,.wdel:focus-visible{outline:2px solid var(--blue);border-radius:3px}
+.watch tr.dragging td{transform:translateY(var(--dy,0));z-index:4;background:var(--card2);box-shadow:0 10px 16px -10px rgba(0,0,0,.5)}
+.watch tr.dragging td:not(:first-child){position:relative}.watch tr.dragging .wh{cursor:grabbing}
+.w-tip{margin-top:8px}
+.card.w-ev{margin-top:12px}.w-ev .sec-h{margin-bottom:4px}
+.rk-q{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+@media (max-width:720px){
+  .seg button{min-height:34px}.page-tabs .seg button{min-height:38px}.chip,.sel{min-height:34px}.scr-c input[type=checkbox]{width:18px;height:18px}   /* D25-12 觸控 */
+  .hint{display:none}
+  .datebar{white-space:nowrap;overflow-x:auto;scrollbar-width:none}
+  .tbl-wrap:has(tbody tr:nth-child(25)){max-height:calc(100dvh - 170px)}
+  .s-head{position:relative}.s-head .star{position:absolute;top:0;right:0;padding:4px 10px;font-size:13px}.s-nm{padding-right:112px}
+  .qlist .ind{display:none}
+  .metrics.kv{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}
+  .sec-h .seg button{padding:4px 9px}.kleg{font-size:11px;gap:2px 8px}
+}
+@media (max-width:520px){
+  .tbl th,.tbl td{padding:8px 6px}
+  .tbl td.nm{white-space:normal;min-width:84px;max-width:124px}.tbl td.nm>span{display:block;margin-left:0}   /* D25-06 名稱欄兩行 */
+}
 /* 第 14 輪 F14-1、F14-2：營收、EPS 年增欄的第二行（月份、基期低、去年同季），欄寬不被撐開 */
 .tbl .sub2{display:block;font-size:11px;line-height:1.3;color:var(--text2)}
 .al-b{background:var(--flat)}.al-r{background:var(--blue)}

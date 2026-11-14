@@ -262,7 +262,7 @@ def test_small_fixes():
 
 def test_watch_etf_only():
     names = ["fmt", "pfmt", "sgn", "cls", "pctCell", "yi", "esc", "md", "streakTxt", "holdTag", "alertBadge",
-             "segHTML", "onSeg", "flowNote", "stockTable", "spanSeg", "onEtfRow", "renderWatch", "etfWatchTable"]
+             "segHTML", "onSeg", "flowNote", "wCtl", "stockTable", "spanSeg", "onEtfRow", "watchGestures", "renderWatch", "etfWatchTable"]
     latest = {"date": "2026-11-13", "flow_date": "2026-11-13", "holdings": {"00981A": {}},
               "stocks": {"2330": {"n": "台積電", "i": "半導體", "c": 1460, "p": 1.2, "tv": 300.5, "f1": 10, "t1": 1, "d1": 0, "n1": 11, "fs": 2, "ts": 30, "s": 2}},
               "etfs": {"rows": {"0050": {"n": "元大台灣50", "m": "TWSE", "c": 70.1, "ch": 0.2, "p": 0.29, "v": 50000, "tv": 35.1},
