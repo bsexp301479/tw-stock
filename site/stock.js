@@ -53,6 +53,8 @@ const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除
   '上櫃 ETF：官方漲跌就是收盤減前一日收盤，除息日的漲跌含除息的跌幅，本站無法辨識除息日，不標示。'); };
 
 // 第 25 輪 D25-05：產業鏈、概念股標籤只顯示前 2 個，其餘收在「+N」（點了展開，展開後按「收合」收回）
+// 第 27 輪 D27-07：融資融券子圖一次只畫一條線（右側刻度就是這條線）；借券只在有資料時可選
+const mgView = G => { const v = localStore('mgv', 'mb'); return v === 'sb' || (v === 'lb' && G?.lb) ? v : 'mb'; };
 const tagFold = t => t.slice(0, 2).join('') + (t.length > 2 ? `<span class="tag-rest" hidden>${t.slice(2).join('')}</span><button class="pill more" id="tagMore" data-n="+${t.length - 2}">+${t.length - 2}</button>` : '');
 
 window.renderStock = async function (code, sub) {
@@ -62,6 +64,7 @@ window.renderStock = async function (code, sub) {
   try { data = await loadStock(code, E ? 'etfp' : 'stocks'); }
   catch (e) { $('#view').innerHTML = `<div class="empty">找不到 ${esc(code)} 的資料。可用上方搜尋框查代號或名稱，或<a href="#/today" style="color:var(--blue)">回今日</a></div>`; return; }
   const P = data.prices, n = P.d.length;
+  document.title = `${data.name} ${code}｜台股資金流`;   // 第 27 輪 D27-10
   const last = n - 1;
   // 最新一天沒成交（開高低收為 --）時，改顯示最後成交日的收盤，不算漲跌
   const traded = P.c.map((c, i) => c != null ? i : -1).filter(i => i >= 0);
@@ -196,7 +199,7 @@ window.renderStock = async function (code, sub) {
       <div id="vC" class="chart-box" style="height:80px"></div>
       ${E ? '' : `<div class="ch-label">三大法人買賣超（張，未還原）<span id="iLegend" style="display:contents"></span></div>
       <div id="iC" class="chart-box" style="height:90px"></div>`}
-      ${data.mg ? `<div class="ch-label">融資／融券${data.mg.lb ? '／借券賣出' : ''}餘額<span id="gUnit"></span><span id="gLegend" style="display:contents"></span></div>
+      ${data.mg ? `<div class="ch-label">${segHTML('mgSeg', [['mb', '融資'], ['sb', '融券'], ...data.mg.lb ? [['lb', '借券賣出']] : []], mgView(data.mg))}餘額<span id="gUnit"></span><span id="gLegend" style="display:contents"></span></div>
       <div id="gC" class="chart-box" style="height:90px"></div>` : ''}
       <div class="ch-label">${E ? '' : segHTML('oscSeg', OSC_OPTS, localStore('osc', 'MACD'))}<span id="oscLeg" style="display:contents"></span></div>
       <div id="mC" class="chart-box" style="height:120px"></div>
@@ -217,7 +220,7 @@ window.renderStock = async function (code, sub) {
   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
   if (tab !== 'k') return;
   // 第 25 輪 D25-05：關鍵數字列在寬螢幕併進頁首卡、手機放到 K 線卡下方，主圖進第一屏
-  if (matchMedia('(min-width:721px)').matches) $('#view .s-head').after($('#view .metrics.kv')); else $('#kC').closest('section').after($('#view .metrics.kv'));
+  if (matchMedia('(min-width:721px)').matches) $('#view .s-head').after($('#view .metrics.kv')); else $('#kC').after($('#view .metrics.kv'));   // 第 27 輪 D27-06：手機放在 K 線正下方（原本在 4 張子圖之後）
   if (!E) $('#adjSeg').title = '還原：依除權息、減資、面額變更調整歷史價格（現金增資除權也依官方參考價調整），最新收盤不變。均線訊號與 52 週高低一律以還原價格計算';
   // 日／週／月與還原／原始切換都重畫；技術面訊號一律用還原價（P13）
   const draw = () => {
@@ -226,6 +229,7 @@ window.renderStock = async function (code, sub) {
     if (!E) renderSignals(aggregate(data, m, true), m);
   };
   onSeg('kSeg', m => { localStore('kmode', null, m); document.querySelectorAll('#kSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === m)); draw(); });
+  if (data.mg) onSeg('mgSeg', v => { localStore('mgv', null, v); document.querySelectorAll('#mgSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); draw(); });
   if (!E) onSeg('oscSeg', v => { localStore('osc', null, v); document.querySelectorAll('#oscSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); draw(); });
   if (!E) onSeg('adjSeg', v => { localStore('kadj', null, v); document.querySelectorAll('#adjSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); draw(); });
   $('#latestBtn').addEventListener('click', () => { syncLeader = charts[0]; charts[0]?.timeScale().scrollToRealTime(); });
@@ -386,7 +390,11 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   };
 
   const kc = mk('kC', false, true);   // 圖表庫授權要求的 TradingView 標示，主圖保留一個
-  const kSer = kc.addCandlestickSeries({ upColor: UP, downColor: DN, borderUpColor: UP, borderDownColor: DN, wickUpColor: UP, wickDownColor: DN, priceFormat: priceFmt });
+  const kSer = kc.addCandlestickSeries({ upColor: UP, downColor: DN, borderUpColor: UP, borderDownColor: DN, wickUpColor: UP, wickDownColor: DN, priceFormat: priceFmt,
+    lastValueVisible: false, priceLineVisible: false });
+  // 第 27 輪 D27-06：最新價標籤依漲跌（日線 = 收盤對昨收，和頁首同色；週／月線 = 對上一根）上色，不依 K 棒（收盤對開盤）
+  const [lastCh] = barChange(raw, raw.length - 1, mode, adj);
+  kSer.createPriceLine({ price: C[C.length - 1], color: NT[NT.length - 1] || !lastCh ? FLAT : lastCh > 0 ? UP : DN, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, axisLabelTextColor: css('--on-fill'), title: '' });
   // 無成交的一字線用灰色
   kSer.setData(raw.map((r, i) => ({ time: T[i], open: O[i], high: H[i], low: L[i], close: C[i],
     ...(NT[i] ? { color: FLAT, borderColor: FLAT, wickColor: FLAT } : {}) })));
@@ -417,27 +425,18 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
     }
   }
 
-  // F8-3：融資（右軸）／融券（疊加軸、不顯示刻度）餘額；第 11 輪 B14：借券賣出（第三個疊加軸，不顯示刻度）
-  // 三條線各自一個座標軸：借券常是融券的上百倍，同軸會把融券壓平
+  // F8-3：融資融券餘額；第 11 輪 B14：借券賣出。第 27 輪 D27-07：一次一條線、用自己的右側刻度（原本三條線各自縮放、只有融資有刻度，量級差很多時會看反）
   const MB = raw.map(r => r.mb), SB = raw.map(r => r.sb), LB = raw.map(r => r.lb);
-  let gc = null, mbSer = null;
+  let gc = null, mbSer = null, GV = null;
   if (G && $('#gC')) {
     gc = mk('gC', false);
-    mbSer = gc.addLineSeries({ color: '#1C7ED6', lineWidth: 1, priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
-    mbSer.setData(MB.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
-    const sbSer = gc.addLineSeries({ color: '#AE3EC9', lineWidth: 1, priceScaleId: 'sb', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
-    gc.priceScale('sb').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
-    sbSer.setData(SB.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
-    if (G.lb) {
-      const lbSer = gc.addLineSeries({ color: '#E8590C', lineWidth: 1, lineStyle: 2, priceScaleId: 'lb', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
-      gc.priceScale('lb').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
-      lbSer.setData(LB.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
-    }
+    GV = { mb: [MB, '#1C7ED6'], sb: [SB, '#AE3EC9'], lb: [LB, '#E8590C'] }[mgView(G)];
+    mbSer = gc.addLineSeries({ color: GV[1], lineWidth: 1, priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
+    mbSer.setData(GV[0].map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
     // 換算事件標在包含該日期的那一根（T 中 ≤ 事件日的最後一根）
     mbSer.setMarkers((G.k || []).map(x => { let j = -1; T.forEach((t, i) => { if (t <= x.d) j = i; }); return [j, x]; }).filter(([j]) => j >= 0)
       .sort((a, b) => a[0] - b[0]).map(([j, x]) => ({ time: T[j], position: 'aboveBar', shape: 'circle', color: css('--blue'), text: EV_LABEL[x.t] + (adj ? ' 已換算' : '') })));
-    $('#gUnit').textContent = (adj ? '（張；面額變更、減資前的餘額依官方換算）' : '（張，官方原始）') +
-      '　右側刻度只適用融資；融券、借券各自縮放，數值看圖例';     // 第 12 輪 P26
+    $('#gUnit').textContent = adj ? '（張；面額變更、減資前的餘額依官方換算）' : '（張，官方原始）';     // 第 12 輪 P26；D27-07 刻度即所選的線
   }
 
   const mc = mk('mC', true);
@@ -473,14 +472,14 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   }));
 
   // 十字線同步 + 上方資訊列
-  const anchors = [[kc, kSer, i => C[i]], [vc, vSer, i => V[i]], ...(ic ? [[ic, iSer, i => N[i]]] : []), ...(gc ? [[gc, mbSer, i => MB[i]]] : []), [mc, oSer, oVal]];
+  const anchors = [[kc, kSer, i => C[i]], [vc, vSer, i => V[i]], ...(ic ? [[ic, iSer, i => N[i]]] : []), ...(gc ? [[gc, mbSer, i => GV[0][i]]] : []), [mc, oSer, oVal]];
   const legend = $('#kLegend');
   const showLegend = i => {
     // 日線用匯出的漲跌（事件日相對參考價、前一日無成交相對最後成交）；找不到事件的不比價日為 null。週／月線用前一根收盤
     // 第 15 輪 QA-01：週／月線含推測價格調整（gx）的那一根不用原始價相減，改寫「不比價」，避免除息、分割被讀成下跌
     const gxBar = mode !== '日' && raw[i].gx, [chg, p, f] = barChange(raw, i, mode, adj);
     const c = cls(chg);
-    const ma = (label, v, color) => v == null ? '' : `<span style="color:${color}">${label} <b style="color:${color}">${pfmt(v)}</b></span>`;
+    const ma = (label, v, color) => v == null ? '' : `<span class="lg"><i style="background:${color}"></i>${label} <b>${pfmt(v)}</b></span>`;   // D27-06：線色只放在色塊，數字用正文色（淺色 MA20 原本 2.17）
     legend.innerHTML = `<span><b>${mode === '月' ? T[i].slice(0, 7) + ' 月' : mode === '週' ? T[i] + ' 當週' : T[i]}</b></span><span>開 <b>${pfmt(O[i])}</b></span><span>高 <b class="up">${pfmt(H[i])}</b></span>` +
       `<span>低 <b class="dn">${pfmt(L[i])}</b></span><span>收 <b class="${c}">${pfmt(C[i])}</b></span>` +
       (NT[i] ? '<span class="flat">無成交</span>'

@@ -254,10 +254,10 @@ def test_small_fixes():
     assert '<a class="muted small" href="#/rank/${rk}">看排行 →</a>' in APP
     # F23-4a：≤ 480 px 時標籤在名稱格下方、隱藏標籤欄；1024 照舊（hl-sub 不顯示）
     hl = APP[APP.index("async function renderHl()"):APP.index("// ─── 第 8 輪 F8-2")]
-    assert "<span>${x.code} ${esc(x.i)}</span><div class=\"hl-sub\">${x.hl.map(hlTag).join('')}</div></td>" in hl
+    assert "<span>${x.code} ${esc(x.i)}</span></td>" in hl and '<tr class="hl-sub" data-code="${x.code}"><td colspan="6">${x.hl.map(hlTag).join(\'\')}</td></tr>' in hl   # 第 27 輪 D27-02：手機標籤改放第二列
     assert '<td class="hl-tags">${x.hl.map(hlTag).join(\'\')}</td>' in hl
     assert ".hl-sub{display:none}" in CSS
-    assert "@media (max-width:480px){.tbl th.hl-th,.tbl td.hl-tags{display:none}.tbl td.nm .hl-sub{display:block;white-space:normal}" in CSS
+    assert "@media (max-width:480px){.tbl th.hl-th,.tbl td.hl-tags{display:none}.tbl tr.hl-sub{display:table-row}" in CSS
 
 
 def test_watch_etf_only():

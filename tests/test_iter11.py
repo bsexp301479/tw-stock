@@ -223,7 +223,7 @@ def test_f112_export_source():
 # ─── 網站（原始碼檢查）───────────────────────────────────
 def test_f11_site():
     js = (ROOT / "site" / "stock.js").read_text(encoding="utf-8")
-    assert "不等於看空" in js and "priceScaleId: 'lb'" in js and "for (const k of ['mb', 'sb', 'lb'])" in js
+    assert "不等於看空" in js and "lb: [LB, '#E8590C']" in js and "for (const k of ['mb', 'sb', 'lb'])" in js   # 第 27 輪 D27-07：借券改成切換顯示（不再用疊加軸）
     assert "官方本益比以最新股數計算，期間有增資的公司" in js                                            # F11-3 第 1 點
     app = (ROOT / "site" / "app.js").read_text(encoding="utf-8")
     assert "['l+', '借券賣出增加', 'la*', -1, 'l'], ['lp', '借券占股本', 'lp', -1, 'l']" in app

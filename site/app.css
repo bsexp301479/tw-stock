@@ -104,10 +104,10 @@ button{font:inherit;color:inherit;cursor:pointer}
 .quad .t{font-size:12px;font-weight:600}
 .quad .n{font-size:22px;font-weight:600}
 .quad .d{font-size:11px;color:var(--text2)}
-.q-漲潮{background:var(--q-rise)}.q-漲潮 .t{color:var(--up)}
-.q-輪動{background:var(--q-rot)}.q-輪動 .t{color:var(--amber)}
-.q-觀望{background:var(--q-watch)}.q-觀望 .t{color:var(--blue)}
-.q-退潮{background:var(--q-ebb)}.q-退潮 .t{color:var(--dn)}
+.q-漲潮{background:linear-gradient(var(--q-rise),var(--q-rise)) var(--card)}.q-漲潮 .t{color:var(--up)}
+.q-輪動{background:linear-gradient(var(--q-rot),var(--q-rot)) var(--card)}.q-輪動 .t{color:var(--amber)}
+.q-觀望{background:linear-gradient(var(--q-watch),var(--q-watch)) var(--card)}.q-觀望 .t{color:var(--blue)}
+.q-退潮{background:linear-gradient(var(--q-ebb),var(--q-ebb)) var(--card)}.q-退潮 .t{color:var(--dn)}
 
 /* 資金流長條 */
 .bars{display:flex;flex-direction:column;gap:6px}
@@ -264,7 +264,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .al-box>summary{list-style:none;cursor:pointer;margin-bottom:0}.al-box>summary::-webkit-details-marker{display:none}.al-box[open]>summary{margin-bottom:6px}   /* D25-04 */
 .al-box>summary i{font-style:normal;color:var(--blue);font-size:12px}.al-box>summary i::after{content:'展開 ▾'}.al-box[open]>summary i::after{content:'收合 ▴'}
 .tbl thead th{position:sticky;top:0;z-index:2;background:var(--card)}.tbl thead th:first-child{z-index:3}   /* D25-07 固定表頭 */
-.tbl-wrap:has(tbody tr:nth-child(25)){max-height:calc(100vh - 140px);overflow:auto}
+.tbl-wrap:has(tbody tr:nth-child(25)) thead th{transform:translateY(var(--th-y,0px))}   /* 第 27 輪 D27-01：整頁捲動，表頭由 stickHeads() 位移到頂欄下方 */
 .metrics.kv{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}   /* D25-05 關鍵數字列 */
 .kv .card{border:0;border-radius:0;padding:6px 10px}.kv .s{font-size:11px;line-height:1.35}
 .s-head+.kv{margin:8px 0 0}.sec.page-tabs{margin:10px 0 0}
@@ -284,19 +284,26 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .w-tip{margin-top:8px}
 .card.w-ev{margin-top:12px}.w-ev .sec-h{margin-bottom:4px}
 .rk-q{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+/* ─── 第 27 輪（D27-xx）────────────────────────── */
+#view .card,#scrRes{scroll-margin-top:calc(var(--top-h,56px) + 8px)}
+.scr-panel>summary{position:sticky;top:var(--top-h,56px);z-index:4;background:var(--card);margin:-6px -16px 0;padding:8px 16px;border-radius:var(--radius)}   /* D27-03 */
+.scr-panel[open]>summary{border-bottom:1px solid var(--border)}.scr-go{color:var(--blue);border-color:var(--blue)}
+.scr-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;font-weight:400}.scr-panel[open] .scr-tags{display:none}
+#kC+.kv{margin:8px 0 4px;grid-template-columns:repeat(3,minmax(0,1fr))}                                                                                    /* D27-06 手機關鍵數字列在 K 線下方 */
+.qstar{cursor:pointer;padding:0 2px 0 8px;color:var(--text2);font-size:16px;line-height:1}.qstar.on{color:var(--amber)}   /* D27-09 */
+@media (min-width:521px){.oi-tbl th,.oi-tbl td{padding-left:6px;padding-right:6px}}.tbl .nm .pill.muted{border-color:transparent;background:none;padding:0}   /* D27-10 */
 @media (max-width:720px){
   .seg button{min-height:34px}.page-tabs .seg button{min-height:38px}.chip,.sel{min-height:34px}.scr-c input[type=checkbox]{width:18px;height:18px}   /* D25-12 觸控 */
   .hint{display:none}
-  .datebar{white-space:nowrap;overflow-x:auto;scrollbar-width:none}
-  .tbl-wrap:has(tbody tr:nth-child(25)){max-height:calc(100dvh - 170px)}
   .s-head{position:relative}.s-head .star{position:absolute;top:0;right:0;padding:4px 10px;font-size:13px}.s-nm{padding-right:112px}
   .qlist .ind{display:none}
   .metrics.kv{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}
   .sec-h .seg button{padding:4px 9px}.kleg{font-size:11px;gap:2px 8px}
+  .datebar .fd-eq{display:none}.wdel,.wh{position:relative}.wdel::after,.wh::after{content:'';position:absolute;inset:-10px}   /* D27-09 觸控範圍 ≥ 40px，圖示不變大 */
 }
 @media (max-width:520px){
   .tbl th,.tbl td{padding:8px 6px}
-  .tbl td.nm{white-space:normal;min-width:84px;max-width:124px}.tbl td.nm>span{display:block;margin-left:0}   /* D25-06 名稱欄兩行 */
+  .tbl td.nm{white-space:normal;min-width:84px;max-width:124px}.tbl td.nm>span{display:block;margin-left:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:0;min-width:100%}   /* D25-06 名稱欄兩行；D27-10 產業名過長截斷 */
 }
 /* 第 14 輪 F14-1、F14-2：營收、EPS 年增欄的第二行（月份、基期低、去年同季），欄寬不被撐開 */
 .tbl .sub2{display:block;font-size:11px;line-height:1.3;color:var(--text2)}
@@ -310,4 +317,4 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .note-dup .note[open] summary i{font-size:12px;margin-left:0}
 .tbl td.hl-tags,.tbl th.hl-th{white-space:normal;min-width:12em;text-align:left}.hl-tag{display:inline-block;margin:1px 8px 1px 0;font-size:12px}.hl-tag i{font-style:normal;color:var(--text2)}   /* 第 21 輪 F21-1 */
 .hl-sub{display:none}table.pf-tbl{max-width:560px}.pf-tbl td span{display:block;color:var(--text2);font-size:11px}   /* 第 23 輪 F23-4a、F23-1 */
-@media (max-width:480px){.tbl th.hl-th,.tbl td.hl-tags{display:none}.tbl td.nm .hl-sub{display:block;white-space:normal}.tbl .nm .hl-sub span{color:var(--text);font-size:12px;margin:2px 8px 0 0}}
+@media (max-width:480px){.tbl th.hl-th,.tbl td.hl-tags{display:none}.tbl tr.hl-sub{display:table-row}.tbl tr:has(+.hl-sub) td{border-bottom:0;padding-bottom:2px}.tbl tr.hl-sub td{padding-top:0;white-space:normal;box-shadow:none}.hl-sub .hl-tag{white-space:nowrap}}   /* 第 27 輪 D27-02 */

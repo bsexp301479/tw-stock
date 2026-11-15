@@ -79,7 +79,7 @@ def test_f124_cap_turnover():
 # ─── 網站（原始碼檢查）───────────────────────────────────
 def test_f12_site():
     js = (ROOT / "site" / "stock.js").read_text(encoding="utf-8")
-    assert "右側刻度只適用融資；融券、借券各自縮放" in js                                                    # F12-1 P26
+    assert "segHTML('mgSeg'" in js and "右側刻度只適用融資" not in js                                       # F12-1 P26；第 27 輪 D27-07 改成一次一條線
     assert "...mtCards]" in js and "...mgCards, ...slCards]" in js and "MT?.mc == null ? '--'" in js        # F12-4（分頁後：市值在走勢、信用在籌碼）
     app = (ROOT / "site" / "app.js").read_text(encoding="utf-8")
     assert "function wpeLine(V)" in app and "${wpeLine(V)}" in app and "不是證交所公布的數字" in app            # F12-2

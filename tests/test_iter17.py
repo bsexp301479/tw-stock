@@ -129,7 +129,7 @@ def test_site_source():
     assert ".al-near{" in CSS
     src = (ROOT / "twstock" / "export.py").read_text(encoding="utf-8")
     assert 'latest["alerts"]["w"] = alert_watch(watch_notes, watch_days,' in src and "COUNT_DOWN = True" in src
-    assert APP.count("A.w") == 1 and "alerts.w" not in APP  # 只有今日清單用到；選股不加預警條件
+    assert APP.count("A.w") == 2 and "接近處置（推算）${(A.w || []).length}" in APP and "alerts.w" not in APP  # 只有今日清單用到（第 27 輪 D27-08 摘要列加檔數）；選股、自選不加預警條件
 
 
 if __name__ == "__main__":
