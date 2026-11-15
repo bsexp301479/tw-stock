@@ -10,13 +10,13 @@
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){
+  :root:not([data-theme="light"]){   /* 第 26 輪：深色 --dn 由 #3fbf7f 調為 #349f6a，與 --up 同亮度（卡片底對比都是 5.34），跌不再比漲搶眼 */
     --bg:#0e0f11;--card:#17181b;--card2:#1e2023;
     --text:#ececec;--text2:#a7a7a7;--text3:#888;
     --border:#2a2c30;--border2:#3a3d42;
-    --up:#ef5b5b;--dn:#3fbf7f;--flat:#8a8a8a;--amber:#e8a33d;--blue:#488bd9;--violet:#7f77dd;--on-fill:#111;
-    --up-bg:rgba(239,91,91,.14);--dn-bg:rgba(63,191,127,.14);
-    --q-rise:rgba(239,91,91,.08);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.09);--q-ebb:rgba(63,191,127,.08);
+    --up:#ef5b5b;--dn:#349f6a;--flat:#8a8a8a;--amber:#e8a33d;--blue:#488bd9;--violet:#7f77dd;--on-fill:#111;
+    --up-bg:rgba(239,91,91,.14);--dn-bg:rgba(52,159,106,.14);
+    --q-rise:rgba(239,91,91,.08);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.09);--q-ebb:rgba(52,159,106,.08);
     color-scheme:dark;
   }
 }
@@ -24,9 +24,9 @@
   --bg:#0e0f11;--card:#17181b;--card2:#1e2023;
   --text:#ececec;--text2:#a7a7a7;--text3:#888;
   --border:#2a2c30;--border2:#3a3d42;
-  --up:#ef5b5b;--dn:#3fbf7f;--flat:#8a8a8a;--amber:#e8a33d;--blue:#488bd9;--violet:#7f77dd;--on-fill:#111;
-  --up-bg:rgba(239,91,91,.14);--dn-bg:rgba(63,191,127,.14);
-  --q-rise:rgba(239,91,91,.08);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.09);--q-ebb:rgba(63,191,127,.08);
+  --up:#ef5b5b;--dn:#349f6a;--flat:#8a8a8a;--amber:#e8a33d;--blue:#488bd9;--violet:#7f77dd;--on-fill:#111;
+  --up-bg:rgba(239,91,91,.14);--dn-bg:rgba(52,159,106,.14);
+  --q-rise:rgba(239,91,91,.08);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.09);--q-ebb:rgba(52,159,106,.08);
   color-scheme:dark;
 }
 html{-webkit-text-size-adjust:100%}
@@ -55,6 +55,9 @@ button{font:inherit;color:inherit;cursor:pointer}
 .tabs{display:flex;gap:4px;margin-left:auto}
 .tabs a{padding:6px 12px;border-radius:999px;color:var(--text2)}
 .tabs a.on{background:var(--text);color:var(--bg)}
+.theme-btn{flex:none;display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--border2);border-radius:50%;background:var(--card);color:var(--text2)}   /* 第 26 輪：淺色／深色切換 */
+.theme-btn:hover{color:var(--text)}.theme-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.theme-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .datebar{max-width:1120px;margin:10px auto 0;padding:0 16px;color:var(--text2);font-size:12px}
 .fresh{margin:8px max(16px,calc((100% - 1088px)/2)) 0;padding:8px 12px;border-left:3px solid var(--amber);border-radius:6px;
   background:color-mix(in srgb,var(--amber) 14%,var(--card));font-size:13px;overflow-wrap:anywhere}

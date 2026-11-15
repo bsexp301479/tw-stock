@@ -1556,8 +1556,41 @@ async function recheckLatest() {
   renderStatus();
 }
 
+// ─── 色調 ───────────────────────────────────────────────
+// 第 26 輪：淺色／深色切換。沒選過就跟系統；選過存在 tw.theme（index.html 開頭先套用，避免閃一下）。
+// 圖表的顏色是畫圖當下從 CSS 取的，所以切換後重畫目前頁面，並回到原本的捲動位置。
+const isDark = () => (document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
+function themeBtn() {
+  const b = $('#themeBtn'), d = isDark();
+  b.innerHTML = d ? '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
+    : '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>';
+  b.title = d ? '切換為淺色' : '切換為深色';
+  b.setAttribute('aria-label', b.title);
+}
+async function redrawKeepScroll() {
+  const y = window.scrollY;
+  await route();
+  window.scrollTo(0, y);
+}
+function setupTheme() {
+  themeBtn();
+  $('#themeBtn').addEventListener('click', () => {
+    const t = isDark() ? 'light' : 'dark';
+    document.documentElement.dataset.theme = t;
+    localStore('theme', null, t);
+    themeBtn();
+    if (App.latest) redrawKeepScroll();
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {   // 沒選過時，系統切換也跟著重畫
+    if (document.documentElement.dataset.theme) return;
+    themeBtn();
+    if (App.latest) redrawKeepScroll();
+  });
+}
+
 // ─── 啟動 ───────────────────────────────────────────────
 async function init() {
+  setupTheme();
   setupSearch();
   try {
     App.latest = await getJSON('data/latest.json');
