@@ -66,8 +66,15 @@ const routes = {
   stock: (code, sub) => window.renderStock(code, sub),   // 第 25 輪 D25-08：#/stock/代號/分頁
 };
 
+// 第 28 輪 D28-03：瀏覽器「返回／前進」回到看過的頁面時還原捲動位置；點連結進新頁才回到頂端。
+// 每一筆瀏覽紀錄在 history.state.k 有自己的鍵（新紀錄的 state 是 null），捲動時記下位置
+const scrollAt = {};
+let scrollKey = null;
 async function route() {
   const [, page = 'today', arg, sub] = location.hash.split('/');
+  const k = history.state?.k;
+  scrollKey = null;                                                     // 換頁中（內容長度改變）的捲動不記
+  if ((page === 'watch' || page === 'bubble') && arg) history.replaceState(history.state, '', '#/' + page);   // D28-08：這兩頁沒有子頁
   if (page !== 'watch') App.watchUndo = App.watchEdit = null;   // 離開自選頁：清掉復原、結束編輯
   // 第 27 輪 D27-10：瀏覽器分頁標題帶頁面名稱（個股頁由 renderStock 換成「名稱 代號」）
   document.title = ({ today: '今日', bubble: '泡泡圖', rank: { hl: '新訊號', screen: '選股' }[String(arg).split('?')[0]] || '排行',
@@ -83,14 +90,23 @@ async function route() {
     console.error(e);
     view.innerHTML = `<div class="empty">載入失敗：${esc(e.message)}</div>`;
   }
-  window.scrollTo(0, 0);
+  window.scrollTo(0, k && scrollAt[k] || 0);
+  scrollKey = k || Date.now() + Math.random();
+  if (history.state?.k !== scrollKey) history.replaceState({ k: scrollKey }, '');   // 不帶網址：保留各頁補正後的網址
+}
+// QA28-01：同一頁切換分頁、期間、條件時會用 replaceState(null, …) 改網址，順便清掉這筆紀錄的鍵。
+// 捲動時記位置並把鍵補回；點擊（離開這頁之前）也補一次，涵蓋「切換後沒捲動就點進個股」。不帶網址，保留切換後的網址
+function saveScroll() {
+  if (!scrollKey) return;
+  scrollAt[scrollKey] = window.scrollY;
+  if (history.state?.k !== scrollKey) history.replaceState({ k: scrollKey }, '');
 }
 
 // 第 27 輪 D27-01：25 列以上的表格不再關在固定高度的捲動框裡（整頁捲動，不會被畫面底部或底部選單擋住）。
 // .tbl-wrap 要保留橫向捲動，CSS sticky 只能貼在框內，所以捲動時把表頭位移到頂欄下方（--th-y，最多到表格最後兩列）
 function stickHeads() {
   const top = $('.top').getBoundingClientRect().bottom;
-  [...document.querySelectorAll('#view .tbl-wrap')].filter(w => w.querySelector('tbody tr:nth-child(25)'))
+  [...document.querySelectorAll('#view .tbl-wrap:not(.panel-list)')].filter(w => w.querySelector('tbody tr:nth-child(25)'))
     .map(w => [w, w.getBoundingClientRect(), w.querySelector('thead')?.offsetHeight || 0])
     .forEach(([w, r, h]) => w.style.setProperty('--th-y', Math.max(0, Math.min(top - r.top, r.height - 2 * h)) + 'px'));
 }
@@ -666,36 +682,65 @@ function onRowClick(e) {
   const tr = e.target.closest('tr[data-code]');
   if (tr) { location.hash = '#/stock/' + tr.dataset.code; return; }
   const g = e.target.closest('[data-group]');
-  if (g) { localStore('focus', null, g.dataset.group); location.hash = '#/bubble'; }
+  if (g) { localStore('focus', null, g.dataset.group); App.blOpen = g.dataset.group; App.blJump = 1; location.hash = '#/bubble'; }   // D28-04：手機清單展開這一列
 }
 
 // ─── 泡泡圖 ─────────────────────────────────────────────
 const SYMLOG_C = 1;   // 對稱對數軸的線性區間（億），讓大小差很多的板塊能放在同一張圖
 const symlog = v => Math.sign(v) * Math.log10(1 + Math.abs(v) / SYMLOG_C);
 
+// 第 28 輪 D28-04：手機（≤720）加「圖｜清單」，預設清單（手機泡泡太小、標籤互相遮住，大小也看不出差別）；選擇只在這次瀏覽記住。
+// 清單每列一個族群（最新一天，近 5 日由大到小），點一列在下方展開成分股，不捲走；再點收合
+function bubbleList(groups) {
+  const L = App.latest, k = L.dates.length - 1, open = App.blOpen;
+  const QC = { 漲潮: 'var(--up)', 輪動: 'var(--amber)', 觀望: 'var(--blue)', 退潮: 'var(--dn)' };
+  return `<div class="muted small tbl-cap">資料日 ${md(L.dates[k])}。近5日 = 近 5 日法人累計（億）；日均差 = 近 5 日日均 − 20 日日均（億/天），正 = 偏流入；成交 = 成交額（億）。點一列看成分股</div>
+    <div class="tbl-wrap"><table class="tbl bl-tbl"><thead><tr><th>${{ industry: '類股', chain: '產業鏈', concept: '概念股' }[App.group]}</th><th>近5日</th><th>日均差</th><th>漲跌</th><th>成交</th></tr></thead><tbody>` +
+    groups.filter(g => g.frames[k]).sort((a, b) => b.frames[k][0] - a.frames[k][0]).map(g => { const [n5, dv, ch, tv] = g.frames[k];
+      return `<tr data-bl="${esc(g.name)}"${g.name === open ? ' class="on"' : ''}><td class="nm"><b>${esc(g.name)}</b><span><i style="color:${QC[g.quadrant]}">${g.quadrant}</i></span></td>
+        <td class="num ${cls(n5)}">${yi(n5)}</td><td class="num ${cls(dv)}">${sgn(dv, 1)}</td><td class="num ${cls(ch)}">${sgn(ch)}%</td><td class="num">${fmt(tv)}</td></tr>` +
+        (g.name === open ? `<tr class="bl-x"><td colspan="5"><div class="muted small">${groupMeta(g)}</div><div class="tbl-wrap panel-list"><table class="tbl">${groupRows(g)}</table></div></td></tr>` : ''); }).join('') +
+    '</tbody></table></div>';
+}
+
 function renderBubble() {
   const L = App.latest, groups = L.groups[App.group];
   const focus = localStore('focus', '');
+  const mob = matchMedia('(max-width:720px)').matches, list = mob && App.bubbleView !== 'chart';
   $('#view').innerHTML = `
     <section class="sec">
-      <div class="sec-h"><h2>板塊資金泡泡圖</h2><span class="muted small">X：近 5 日法人淨流入　Y：近 5 日日均比 20 日日均偏流入或偏流出　大小：成交額　顏色：漲跌幅</span>
-        <span class="sp"></span>${groupSeg()}</div>
-      <div class="card" style="padding:6px"><div id="bubble"></div></div>
+      <div class="sec-h"><h2>板塊資金${list ? '' : '泡泡圖'}</h2><span class="muted small">${list ? '近 5 日法人淨流入由大到小' : 'X：近 5 日法人淨流入　Y：近 5 日日均比 20 日日均偏流入或偏流出　大小：成交額　顏色：漲跌幅'}</span>
+        <span class="sp"></span>${mob ? segHTML('bvSeg', [['chart', '圖'], ['list', '清單']], list ? 'list' : 'chart') : ''}${groupSeg()}</div>
+      ${list ? `<div class="card" id="blBox">${bubbleList(groups)}</div>` : '<div class="card" style="padding:6px"><div id="bubble"></div></div>'}
     </section>
     <section class="sec grid g2">
-      <div class="card"><div class="sec-h"><h2 id="gTitle">點泡泡看成分股</h2><span class="sp"></span><span id="gMeta" class="muted small"></span></div>
-        <div class="tbl-wrap panel-list"><table class="tbl" id="gTable"></table></div></div>
+      ${list ? '' : `<div class="card"><div class="sec-h"><h2 id="gTitle">點泡泡看成分股</h2><span class="sp"></span><span id="gMeta" class="muted small"></span></div>
+        <div class="tbl-wrap panel-list"><table class="tbl" id="gTable"></table></div></div>`}
       <div class="card"><div class="sec-h"><h2>象限說明</h2></div>
         <div class="small" style="line-height:1.9">
           <div><b class="up">漲潮</b>：近 5 日淨流入，而且比 20 日平均更積極 → 資金正在加速進場</div>
           <div><b style="color:var(--amber)">輪動</b>：仍是淨流入，但力道比過去弱 → 可能接近尾聲、資金轉往他處</div>
           <div><b style="color:var(--blue)">觀望</b>：仍是淨流出，但賣壓比過去小 → 可能止跌、留意回流</div>
           <div><b class="dn">退潮</b>：淨流出且賣壓加大 → 資金正在撤出</div>
-          <div class="muted" style="margin-top:6px">按圖下方 ▶ 可回放近 ${L.dates.length} 個交易日的變化；軸為對稱對數刻度。</div>
+          ${list ? '' : `<div class="muted" style="margin-top:6px">按圖下方 ▶ 可回放近 ${L.dates.length} 個交易日的變化；軸為對稱對數刻度。</div>`}
         </div></div>
     </section>`;
   onSeg('grpSeg', v => { setGroup(v); renderBubble(); });
   $('#view').addEventListener('click', onRowClick);
+  if (mob) onSeg('bvSeg', v => { App.bubbleView = v; if (window.Plotly && $('#bubble')) Plotly.purge('bubble'); renderBubble(); });
+  if (list) {
+    $('#blBox').addEventListener('click', e => {
+      const tr = e.target.closest('tr[data-bl]');
+      if (!tr) return;
+      const name = tr.dataset.bl, y0 = tr.getBoundingClientRect().top;
+      App.blOpen = App.blOpen === name ? null : name;
+      if (App.blOpen) localStore('focus', null, name);
+      $('#blBox').innerHTML = bubbleList(groups);
+      window.scrollBy(0, $(`#blBox tr[data-bl="${CSS.escape(name)}"]`).getBoundingClientRect().top - y0);   // 點的那一列留在原位（上方收合時不跳走）
+    });
+    if (App.blJump) { App.blJump = 0; requestAnimationFrame(() => $('#blBox tr.on')?.scrollIntoView()); }   // 從今日頁點族群進來：捲到展開的那一列（route() 捲到頂端之後）
+    return;
+  }
   drawBubble(groups, L.dates);
   showGroup(groups.find(g => g.name === focus) || groups[0]);
 }
@@ -758,9 +803,10 @@ function drawBubble(groups, dates) {
       ids: gs.map(g => g.name),
       x: xs, y: ys,
       text: lab.text, textposition: 'middle center',
-      customdata: gs.map(g => [g.name, ...g.frames[k]]),
+      // 第 28 輪 D28-07：Plotly basic 的 d3-format 不認得 +.1f（會顯示原始數字、正值沒有 +），先格式化成字串；近 5 日和泡泡上的字同一種小數位
+      customdata: gs.map(g => { const f = g.frames[k]; return [g.name, amount(f[0]), sgn(f[1], 1) + '億/天', sgn(f[2]) + '%', fmt(f[3]) + '億']; }),
       textfont: { size: lab.font, color: '#fff' },
-      hovertemplate: '<b>%{customdata[0]}</b><br>近5日 %{customdata[1]:+.1f}億<br>5日日均−20日日均 %{customdata[2]:+.1f}億/天<br>漲跌 %{customdata[3]:+.2f}%<br>成交 %{customdata[4]:,.0f}億<extra></extra>',
+      hovertemplate: '<b>%{customdata[0]}</b><br>近5日 %{customdata[1]}<br>5日日均−20日日均 %{customdata[2]}<br>漲跌 %{customdata[3]}<br>成交 %{customdata[4]}<extra></extra>',
       marker: {
         size: d, sizemode: 'diameter',
         color: gs.map(g => g.frames[k][2]), cmin: -4, cmax: 4,
@@ -785,7 +831,7 @@ function drawBubble(groups, dates) {
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: text },
     margin: M, showlegend: false, hovermode: 'closest', dragmode: false,
     xaxis: axis(ticksX, limX, '← 流出　近 5 日法人累計（億）　流入 →', ''),
-    yaxis: axis(ticksY, limY, '↓ 偏流出　近 5 日日均 − 20 日日均（億/天）　偏流入 ↑', ''),   // 第 27 輪 D27-04：左右兩半都成立（原「加速／放緩」在淨流出那半邊意思相反）
+    yaxis: axis(ticksY, limY, '← 偏流出　近 5 日日均 − 20 日日均（億/天）　偏流入 →', ''),   // 第 27 輪 D27-04：左右兩半都成立（原「加速／放緩」在淨流出那半邊意思相反）；Y 軸標題會轉 -90° 直書，←／→ 轉完才是 ↓／↑
     shapes: [quad(0, limX, 0, limY, css('--q-rise')), quad(0, limX, -limY, 0, css('--q-rot')),
              quad(-limX, 0, 0, limY, css('--q-watch')), quad(-limX, 0, -limY, 0, css('--q-ebb'))],
     annotations: [qLabel(limX * .88, limY * .9, '漲潮', css('--up')), qLabel(limX * .88, -limY * .9, '輪動', css('--amber')),
@@ -816,16 +862,20 @@ function drawBubble(groups, dates) {
   });
 }
 
-function showGroup(g) {
-  if (!g) return;
+const groupMeta = g => `<span class="pill">${g.quadrant}</span>　5日 <span class="${cls(g.net_5d)}">${yi(g.net_5d)}</span>　連${g.streak >= 0 ? '買' : '賣'} ${Math.abs(g.streak)} 天　法人 ${md(App.latest.flow_date)}`;
+function groupRows(g) {   // D28-04：泡泡明細卡與手機清單展開共用
   const S = App.latest.stocks;
-  $('#gTitle').textContent = g.name;
-  $('#gMeta').innerHTML = `<span class="pill">${g.quadrant}</span>　5日 <span class="${cls(g.net_5d)}">${yi(g.net_5d)}</span>　連${g.streak >= 0 ? '買' : '賣'} ${Math.abs(g.streak)} 天　法人 ${md(App.latest.flow_date)}`;
   const rows = g.codes.filter(c => S[c]).sort((a, b) => (S[b].n5 ?? 0) - (S[a].n5 ?? 0));
-  $('#gTable').innerHTML = `<thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>法人1日</th><th>法人5日</th></tr></thead><tbody>` +
+  return `<thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>法人1日</th><th>法人5日</th></tr></thead><tbody>` +
     rows.map(c => { const s = S[c]; return `<tr data-code="${c}"><td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
       <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num ${cls(s.n1)}">${yi(s.n1)}</td><td class="num ${cls(s.n5)}">${yi(s.n5)}</td></tr>`; }).join('') + '</tbody>';
+}
+function showGroup(g) {
+  if (!g) return;
+  $('#gTitle').textContent = g.name;
+  $('#gMeta').innerHTML = groupMeta(g);
+  $('#gTable').innerHTML = groupRows(g);
 }
 
 // ─── 排行 / 自選 ────────────────────────────────────────
@@ -1421,7 +1471,7 @@ async function renderHoldings(code) {
   // 不在支援清單就不請求（避免 404）
   const H = App.latest.holdings?.[code] && await getJSON(`data/etfs/${code}.json`);
   if (!H && App.latest.etfs?.rows?.[code]) { location.replace('#/stock/' + code); return; }     // 第 15 輪 F15-2：沒有持股資料的 ETF 改看 ETF 個股頁
-  if (!H) { $('#view').innerHTML = `<div class="empty">${esc(code)} 的持股資料尚未支援（目前支援統一、群益投信 8 檔主動 ETF）</div>`; return; }
+  if (!H) { document.title = 'ETF｜台股資金流'; $('#view').innerHTML = `<div class="empty">找不到 ${esc(code)} 的資料。可用上方搜尋框查代號或名稱，或<a href="#/etf" style="color:var(--blue)">回 ETF 列表</a></div>`; return; }   // 第 28 輪 D28-08：不是 ETF 代號
   const S = H.sum, by = localStore('holdSort', 'pw'), unit = r => r.tw ? '張' : '股';
   const rows = [...H.rows].sort((a, b) => (b[by] ?? -Infinity) - (a[by] ?? -Infinity));
   const prev = H.dates.at(-2), d5 = H.dates.length > 5 ? H.dates.at(-6) : null;
@@ -1649,6 +1699,8 @@ async function init() {
   // 第 27 輪：頂欄高度給固定表頭、選股條件列（--top-h）；畫面重畫、捲動、改變大小時重算表頭位置（D27-01）
   const topH = () => { document.documentElement.style.setProperty('--top-h', $('.top').offsetHeight + 'px'); stickHeads(); };
   topH(); addEventListener('resize', topH); addEventListener('scroll', stickHeads, { passive: true });
+  history.scrollRestoration = 'manual';                                 // D28-03：捲動位置由 route() 還原（內容是重畫的，瀏覽器自己還原會被蓋掉）
+  addEventListener('scroll', saveScroll, { passive: true }); document.addEventListener('click', saveScroll, true);
   new MutationObserver(stickHeads).observe($('#view'), { childList: true });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') recheckLatest(); });
   window.addEventListener('hashchange', route);

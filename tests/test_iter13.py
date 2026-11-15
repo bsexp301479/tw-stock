@@ -45,7 +45,7 @@ console.log(JSON.stringify(out));"""
 
 
 def test_f13_2_stock_k_cards():
-    k = STK[STK.index("${(tab === 'k' ? ["):STK.index(": tab === 'chip' ?")]
+    k = STK[STK.index("${cardsHTML(tab === 'k' ? ["):STK.index("\n        : [['本益比'")]
     assert "開盤" not in k and "成交量" not in k and "昨收" not in k and "...mtCards]" in k
     assert "hlFrom ? '區間高' : '52週高'" in k and "hlFrom ? '區間低' : '52週低'" in k
     assert '<div class="s-ohlc small num muted">' in STK and "昨收 <b>${pfmt(prev)}</b>" in STK and "量 <b>${fmt(P.v[last])}</b> 張" in STK

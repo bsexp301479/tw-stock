@@ -175,8 +175,8 @@ console.log(JSON.stringify(r));"""
 
 
 def test_stock_source():
-    assert "subs(fd, runTxt(s?.s, '買', '賣'))" in STK
-    assert "subs('至 ' + fd, runTxt(s?.fs, '買', '賣'))" in STK and "subs('至 ' + fd, runTxt(s?.ts, '買', '賣'))" in STK
+    assert "['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')]" in STK                # 第 28 輪 D28-01：日期移到組標題
+    assert "['外資5日', yi(s?.f5), cls(s?.f5), runTxt(s?.fs, '買', '賣')]" in STK and "['投信5日', yi(s?.t5), cls(s?.t5), runTxt(s?.ts, '買', '賣')]" in STK
     assert "!E && runTxt(balStreak(data.mg, P.d, 'mb', MG.d), '增', '減')" in STK              # ETF 頁不加
     assert "!E && runTxt(balStreak(data.mg, P.d, 'lb', SL.d), '增', '減')" in STK
     # F22-12：頁首、共用 hlTag；舊 app.js 沒有 hlTag 或不認得的種類不列

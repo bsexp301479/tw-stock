@@ -289,7 +289,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .scr-panel>summary{position:sticky;top:var(--top-h,56px);z-index:4;background:var(--card);margin:-6px -16px 0;padding:8px 16px;border-radius:var(--radius)}   /* D27-03 */
 .scr-panel[open]>summary{border-bottom:1px solid var(--border)}.scr-go{color:var(--blue);border-color:var(--blue)}
 .scr-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;font-weight:400}.scr-panel[open] .scr-tags{display:none}
-#kC+.kv{margin:8px 0 4px;grid-template-columns:repeat(3,minmax(0,1fr))}                                                                                    /* D27-06 手機關鍵數字列在 K 線下方 */
+#vC+.kv{margin:8px 0 4px;grid-template-columns:repeat(3,minmax(0,1fr))}#vC+.kv .card:last-child:nth-child(3n+1){grid-column:span 3}#vC+.kv .card:last-child:nth-child(3n+2){grid-column:span 2}   /* D27-06；第 28 輪 D28-05 手機關鍵數字列在成交量下方，最後一列不留空格 */
 .qstar{cursor:pointer;padding:0 2px 0 8px;color:var(--text2);font-size:16px;line-height:1}.qstar.on{color:var(--amber)}   /* D27-09 */
 @media (min-width:521px){.oi-tbl th,.oi-tbl td{padding-left:6px;padding-right:6px}}.tbl .nm .pill.muted{border-color:transparent;background:none;padding:0}   /* D27-10 */
 @media (max-width:720px){
@@ -318,3 +318,11 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl td.hl-tags,.tbl th.hl-th{white-space:normal;min-width:12em;text-align:left}.hl-tag{display:inline-block;margin:1px 8px 1px 0;font-size:12px}.hl-tag i{font-style:normal;color:var(--text2)}   /* 第 21 輪 F21-1 */
 .hl-sub{display:none}table.pf-tbl{max-width:560px}.pf-tbl td span{display:block;color:var(--text2);font-size:11px}   /* 第 23 輪 F23-4a、F23-1 */
 @media (max-width:480px){.tbl th.hl-th,.tbl td.hl-tags{display:none}.tbl tr.hl-sub{display:table-row}.tbl tr:has(+.hl-sub) td{border-bottom:0;padding-bottom:2px}.tbl tr.hl-sub td{padding-top:0;white-space:normal;box-shadow:none}.hl-sub .hl-tag{white-space:nowrap}}   /* 第 27 輪 D27-02 */
+/* ─── 第 28 輪（D28-xx）────────────────────────── */
+.chip-rng{display:flex;align-items:center;gap:8px;margin:10px 0 0}.chip-g .kv{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);margin-bottom:4px}   /* D28-01 籌碼分組：寬螢幕一組一列 */
+@media (max-width:520px){.chip-g .kv{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr))}.chip-g .kv .card:only-child{grid-column:1/-1}}
+.ch-label{row-gap:2px}.mg-l{align-items:center}                                                                                         /* D28-06 子圖標題區換行不留 12px 空白 */
+@media (max-width:520px){table.oi-tbl th,table.oi-tbl td{padding:8px 4px}table.bl-tbl>*>tr>*{padding-left:5px;padding-right:5px}}   /* D28-02 375 寬「增減」最後一位數不被切（表 321 → 301，框 309）；原本的 5px 被後面的 .tbl 6px 蓋掉 */
+.bl-tbl tr[data-bl]{cursor:pointer}.bl-tbl tr.on>td{background:var(--card2)}.bl-tbl tr{scroll-margin-top:calc(var(--top-h,56px) + 44px)}.bl-tbl td.nm i{font-style:normal}   /* D28-04 泡泡清單 */
+.bl-x>td{text-align:left;white-space:normal;padding:2px 0 10px}.bl-x .tbl-wrap{width:0;min-width:100%}.panel-list{--th-y:0px}   /* 展開的成分股表不撐寬外層清單，自己橫捲 */
+@media (max-width:520px){.bl-x table.tbl{font-size:12px}.bl-x table.tbl th,.bl-x table.tbl td{padding-left:4px;padding-right:4px}}@media (max-width:380px){table.bl-tbl>*>tr>*{padding-left:4px;padding-right:4px}.bl-x table.tbl th,.bl-x table.tbl td{padding-left:3px;padding-right:3px}}   /* QA28-02：手機展開的成分股表、360 寬清單數字完整不被切 */

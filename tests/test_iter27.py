@@ -92,9 +92,10 @@ def test_screen_summary():
 
 # ─── D27-04：泡泡圖 Y 軸文案與標籤 ──────────────────────
 def test_bubble_wording():
-    assert "'↓ 偏流出　近 5 日日均 − 20 日日均（億/天）　偏流入 ↑'" in APP and "'↓ 放緩　　加速 ↑'" not in APP
+    # Y 軸標題由 Plotly 轉 -90° 直書，字元跟著轉：寫 ← → 畫面上才是 ↓ ↑（寫 ↓ ↑ 會變成 → ←）
+    assert "'← 偏流出　近 5 日日均 − 20 日日均（億/天）　偏流入 →'" in APP and "'↓ 放緩　　加速 ↑'" not in APP and "偏流入 ↑'" not in APP
     assert "Y：近 5 日日均比 20 日日均偏流入或偏流出" in APP and "比 20 日平均加速或放緩" not in APP
-    assert "加速度 %{customdata[2]" not in APP and "5日日均−20日日均 %{customdata[2]:+.1f}億/天" in APP
+    assert "加速度 %{customdata[2]" not in APP and "5日日均−20日日均 %{customdata[2]}<br>" in APP   # 第 28 輪 D28-07：customdata 先格式化
     assert "Math.max(10, Math.min(14, v * 0.2))" in APP
     assert "opacity: isDark() ? .82 : 1" in APP
     # 淺色底不透明時，最淡的綠色泡泡上白字 ≥ 4.5
@@ -121,7 +122,7 @@ def test_stock_chart_legend_and_price_line():
             assert _cr(on, re.search(rf"--{k}:(#[0-9a-f]{{6}})", blk).group(1)) >= 4.5, k
     assert '<span class="lg"><i style="background:${color}"></i>${label} <b>${fmt(v)}</b></span>' in APP
     assert "<b style=\"color:${color}\">" not in APP
-    assert "$('#kC').after(" in STK and "#kC+.kv{" in CSS
+    assert "$('#vC').after(" in STK and "#vC+.kv{" in CSS                  # 第 28 輪 D28-05：改到成交量之後
 
 
 def test_margin_single_series():

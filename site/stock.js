@@ -57,6 +57,11 @@ const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除
 const mgView = G => { const v = localStore('mgv', 'mb'); return v === 'sb' || (v === 'lb' && G?.lb) ? v : 'mb'; };
 const tagFold = t => t.slice(0, 2).join('') + (t.length > 2 ? `<span class="tag-rest" hidden>${t.slice(2).join('')}</span><button class="pill more" id="tagMore" data-n="+${t.length - 2}">+${t.length - 2}</button>` : '');
 
+const cardsHTML = a => a.map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('');
+// 第 28 輪 D28-01：籌碼分頁的圖表區間（預設 60 個交易日；只在這次瀏覽記住，不存 localStorage）
+const CHIP_N = [['20', '20 日'], ['60', '60 日'], ['120', '120 日'], ['all', '全部']];
+let chipN = '60';
+
 window.renderStock = async function (code, sub) {
   const E = !App.latest.stocks[code] && App.latest.etfs?.rows?.[code];   // 第 15 輪 F15-2：ETF 個股頁（頁首用 etfs.rows，資料 data/etfp/）
   const s = App.latest.stocks[code] || E || undefined;
@@ -99,6 +104,7 @@ window.renderStock = async function (code, sub) {
   if (STOCK_TABS.some(t => t[0] === sub)) localStore('stockTab', null, sub); else if (App.stockCode !== code) localStore('stockTab', null, 'k');
   App.stockCode = code;
   const tab0 = pageTab('stockTab', STOCK_TABS), tab = E && tab0 === 'fund' ? 'k' : tab0;   // 分頁：走勢／籌碼／基本面（頁首永遠顯示）；第 15 輪：ETF 沒有基本面
+  if (sub && sub !== tab) history.replaceState(history.state, '', `#/stock/${code}/${tab}`);   // 第 28 輪 D28-08：不認得的分頁（ETF 的 fund）補成實際顯示的分頁
   const fd = md(App.latest.flow_date);
   // 第 15 輪：ETF 的 52 週高低由原始價計算（和匯出端 h52 同樣取資料日往前 365 天）
   const w0 = new Date(Date.parse(P.d[last]) - 365 * 864e5).toISOString().slice(0, 10), inW = (x, i) => x != null && P.d[i] >= w0;
@@ -111,16 +117,23 @@ window.renderStock = async function (code, sub) {
   const mgCards = MG === undefined ? [] : MG === null ? [['信用交易', '無信用交易', 'flat', '不在融資融券清單']]
     : [['融資餘額', fmt(MG.mb) + ' 張', '', subs(`1日 ${sgn(MG.m1, 0)}　5日 ${MG.m5 == null ? '--' : sgn(MG.m5, 0)}`, !E && runTxt(balStreak(data.mg, P.d, 'mb', MG.d), '增', '減'))],
        ['融券餘額', fmt(MG.sb) + ' 張', '', `1日 ${sgn(MG.s1, 0)}`],
-       ['券資比', MG.sr == null ? '--' : fmt(MG.sr, 2) + '%', '', '資料 ' + md(MG.d)],
-       ['融資使用率', MG.mu == null ? '--' : fmt(MG.mu, 2) + '%', '', mgNote ? '次一營業日' + mgNote : '資料 ' + md(MG.d)]];
+       ['券資比', MG.sr == null ? '--' : fmt(MG.sr, 2) + '%', '', ''],
+       ['融資使用率', MG.mu == null ? '--' : fmt(MG.mu, 2) + '%', '', mgNote ? '次一營業日' + mgNote : '']];   // 第 28 輪 D28-01：資料日寫在組標題
   // 第 11 輪 B14：借券賣出（張；占股本用目前股數）。sbl 不存在 = 該市場最新借券日沒有這檔
   const SL = data.sbl;
   // 第 12 輪 B11：市值、週轉率（目前股數）
   const MT = data.mt, mcTxt = v => v >= 1e4 ? fmt(v / 1e4, 2) + ' 兆' : fmt(v, v >= 100 ? 0 : 1) + ' 億';
   const mtCards = E ? [] : [['市值', MT?.mc == null ? '--' : mcTxt(MT.mc), '', MT ? '收盤 × 目前發行股數' : '沒有發行股數資料'],
     ['週轉率', MT?.to == null ? '--' : fmt(MT.to, 2) + '%', '', MT ? `${MT.d !== P.d[last] ? md(MT.d) + '，' : ''}成交股數 ÷ 目前發行股數` : '沒有發行股數資料']];
-  const slCards = !SL ? [] : [['借券賣出餘額', fmt(SL.lb) + ' 張', '', subs(`1日 ${sgn(SL.l1, 0)}　5日 ${SL.l5 == null ? '--' : sgn(SL.l5, 0)}${E ? '　資料 ' + md(SL.d) : ''}`, !E && runTxt(balStreak(data.mg, P.d, 'lb', SL.d), '增', '減'))],
-    ...E ? [] : [['借券占股本', SL.lp == null ? '--' : fmt(SL.lp, 2) + '%', '', (SL.lx == null ? '' : `融券的 ${fmt(SL.lx, 1)} 倍　`) + '資料 ' + md(SL.d)]]];
+  const slCards = !SL ? [] : [['借券賣出餘額', fmt(SL.lb) + ' 張', '', subs(`1日 ${sgn(SL.l1, 0)}　5日 ${SL.l5 == null ? '--' : sgn(SL.l5, 0)}`, !E && runTxt(balStreak(data.mg, P.d, 'lb', SL.d), '增', '減'))],
+    ...E ? [] : [['借券占股本', SL.lp == null ? '--' : fmt(SL.lp, 2) + '%', '', SL.lx == null ? '' : `融券的 ${fmt(SL.lx, 1)} 倍`]]];
+  // 第 28 輪 D28-01：籌碼分頁分三組，日期寫在組標題一次；每組下方是同主題的時間序列圖（張），區間共用
+  const inCards = E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')], ['法人5日', yi(s?.n5), cls(s?.n5), ''],
+    ['外資5日', yi(s?.f5), cls(s?.f5), runTxt(s?.fs, '買', '賣')], ['投信5日', yi(s?.t5), cls(s?.t5), runTxt(s?.ts, '買', '賣')]];
+  const chipSec = (h, note, cards, chart, foot = '') => !cards.length ? '' : `<section class="sec card chip-g"><div class="sec-h"><h2>${h}</h2><span class="muted small">${note}</span></div>
+      <div class="metrics kv">${cardsHTML(cards)}</div>${chart}${foot}</section>`;
+  const chLeg = (t, id, h) => `<div class="ch-label">${t}<span id="${id}L" style="display:contents"></span></div><div id="${id}" class="chart-box" style="height:${h}px"></div>`;
+  const GK = data.mg?.k ? '，面額變更、減資前依官方換算' : '';
 
   // E2-4：主動 ETF 持有（統一、群益投信 8 檔；沒有任何一檔持有、也沒有 act 時不顯示）
   const AC = data.active, A = data.act;
@@ -166,18 +179,19 @@ window.renderStock = async function (code, sub) {
     </section>
 
     ${pageTabsHTML('stockTabSeg', E ? ETF_TABS : STOCK_TABS, tab)}
-    <section class="sec metrics${tab === 'k' ? ' kv' : ''}">
-      ${(tab === 'k' ? [
+    ${tab === 'chip' ? '' : `<section class="sec metrics${tab === 'k' ? ' kv' : ''}">
+      ${cardsHTML(tab === 'k' ? [
          [hlFrom ? '區間高' : '52週高', pfmt(E ? eHL[0] : s?.h52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'],
          [hlFrom ? '區間低' : '52週低', pfmt(E ? eHL[1] : s?.l52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'],
          ...E ? [] : [['本益比', fmt(fund.pe, 2), '', fundSub(fund.pe)], ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', fundSub(fund.dy)], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd]], ...mtCards]
-        : tab === 'chip' ? [...E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), subs(fd, runTxt(s?.s, '買', '賣'))], ['法人5日', yi(s?.n5), cls(s?.n5), '至 ' + fd],
-         ['外資5日', yi(s?.f5), cls(s?.f5), subs('至 ' + fd, runTxt(s?.fs, '買', '賣'))], ['投信5日', yi(s?.t5), cls(s?.t5), subs('至 ' + fd, runTxt(s?.ts, '買', '賣'))]], ...mgCards, ...slCards]
         : [['本益比', fmt(fund.pe, 2), '', subs(fundSub(fund.pe), valSub('pe', fund.pe))], ['股價淨值比', fmt(fund.pb, 2), '', subs(fundSub(fund.pb, false), valSub('pb', fund.pb))],
-         ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', subs(fundSub(fund.dy), valSub('dy', fund.dy))]])
-        .map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
-    </section>
-    ${tab === 'chip' ? `${SL ? `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。${E ? '' : '占股本以目前發行股數計算。'}借券資料晚上 8 點半以後才更新。</div>` : ''}
+         ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', subs(fundSub(fund.dy), valSub('dy', fund.dy))]])}
+    </section>`}
+    ${tab === 'chip' ? `<div class="sec chip-rng"><span class="muted small">圖表區間</span>${segHTML('chipSeg', CHIP_N, chipN)}</div>
+    ${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards, chLeg(E ? '收盤（原始價）' : '收盤（還原）', 'cpC', 64) + chLeg('區間累計買賣超（張，未還原；從區間第一天起加總）', 'ciC', 150))}
+    ${chipSec('信用交易', MG ? md(MG.d) : '', mgCards, data.mg ? chLeg(`融資餘額（張${GK}）`, 'cmC', 110) : '')}
+    ${chipSec('借券賣出', SL ? `${md(SL.d)}，晚上 8 點半以後更新` : '', slCards, data.mg?.lb ? chLeg(`借券賣出餘額（張${GK}）`, 'clC', 110) : '',
+      `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。${E ? '' : '占股本以目前發行股數計算。'}</div>`)}
     ${acHTML}` : tab === 'fund' ? `${VAL ? `<div class="muted small val-note">${noteHTML('獲利大增時本益比會落到一年低點，位置低不代表股價便宜', `一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}`)}</div>` : ''}
     ${finUp ? `<div class="small val-note fin-note">近 4 季 EPS 一年前 ${fmt(F.e4p, 2)} 元 → 現在 ${fmt(F.e4, 2)} 元（${F.e4p <= 0 ? '轉盈' : fmt(F.e4 / F.e4p, 1) + ' 倍'}）：本益比會因獲利增加而下降，位置低不代表股價便宜；請看下方季報卡的單季 EPS 是否已經轉弱。</div>` : ''}
     <section class="sec grid ${F ? 'g2' : 'g-one'}">
@@ -199,7 +213,7 @@ window.renderStock = async function (code, sub) {
       <div id="vC" class="chart-box" style="height:80px"></div>
       ${E ? '' : `<div class="ch-label">三大法人買賣超（張，未還原）<span id="iLegend" style="display:contents"></span></div>
       <div id="iC" class="chart-box" style="height:90px"></div>`}
-      ${data.mg ? `<div class="ch-label">${segHTML('mgSeg', [['mb', '融資'], ['sb', '融券'], ...data.mg.lb ? [['lb', '借券賣出']] : []], mgView(data.mg))}餘額<span id="gUnit"></span><span id="gLegend" style="display:contents"></span></div>
+      ${data.mg ? `<div class="ch-label mg-l">${segHTML('mgSeg', [['mb', '融資'], ['sb', '融券'], ...data.mg.lb ? [['lb', '借券賣出']] : []], mgView(data.mg))}<span id="gUnit"></span><span id="gLegend" style="display:contents"></span></div>
       <div id="gC" class="chart-box" style="height:90px"></div>` : ''}
       <div class="ch-label">${E ? '' : segHTML('oscSeg', OSC_OPTS, localStore('osc', 'MACD'))}<span id="oscLeg" style="display:contents"></span></div>
       <div id="mC" class="chart-box" style="height:120px"></div>
@@ -218,9 +232,11 @@ window.renderStock = async function (code, sub) {
     $('#starBtn').textContent = on ? '★ 已加入自選' : '☆ 加入自選';
   });
   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
+  if (tab === 'chip') onSeg('chipSeg', v => { chipN = v; document.querySelectorAll('#chipSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
+  if (tab === 'chip') buildChip(data, E);
   if (tab !== 'k') return;
   // 第 25 輪 D25-05：關鍵數字列在寬螢幕併進頁首卡、手機放到 K 線卡下方，主圖進第一屏
-  if (matchMedia('(min-width:721px)').matches) $('#view .s-head').after($('#view .metrics.kv')); else $('#kC').after($('#view .metrics.kv'));   // 第 27 輪 D27-06：手機放在 K 線正下方（原本在 4 張子圖之後）
+  if (matchMedia('(min-width:721px)').matches) $('#view .s-head').after($('#view .metrics.kv')); else $('#vC').after($('#view .metrics.kv'));   // 第 27 輪 D27-06：手機放在主圖下方；第 28 輪 D28-05：改到成交量之後，K 線和成交量相鄰、十字線不斷開
   if (!E) $('#adjSeg').title = '還原：依除權息、減資、面額變更調整歷史價格（現金增資除權也依官方參考價調整），最新收盤不變。均線訊號與 52 週高低一律以還原價格計算';
   // 日／週／月與還原／原始切換都重畫；技術面訊號一律用還原價（P13）
   const draw = () => {
@@ -378,7 +394,7 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
     layout: { background: { type: 'solid', color: 'transparent' }, textColor: text2, fontSize: 11, attributionLogo: logo },
     grid: { vertLines: { color: grid }, horzLines: { color: grid } },
     crosshair: { mode: LC.CrosshairMode.Normal },
-    rightPriceScale: { borderVisible: false, minimumWidth: 76 },   // 各圖刻度同寬，K 棒才會上下對齊
+    rightPriceScale: { borderVisible: false, minimumWidth: 76, entireTextOnly: true },   // 各圖刻度同寬，K 棒才會上下對齊；第 28 輪 D28-06：刻度文字放不下就不畫（不會只露半截）
     timeScale: { borderVisible: false, visible: timeVisible, fixLeftEdge: true, rightOffset: 3, tickMarkFormatter: tickFmt },
     localization: { locale: 'zh-TW', timeFormatter: t => ymd(t).map(pad).join('/') },
   });
@@ -412,10 +428,13 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
 
   // 堆疊：買超與賣超各自累加，先畫最外層（合計），再畫內層蓋上去
   const ic = $('#iC') ? mk('iC', false) : null;      // 第 15 輪：ETF 頁沒有法人圖
+  // 第 28 輪 D28-06：法人子圖刻度上下對稱（0 在中間），正負兩側都有刻度；上下留邊，最上面的刻度不被切
+  const symScale = f => { const r = f(), m = r && Math.max(Math.abs(r.priceRange.minValue), Math.abs(r.priceRange.maxValue)); return m ? { ...r, priceRange: { minValue: -m, maxValue: m } } : r; };
+  ic?.priceScale('right').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
   let iSer = null;
   for (const sign of ic ? [1, -1] : []) {
     for (let k = INVESTORS.length; k >= 1; k--) {
-      const ser = ic.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
+      const ser = ic.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: symScale });
       ser.setData(raw.map((r, i) => {
         if (r.net == null) return { time: T[i] };
         const v = INVESTORS.slice(0, k).reduce((a, [key]) => a + (sign * r[key] > 0 ? r[key] : 0), 0);
@@ -436,7 +455,8 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
     // 換算事件標在包含該日期的那一根（T 中 ≤ 事件日的最後一根）
     mbSer.setMarkers((G.k || []).map(x => { let j = -1; T.forEach((t, i) => { if (t <= x.d) j = i; }); return [j, x]; }).filter(([j]) => j >= 0)
       .sort((a, b) => a[0] - b[0]).map(([j, x]) => ({ time: T[j], position: 'aboveBar', shape: 'circle', color: css('--blue'), text: EV_LABEL[x.t] + (adj ? ' 已換算' : '') })));
-    $('#gUnit').textContent = adj ? '（張；面額變更、減資前的餘額依官方換算）' : '（張，官方原始）';     // 第 12 輪 P26；D27-07 刻度即所選的線
+    $('#gUnit').textContent = adj ? '餘額（張）' : '餘額（張，官方原始）';     // 第 12 輪 P26；D27-07 刻度即所選的線；第 28 輪 D28-06：換算說明移到 title
+    $('#gUnit').title = adj ? '面額變更、減資前的餘額依官方換算' : '';
   }
 
   const mc = mk('mC', true);
@@ -503,11 +523,10 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
     if (gc) {   // 融資融券比行情晚公布：最新一根還沒有時，改顯示最近有資料的那天
       let g = i;
       if (MB[g] == null && i === raw.length - 1) while (g > 0 && MB[g] == null) g--;
+      const gv = mgView(G);   // 第 28 輪 D28-06：只列目前那條線（＋券資比），標題區手機 ≤ 60px
       $('#gLegend').innerHTML = (g !== i && MB[g] != null ? `<span class="muted">${T[g]}</span>` : '') +
-        `<span class="lg"><i style="background:#1C7ED6"></i>融資 <b class="num">${fmt(MB[g])}</b></span>` +
-        `<span class="lg"><i style="background:#AE3EC9"></i>融券 <b class="num">${fmt(SB[g])}</b></span>` +
-        `<span class="lg">券資比 <b class="num">${MB[g] ? fmt(SB[g] / MB[g] * 100, 2) + '%' : '--'}</b></span>` +
-        (G.lb ? `<span class="lg"><i style="background:#E8590C"></i>借券 <b class="num">${fmt(LB[g])}</b></span>` : '');
+        `<span class="lg"><i style="background:${GV[1]}"></i>${{ mb: '融資', sb: '融券', lb: '借券' }[gv]} <b class="num">${fmt(GV[0][g])}</b></span>` +
+        (gv === 'lb' ? '' : `<span class="lg">券資比 <b class="num">${MB[g] ? fmt(SB[g] / MB[g] * 100, 2) + '%' : '--'}</b></span>`);
     }
   };
   let crossSyncing = false;
@@ -529,6 +548,68 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   // 初始畫面：最近 N 根，往左拖曳可看更早的資料
   const VIEW = mode === '日' ? 90 : 60;
   kc.timeScale().setVisibleLogicalRange({ from: Math.max(0, raw.length - VIEW), to: raw.length - 1 + 3 });
+}
+
+// 第 28 輪 D28-01：籌碼分頁時間序列（張）。法人：收盤小面板＋外資／投信／自營區間累計（不用雙 Y 軸）；信用：融資餘額；借券：借券賣出餘額。
+// 區間由 #chipSeg 決定，不能拖曳縮放（避免手機捲頁時誤拖）；十字線四張圖同步，圖例顯示該日數字
+function buildChip(data, E) {
+  disposeKCharts();
+  const LC = window.LightweightCharts, all = aggregate(data, '日', !E), raw = chipN === 'all' ? all : all.slice(-chipN);
+  if (!LC || !raw.length) return;
+  const T = raw.map(r => r.d), text2 = css('--text2'), grid = css('--border'), last = raw.length - 1;
+  const dt = t => typeof t === 'string' ? t : [t.year, t.month, t.day].map(x => String(x).padStart(2, '0')).join('-');
+  const lots = { type: 'custom', minMove: 1, formatter: v => fmt(v) }, px = { type: 'custom', minMove: 0.01, formatter: pfmt };
+  const mk = (id, tv) => LC.createChart($('#' + id), {
+    autoSize: true, handleScroll: false, handleScale: false,
+    layout: { background: { type: 'solid', color: 'transparent' }, textColor: text2, fontSize: 11, attributionLogo: false },
+    grid: { vertLines: { visible: false }, horzLines: { color: grid } },
+    rightPriceScale: { borderVisible: false, minimumWidth: 76, scaleMargins: { top: 0.12, bottom: 0.08 }, entireTextOnly: true },   // 上下留邊；刻度文字放不下就不畫（不會只露半截）
+    timeScale: { borderVisible: false, visible: tv, fixLeftEdge: true, fixRightEdge: true,
+      tickMarkFormatter: (t, type) => { const [y, m, d] = dt(t).split('-').map(Number); return type === 0 ? String(y) : type === 1 ? `${m}月` : `${m}/${d}`; } },
+    localization: { locale: 'zh-TW', timeFormatter: t => dt(t).split('-').join('/') },
+  });
+  const line = (c, vals, color, w = 2, f = lots) => { const s = c.addLineSeries({ color, lineWidth: w, priceFormat: f, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    s.setData(vals.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v })); return s; };
+  const at = (a, i) => { let j = i; if (i === last) while (j > 0 && a[j] == null) j--; return j; };    // 最新一天還沒有資料時，圖例改顯示最近有資料的那天
+  const day = (i, j) => `<span><b>${T[j].slice(5).replace('-', '/')}</b></span>`;
+  const anchors = [], legs = [];
+  if ($('#cpC')) {
+    const C = raw.map(r => r.c), cp = mk('cpC', false), ci = mk('ciC', true);
+    anchors.push([cp, line(cp, C, text2, 1, px), C]);
+    const cum = INVESTORS.map(([k]) => { let a = 0; return raw.map(r => r[k] == null ? null : (a += r[k])); });
+    const ser = INVESTORS.map(([, , color], n) => line(ci, cum[n], color));
+    ser[0].createPriceLine({ price: 0, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+    anchors.push([ci, ser[0], cum[0]]);
+    legs.push(i => { $('#cpCL').innerHTML = `${day(i, i)}<span>收 <b>${pfmt(C[i])}</b></span>`; },
+      i => { const j = at(cum[0], i);
+        $('#ciCL').innerHTML = (j !== i ? `<span class="muted">${T[j].slice(5).replace('-', '/')}</span>` : '') + INVESTORS.map(([k, n, color], m) =>
+          `<span class="lg"><i style="background:${color}"></i>${n} <b class="num ${cls(cum[m][j])}">${cum[m][j] == null ? '--' : sgn(cum[m][j], 0)}</b><span class="muted">（當日 ${raw[j][k] == null ? '--' : sgn(raw[j][k], 0)}）</span></span>`).join(''); });
+  }
+  if ($('#cmC')) {
+    const MB = raw.map(r => r.mb), SB = raw.map(r => r.sb), cm = mk('cmC', true);
+    anchors.push([cm, line(cm, MB, '#1C7ED6'), MB]);
+    legs.push(i => { const j = at(MB, i);
+      $('#cmCL').innerHTML = `${day(i, j)}<span class="lg"><i style="background:#1C7ED6"></i>融資 <b class="num">${fmt(MB[j])}</b></span><span>融券 <b class="num">${fmt(SB[j])}</b></span>` +
+        `<span>券資比 <b class="num">${MB[j] ? fmt(SB[j] / MB[j] * 100, 2) + '%' : '--'}</b></span>`; });
+  }
+  if ($('#clC')) {
+    const LB = raw.map(r => r.lb), cl = mk('clC', true);
+    anchors.push([cl, line(cl, LB, '#E8590C'), LB]);
+    legs.push(i => { const j = at(LB, i); $('#clCL').innerHTML = `${day(i, j)}<span class="lg"><i style="background:#E8590C"></i>借券賣出 <b class="num">${fmt(LB[j])}</b></span>`; });
+  }
+  charts = anchors.map(a => a[0]);            // disposeStockCharts 一併釋放
+  charts.forEach(c => c.timeScale().fitContent());
+  const show = i => legs.forEach(f => f(i));
+  let busy = false;
+  anchors.forEach(([src]) => src.subscribeCrosshairMove(p => {
+    if (busy) return;
+    busy = true;
+    const i = p.logical == null ? -1 : Math.round(p.logical), ok = p.time !== undefined && i >= 0 && i <= last;
+    anchors.forEach(([dst, ser, v]) => { if (dst === src) return; if (ok && v[i] != null) dst.setCrosshairPosition(v[i], T[i], ser); else dst.clearCrosshairPosition(); });
+    show(ok ? i : last);
+    busy = false;
+  }));
+  show(last);
 }
 
 const SIG_MIN = 3, MACD_MIN = 35;   // 有效訊號至少 3 項才下結論；MACD 需 26 + 9 根
