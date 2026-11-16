@@ -646,10 +646,12 @@ function oiHTML(O, FC) {
     const head = `<div class="fc-head"><span class="fc-view ${vcls}">${FC.view}</span>
         <span>下一交易日上漲機率 <b class="num ${vcls}">${pctTxt(FC.p_up)}</b></span>
         <span class="muted small">依 ${md(FC.date)} 收盤後未平倉</span></div>`;
-    const factors = `<div class="fc-factors">${FC.factors.map(f => `<div class="fc-f" title="z 分數 ${f.z}（相對近 60 日）">
+    // 第 31 輪 D31-01：模型沒勝過基準時，長條改畫 z 分數本身（±3 截斷、中性藍色），只描述籌碼相對近 60 日的位置
+    const bar = f => beat ? [f.effect / maxE, `var(--${f.effect >= 0 ? 'up' : 'dn'})`] : [Math.max(-3, Math.min(3, f.z)) / 3, 'var(--blue)'];
+    const factors = `<div class="fc-factors">${FC.factors.map(f => { const [v, c] = bar(f); return `<div class="fc-f" title="z 分數 ${f.z}（相對近 60 日${!beat && Math.abs(f.z) > 3 ? '，長條截在 3' : ''}）">
           <span class="nm">${f.name}</span><span class="num muted">${sgn(f.value, 0)} 口</span>
-          <span class="fc-bar"><span style="${f.effect >= 0 ? 'left:50%' : 'right:50%'};width:${Math.abs(f.effect) / maxE * 50}%;background:var(--${f.effect >= 0 ? 'up' : 'dn'})"></span></span></div>`).join('')}
-        <div class="muted small">${beat ? '長條往右 = 推升上漲機率，往左 = 壓低' : '長條往右 = 對隔日上漲有利，往左 = 不利'}</div></div>`;
+          <span class="fc-bar"><span style="${v >= 0 ? 'left:50%' : 'right:50%'};width:${Math.abs(v) * 50}%;background:${c}"></span></span></div>`; }).join('')}
+        <div class="muted small">${beat ? '長條往右 = 推升上漲機率，往左 = 壓低' : '長條往右 = 比近 60 日平常偏多（水位較高或增加較多），往左 = 偏少，越長越少見；只描述籌碼，不代表隔天漲跌'}</div></div>`;
     const bt = `<div class="fc-bt ${beat ? '' : 'warn'}">回測 ${B.from.slice(0, 7).replace('-', '/')}～${B.to.slice(0, 7).replace('-', '/')} 共 ${B.n} 天：
         命中率 <b>${pctTxt(B.acc)}</b>，「永遠猜多數方向」基準 <b>${pctTxt(B.baseline)}</b>
         ${B.conf_acc != null ? `；機率偏離 5% 以上的 ${B.conf_n} 天命中 <b>${pctTxt(B.conf_acc)}</b>` : ''}。
