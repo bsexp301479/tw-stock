@@ -111,6 +111,8 @@ def request(method: str, url: str, expect_json: bool = True, isolated: bool = Fa
                 time.sleep(pause)
     if not isolated:
         _dead_hosts.add(host)
+    if isolated:            # 第 24 輪 F24-7c：附屬查詢不重試，失敗不代表被封鎖
+        raise FetchError(f"{host} 附屬查詢失敗（不重試，收集繼續）：{last_err}")
     raise FetchError(f"{host} 連續失敗，可能已被封鎖，請稍後再跑：{last_err}")
 
 

@@ -228,19 +228,27 @@ def load_state(cur) -> dict:
     """
     由最近 200 筆執行紀錄整理：處置注意股、事件、營收、季報（financials_on）最後成功的時間，最後一次有新資料的時間，
     與最後一次收集（last_run：時間、指令、有無新資料）。
+    第 24 輪：events_at、events_n（事件最後成功那次的完成時間與 {"stocks", "etfs"} 筆數，舊紀錄沒有筆數為 None）、
+    warnings（最後一次收集的警告）、export_failed（最近一筆「有新資料或有匯出」的紀錄是 abnormal 且沒有匯出耗時 = 匯出失敗）。
     """
-    state = {"alerts_at": None, "events_to": None, "revenue_on": None, "financials_on": None, "collected_at": None, "last_run": None}
+    state = {"alerts_at": None, "events_to": None, "revenue_on": None, "financials_on": None, "collected_at": None, "last_run": None,
+             "events_at": None, "events_n": None, "warnings": [], "export_failed": None}
     for finished, new_data, detail, *extra in cur.execute(
-            "SELECT TOP 200 finished_at, new_data, detail, command FROM collect_runs ORDER BY run_id DESC").fetchall():
+            "SELECT TOP 200 finished_at, new_data, detail, command, outcome, export_seconds FROM collect_runs ORDER BY run_id DESC").fetchall():
+        d = json.loads(detail)
         if state["last_run"] is None:
             state["last_run"] = {"at": finished, "command": extra[0] if extra else None, "new_data": bool(new_data)}
+            state["warnings"] = d.get("warnings") or []
         if new_data and state["collected_at"] is None:
             state["collected_at"] = finished
-        und = json.loads(detail).get("undated", {})
+        if state["export_failed"] is None and (new_data or (len(extra) > 2 and extra[2] is not None)):
+            state["export_failed"] = len(extra) > 2 and extra[1] == ABNORMAL and extra[2] is None
+        und = d.get("undated", {})
         if und.get("alerts") and state["alerts_at"] is None:
             state["alerts_at"] = datetime.fromisoformat(und["alerts"])
         if und.get("events_to") and state["events_to"] is None:
             state["events_to"] = date.fromisoformat(und["events_to"])
+            state["events_at"], state["events_n"] = finished, und.get("events")
         if und.get("revenue") and state["revenue_on"] is None:
             state["revenue_on"] = date.fromisoformat(und["revenue"])
         if und.get("financials") and state["financials_on"] is None:
@@ -441,6 +449,12 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
                                                     for label, d, r in gaps))
     alerts = state.get("alerts_at")
     out.append(f"\n處置／注意股最後成功：{alerts:%Y-%m-%d %H:%M}" if alerts else "\n處置／注意股最後成功：尚無執行紀錄")
+    # 第 24 輪 F24-7b：除權息事件最後成功與筆數、最後一次收集的警告（只顯示，不算異常）
+    ev_to, ev_at, ev_n = state.get("events_to"), state.get("events_at"), state.get("events_n")
+    out.append(f"除權息事件最後成功：至 {ev_to}" + (f"（{ev_at:%Y-%m-%d %H:%M}）" if ev_at else "") +
+               (f"，股票 {ev_n.get('stocks', 0):,} 筆、ETF {ev_n.get('etfs', 0):,} 筆（含往回 7 天重查）" if ev_n else "")
+               if ev_to else "除權息事件最後成功：尚無執行紀錄")
+    out += [f"⚠️  最後一次收集的警告：{w}" for w in state.get("warnings") or []]
     rev = revenue_status(now.date(), revenue, state.get("revenue_on"), closed) if revenue is not None else None
     if rev:
         out.append(rev[1] if rev[0] != ABNORMAL else f"{rev[1]}，❌ 異常")

@@ -506,10 +506,30 @@ DDL = [
         CONSTRAINT UQ_etf_sbl UNIQUE (etf_id, trade_date)
     )
     """,
+    # 第 24 輪 F24-5：ETF 除息（官方 TWT49U、櫃買 exDailyQ；和 price_events 分開，個股統計不會讀到）
+    """
+    IF OBJECT_ID('etf_events') IS NULL
+    CREATE TABLE etf_events (
+        id          INT IDENTITY(1,1) PRIMARY KEY,
+        etf_id      INT           NOT NULL REFERENCES etfs(etf_id),
+        event_date  DATE          NOT NULL,   -- 官方除息日
+        event_type  NVARCHAR(4)   NOT NULL CHECK (event_type IN (N'息', N'權', N'權息')),
+        prev_close  DECIMAL(10,2) NOT NULL,
+        ref_price   DECIMAL(10,2) NOT NULL,
+        div_cash    DECIMAL(12,6) NULL,       -- 每單位配息：上市「權值+息值」、上櫃「息值」
+        source      NVARCHAR(10)  NOT NULL,   -- TWT49U / TPEX_EX
+        created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_etf_events UNIQUE (etf_id, event_date, source)
+    )
+    """,
     # 第 11 輪：發行股數（update_industry 一併寫入；目前股數，不保留歷史）
     "IF COL_LENGTH('stocks', 'shares') IS NULL ALTER TABLE stocks ADD shares BIGINT NULL",
     # 第 19 輪：減除股利參考價（只扣股利、不扣現金增資；TWT49U、TPEX_EX 才有，其他來源 NULL），分辨配股與現金增資
     "IF COL_LENGTH('price_events', 'div_ref') IS NULL ALTER TABLE price_events ADD div_ref DECIMAL(10,2) NULL",
+    # 第 24 輪 F24-5：股利金額（TWT49U、TPEX_EX 才有，其他來源 NULL）：權值+息值、每股現金股利（上市只有「息」）、每仟股無償配股（只有上櫃）
+    "IF COL_LENGTH('price_events', 'div_total') IS NULL ALTER TABLE price_events ADD div_total DECIMAL(12,6) NULL",
+    "IF COL_LENGTH('price_events', 'div_cash') IS NULL ALTER TABLE price_events ADD div_cash DECIMAL(12,6) NULL",
+    "IF COL_LENGTH('price_events', 'stock_div') IS NULL ALTER TABLE price_events ADD stock_div DECIMAL(14,8) NULL",
     # 索引
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_daily_prices_date') "
     "CREATE INDEX IX_daily_prices_date ON daily_prices(trade_date)",
@@ -550,4 +570,4 @@ def setup_database():
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
           "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
-          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_holding_gaps")
+          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、etf_holding_gaps")

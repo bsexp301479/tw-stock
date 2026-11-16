@@ -291,6 +291,38 @@ def _cap_event(ev, today):
     return None
 
 
+def dividends(d_, c, ev, official):
+    """
+    第 24 輪 F24-6：股利與填息（舊到新）。ev = _price_events 的事件，official = 同一檔的官方事件（"a" = (權值+息值, 現金股利, 每仟股配股)）。
+    列入：息、權息（算填息）；權且 k 為 s、sc（純配股：只列，不算填權）。只有現增（k = c）或分類不明的權不列。
+    填息：從事件列（含）起第一個收盤 ≥ 除權息前收盤的資料列，n = 第幾個交易日（事件列 = 1，含無成交日）；原始價、不設期限。
+    D37-1：還沒填息就遇到之後的股本變動（權、權息但 k 不是 c；減資、面額變更、上櫃反推），停在那一列：x = [日期, 原因]。
+    """
+    stop = {e["i"]: "配股" if e.get("k") == "s" else {"權": "除權", "權息": "除權息", "減": "減資", "面": "面額變更", "調": "股本變動"}[e["t"]]
+            for e in ev if e["t"] in ("減", "面", "調") or (e["t"] in ("權", "權息") and e.get("k") != "c")}
+    out = []
+    for e in ev:
+        if not (e["t"] in ("息", "權息") or (e["t"] == "權" and e.get("k") in ("s", "sc"))):
+            continue
+        i, p = e["i"], e["p"]
+        o = next((x for x in official if bisect_left(d_, x["d"]) == i and (x["t"], x["p"], x["r"]) == (e["t"], p, e["r"])), {})
+        total, cash, stock = o.get("a") or (None,) * 3
+        # c 現金股利、s 每仟股配股（有才輸出）；a 權值+息值只在沒有現金股利時輸出（上市權、權息的 title 用）
+        row = {"d": e["d"], "t": e["t"], **({"k": e["k"]} if "k" in e else {}), **({"c": cash} if cash is not None else {}),
+               **({"s": stock} if stock else {}), **({"a": total} if cash is None and total is not None else {}), "p": p}
+        out.append(row)
+        if e["t"] == "權":
+            continue
+        for j in range(i, len(d_)):
+            if j > i and j in stop:
+                row["x"] = [str(d_[j]), stop[j]]
+                break
+            if c[j] is not None and float(c[j]) >= p:
+                row.update(f=str(d_[j]), n=j - i + 1)
+                break
+    return out
+
+
 def amount_by_market(rows):
     """F9-1：rows = [(日期, 市場, 單位, 買賣差額)] → {"TWSE": {日期: {單位: 差額}}, "TPEx": {…}}；insti_official 只用 TWSE。"""
     out = {"TWSE": defaultdict(dict), "TPEx": defaultdict(dict)}
@@ -1477,12 +1509,14 @@ def export_all() -> float:
         WHERE a.alert_type = 'notice' AND a.announce_date >= ? AND a.announce_date <= ?""", watch_days[0], latest_date):
         watch_notes[code][ann] = clauses(reason)
     events = defaultdict(list)
-    for code, d, t, p, r, src, dr in cur.execute("""
-        SELECT s.stock_code, e.event_date, e.event_type, e.prev_close, e.ref_price, e.source, e.div_ref
+    for code, d, t, p, r, src, dr, *amt in cur.execute("""
+        SELECT s.stock_code, e.event_date, e.event_type, e.prev_close, e.ref_price, e.source, e.div_ref,
+               e.div_total, e.div_cash, e.stock_div
         FROM price_events e JOIN stocks s ON s.stock_id = e.stock_id
         ORDER BY s.stock_code, e.event_date"""):
         events[code].append({"d": d, "t": t, "p": float(p), "r": float(r), "src": src,
-                             "k": rights_kind(t, float(p), float(r), dr and float(dr))})
+                             "k": rights_kind(t, float(p), float(r), dr and float(dr)),
+                             "a": tuple(None if x is None else float(x) for x in amt)})     # 第 24 輪 F24-6：股利金額
     mdates, mofficial, mstocks, metfs, mper = _load_margin(cur)
     first_m = min((ds[0] for ds in mdates.values()), default=latest_date)
     etf_px, etf_latest = _load_etfs(cur, first_m - timedelta(days=60))
@@ -1575,7 +1609,8 @@ def export_all() -> float:
             "ev": [{k: e[k] for k in ("d", "t", "p", "r", "k") if k in e} for e in ev],
             "insti": {"f": [round(x / 1000) if x is not None else None for x in fn],   # 張
                       "t": [round(x / 1000) if x is not None else None for x in tn],
-                      "dl": [round(x / 1000) if x is not None else None for x in dn]},
+                      "dl": [round(x / 1000) if x is not None else None for x in dn],
+                      "n": [round(x / 1000) if x is not None else None for x in total]},     # 第 24 輪 F24-8：官方合計
             "revenue": rev_rows[-REVENUE_MONTHS:],
             # 第 10 輪 B5；第 15 輪 F15-1：c 加 eb（去年同期累計 EPS）
             **({"fin": {**fb, "c": {**fb["c"], "eb": fin_cum_base(fin[code])}}}
@@ -1597,6 +1632,7 @@ def export_all() -> float:
             # 第 23 輪 F23-1：近期表現；最後一列不是資料日（停牌、下市）或從沒成交 → 不輸出（同 latest.stocks）
             **({"pf": stock_perf(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))], p_days,
                                  idx_close[info["market"]], w52_start)} if d_[-1] == latest_date and any(x is not None for x in c) else {}),
+            "dv": dividends(d_, c, ev, events.get(code, [])),      # 第 24 輪 F24-6：股利與填息（沒有紀錄是 []）
         })
         # 市場寬度：還原收盤（無成交日不列入）、成交額
         b_series[info["market"]].append({d_[i]: float(c[i]) * af[i] for i in range(len(d_)) if d_[i] >= b_from and c[i] is not None})

@@ -109,7 +109,8 @@ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
 
     est = (sum(day_seconds(ks) + delay for _, ks in todo) + SECONDS_PER_MONTH * len(months)) / 60
     print(f"📅 補抓範圍：{start} ~ {end}，資料集：{'、'.join(datasets)}")
-    print(f"📊 交易日 {len(days)} 天，待抓 {len(todo)} 天；⏱️  預估約 {est:.1f} 分鐘")
+    # 第 24 輪 F24-7c：只選了以月為單位的櫃買指數時寫月數（以日為單位的照舊）
+    print(f"📊 交易日 {len(days)} 天，待抓 {f'{len(todo)} 天' if keys else f'{len(months)} 個月'}；⏱️  預估約 {est:.1f} 分鐘")
     for k in keys:
         n = sum(k in ks for _, ks in todo)
         if n:
@@ -117,7 +118,7 @@ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
     if months:
         print(f"   櫃買指數：{len(months)} 個月")
 
-    success, no_data, blocked_at, schema_err = 0, [], None, None
+    success, no_data, blocked_at, schema_err, month_ok = 0, [], None, None, 0
     for i, (d, ks) in enumerate(todo, 1):
         print(f"[{i}/{len(todo)}]", end="")
         written, errors = collect_for_date(d, ks)
@@ -140,6 +141,7 @@ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
         for y, m in months:
             try:
                 collect_tpex_index(y, m)
+                month_ok += 1
             except FetchError as e:
                 print(f"  ❌ {e}")
                 blocked_at = date(y, m, 1)
@@ -160,7 +162,7 @@ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
                 blocked_at = end
                 break
 
-    print(f"\n{'=' * 50}\n✅ 成功：{success} 天")
+    print(f"\n{'=' * 50}\n✅ 成功：{f'{success} 天' if keys else f'{month_ok} 個月'}")
     if no_data:
         print(f"ℹ️  無資料（未列入休市表的休市日或尚未公布）：{', '.join(map(str, no_data))}")
     if schema_err:

@@ -37,7 +37,7 @@
    - Mac：`bash scripts/mac/setup.sh`
    - Windows：雙擊 `scripts\windows\setup.bat`
 
-更新程式後若有新增資料表（例如第 1 輪的 `market_index`、`stock_alerts`，第 2 輪的 `price_events`、`insti_amount`，第 3 輪的 `collect_runs`、`market_holidays`，第 4 輪的 `etfs`、`etf_daily`、`margin_trades`、`etf_margin`、`margin_market`，第 5 輪的 `etf_holdings`、`etf_holding_summary`、`market_breadth`，第 6 輪的 `etf_holding_gaps`，第 10 輪的 `quarterly_financials`，第 11 輪的 `sbl_trades`、`etf_sbl` 與 `stocks.shares` 欄，第 19 輪的 `price_events.div_ref` 欄），請再執行一次 `python -m twstock setup-db`（可重複執行，不影響既有資料），否則 `collect`、`check`、`export` 會失敗。第 9 輪：`insti_amount` 加 `market` 欄（既有列為 `TWSE`），唯一鍵改成 `(trade_date, market, unit)`；`setup-db` 可重複執行，改表前請先 `backup`，改表後不可再執行舊版程式。
+更新程式後若有新增資料表（例如第 1 輪的 `market_index`、`stock_alerts`，第 2 輪的 `price_events`、`insti_amount`，第 3 輪的 `collect_runs`、`market_holidays`，第 4 輪的 `etfs`、`etf_daily`、`margin_trades`、`etf_margin`、`margin_market`，第 5 輪的 `etf_holdings`、`etf_holding_summary`、`market_breadth`，第 6 輪的 `etf_holding_gaps`，第 10 輪的 `quarterly_financials`，第 11 輪的 `sbl_trades`、`etf_sbl` 與 `stocks.shares` 欄，第 19 輪的 `price_events.div_ref` 欄，第 24 輪的 `etf_events` 與 `price_events.div_total`、`div_cash`、`stock_div` 欄），請再執行一次 `python -m twstock setup-db`（可重複執行，不影響既有資料），否則 `collect`、`check`、`export` 會失敗。第 9 輪：`insti_amount` 加 `market` 欄（既有列為 `TWSE`），唯一鍵改成 `(trade_date, market, unit)`；`setup-db` 可重複執行，改表前請先 `backup`，改表後不可再執行舊版程式。
 
 ## 日常使用
 
@@ -48,7 +48,7 @@ python -m twstock collect --catch-up             # 補齊最近 10 個交易日�
 python -m twstock collect --catch-up --days 20   # 回溯 20 個交易日（上限 30，更早用 history）
 python -m twstock collect                        # 今天全部重抓覆寫（含指數、台指期、處置／注意股、除權息事件、三大法人金額（上市、上櫃））並匯出網站 JSON
 python -m twstock collect --date 2026-10-28      # 指定日期全部重抓覆寫；也用來復原被誤判的臨時休市
-python -m twstock check                          # 檢查近 20 個交易日各資料集的完整性（唯讀、不連外）；開頭列最後一次收集與排程狀態；有異常時印建議指令並回傳 1（--days 至少 1）
+python -m twstock check                          # 檢查近 20 個交易日各資料集的完整性（唯讀、不連外）；開頭列最後一次收集與排程狀態；有異常時印建議指令並回傳 1（--days 至少 1）。第 24 輪起另列除權息事件最後成功的時間與筆數（股票、ETF）、最後一次收集的警告（只顯示，不算異常）
 python -m twstock history --start 2026-01-02     # 補抓歷史（行情、本益比、法人、ETF、融資融券），只補缺的，可中斷重跑
 python -m twstock history --start 2025-10-30 --only etf margin   # 只補 ETF 行情與融資融券（同一天 ETF 先於融資融券；一年約 976 個請求、40 分鐘）
 python -m twstock history --start 2025-10-30 --only holdings   # 只補主動型 ETF 持股（統一、群益投信 8 檔；上市日之前自動略過；一年約 1,250 個請求、1～2 小時：群益偶爾逾時重試，第 7 輪實測群益 596 次花 52 分鐘）
@@ -59,7 +59,7 @@ python -m twstock history --start 2025-10-30 --only tpex_index  # 只補櫃買�
 python -m twstock history --start 2026-07-31 --only amount  # 只補三大法人買賣金額（上市、上櫃；已有的市場自動略過；每市場一天一個請求）
 python -m twstock history --start 2024-01-01 --only financials   # 只補季報（季底日在範圍內、窗口已開始的季別；每季上市、上櫃各 1 個請求；已有的季別自動略過，--force 重抓；約 22 次、2 分鐘）
 python -m twstock history --start 2025-10-30 --only sbl   # 只補借券賣出（上市、上櫃各 1 個請求／天；晚上 8 點半後才有當天資料；一年約 490 次、30 分鐘）；不指定 --only 時不補借券
-python -m twstock events --start 2025-10-30      # 補抓除權息／減資／面額變更事件（約 1 分鐘，可重跑；每半年一段 × 4 個端點，這個區間 12 次請求。第 19 輪 setup-db 後執行一次，補齊減除股利參考價）
+python -m twstock events --start 2025-10-30      # 補抓除權息／減資／面額變更事件（約 1 分鐘，可重跑；每半年一段 × 4 個端點，這個區間 12 次請求。第 19 輪 setup-db 後執行一次，補齊減除股利參考價）。第 24 輪起一併寫入股利金額與 ETF 除息（`etf_events`），和收集共用鎖：收集進行中時不執行
 python -m twstock revenue --year 2026 --month 9 --force     # 重抓某月營收
 python -m twstock futures --start 2020-01-01     # 補抓台指期日 K 與期貨三大法人未平倉（--commodity MTX 可抓小台）
 python -m twstock chains                         # 立即更新產業鏈族群（collect 每 30 天會自動更新）
@@ -139,6 +139,8 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker 
 - 排行預設只列成交額 ≥ 0.5 億的股票，避免冷門股佔據；可在排行頁調整門檻。
 - 個股價格預設**還原**（向後還原，最新收盤不變）：除權息、減資、面額變更以官方參考價 ÷ 事件前收盤為係數，事件之前的開高低收乘上之後所有事件係數的乘積。上市事件取自證交所 TWT49U、TWTAUU、TWTB8U，上櫃除權息取自櫃買除權除息計算結果表，上櫃減資、面額變更以「收盤 − 官方漲跌」反推。現金增資除權也依官方參考價調整。K 線可切換「原始」；52 週高低與技術面訊號一律用還原價；成交量、法人張數未還原。第 19 輪：除權事件依官方「減除股利參考價」（只扣股利、不扣現金增資，存在 `price_events.div_ref`；減資、面額變更沒有這一欄）分類，匯出 `ev[].k`：等於參考價 `s`（沒有現增，圖例「除權（配股）」）、等於前收 `c`（只有現增，標記「現增」、圖例「除權（現金增資）」）、其他 `sc`（股利＋現增，「權息」圖例「除權息（含現金增資）」）；容差 0.005 元，只對「權」「權息」，沒有值時照舊寫「除權」。週／月 K 的事件標記寫事件日（例如「2/24 現增」「6/10 息・6/24 權」），圖例第一欄寫「2026-02-23 當週」「2026-02 月」；「原始」價的週／月 K 那一根含事件時，前一根收盤先乘上每筆事件的參考價 ÷ 前收再相減，漲跌幅和「還原」相同（6669 週 K 2026-08-31 由 −64.38% 改為 +6.26%）。第 18 輪：K 線下方的子圖可切換 MACD／KD／RSI（預設 MACD，瀏覽器記住選擇；ETF 頁只有 MACD）。KD(9,3,3)：RSV = (收 − 9 日最低) ÷ (9 日最高 − 9 日最低) × 100（最高 = 最低時 50），K = 2/3 前 K + 1/3 RSV，D = 2/3 前 D + 1/3 K，起始 50；RSI(14) 用 Wilder 平滑（前 14 個漲跌先平均）；無成交日以前一個收盤畫一字線一起計算；KD 子圖虛線 20、80，RSI 虛線 30、70。技術面卡在原本 6 項下方加「動能（不計入多空）」一行（K、D、今日交叉、RSI 與區間），**不影響「偏多／偏空」**；不足 9／15 根寫「資料不足」。KD、RSI 在急漲急跌時會長時間停在低檔或高檔、交叉反覆出現，只寫數值與區間，不寫買賣建議。匯出端 `twstock/export.py` 的 `calc_kd`、`calc_rsi` 和 `site/stock.js` 的 `calcKD`、`calcRSI` 是同一套公式，改一邊要改另一邊（`tests/test_iter18.py` 會比對）。日線未滿一年時顯示「區間高／低」與起始日。第 22 輪：技術面訊號的 MACD 柱依昨、今柱值的正負寫「MACD 正柱加長／正柱縮短／負柱縮短／負柱加長／柱由負翻正／柱由正翻負」（柱值相同寫「柱持平」），偏多／偏空的歸類照舊只看柱值是否比昨天大。
 - 個股頁近期表現（第 23 輪，「走勢」分頁 K 線與技術面訊號之間；`stocks/{代號}.json` 的 `pf` = [[區間, 基準日, 本股 %, 指數 %, 差距], ...]）：區間 5、20、60、120 日（基準日 = 全市場往前第 N 個交易日）、`y` 今年以來（前一年最後一個交易日）、`w` 52 週（資料日往前 365 天以前的最後一個交易日，同 52 週高低）。本股用還原收盤（含股息；今天無成交時用最後成交收盤，表頭寫最後成交日），上市比加權指數、上櫃比櫃買指數（價格指數，**不含股息**，長區間的差距會偏向個股）；差距 = 本股 − 指數（百分點）。5、20、60 日和選股的 `r5`、`r20`、`r60`、`rs20`、`rs60` 用同一個函式（`period_return`、`index_return`），數字相同。基準日時還沒有成交的區間寫「--」，並加一列 `s`「上市以來」（上櫃寫「上櫃以來」）：從本站第一個成交日的收盤起算，不是承銷價；本站日線從 2025-10-30 起，復牌或轉換為控股公司的股票也從第一個成交日算。停牌、下市（最後一列不是資料日）的股票沒有 `pf`、不顯示；ETF 頁不顯示。
+- 個股頁股利與填息（第 24 輪，「基本面」分頁季報卡之後；`stocks/{代號}.json` 的 `dv`，舊到新，沒有紀錄是 `[]`）：資料表 `price_events` 的 `div_total`（權值+息值）、`div_cash`（每股現金股利）、`stock_div`（每千股無償配股），只有證交所 TWT49U、櫃買 exDailyQ 兩個來源有值；上市的官方表只有權值+息值，所以上市「息」的現金股利 = 權值+息值，上市「權」「權息」的現金股利、配股數是 NULL（畫面寫「--」或「有」，滑過可看合計）。列入除息、除權息，以及純配股的除權（`k` 為 `s`、`sc`；只列、不算填權）；只有現金增資的除權不列。填息日 = 除權息日起（含當天）第一個收盤 ≥ 除權息前收盤的交易日，原始價、不設期限，`n` 從除權息日當天算第 1 天（無成交日也算）；還沒填息就遇到之後的配股、減資、面額變更或上櫃反推的股本變動時寫「不再比較」（`x` = [日期, 原因]）。ETF 的除息另存 `etf_events`（只收兩個來源的「息」），本輪只入表、網站還沒有使用。
+- 個股頁法人合計（第 24 輪）：`stocks/{代號}.json` 的 `insti.n` = 官方三大法人合計（股數）÷ 1,000 四捨五入，和外資、投信、自營各自四捨五入後相加可能差 1 張；週、月 K 是每日合計相加（圖例寫「合計（每日相加）」）。舊的 JSON 沒有 `n` 時畫面照舊三者相加。
 - 漲跌：除權息、減資、面額變更當天以「收盤 − 參考價」計算，參考價依升降單位四捨五入（與官方一致，例如 2,614.99 → 2,615；還原係數仍用未取整的官方值）；上市股前一交易日無成交時，以最後成交日收盤計算並標示「相對 MM/DD 收盤」；官方未提供漲跌且找不到對應事件（例如停止買賣後恢復交易）時顯示「不比價」，漲跌家數算平盤。板塊泡泡圖的漲跌幅也用這個值。
 - 除權、減資、面額變更等股本變動（參考價變動 10% 以上）後 90 天內，個股頁的本益比、殖利率會加註「官方值可能尚未調整」：官方值的 EPS、股利可能仍是舊股本的數字。本益比、殖利率卡會顯示資料日（例如「資料 10/30」）；官方沒有提供時標示「官方未提供」。
 - 月營收：第 9 輪起從每月第一個交易日開始，`collect --catch-up` 每天第一次成功收集時抓已公布的公司（只補資料庫還沒有的公司，同一天只抓一次），直到該月家數達前一月的 98% 為止（約 10～12 日），之後到月底 0 個請求；`collect --date`、`history` 也收前一個月。月初官方檔案只有標題列時寫入 0 家，不是錯誤。

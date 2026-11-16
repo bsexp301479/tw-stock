@@ -129,8 +129,10 @@ def execute_plan(plan: dict, now: datetime, no_revenue=False) -> tuple:
         _guard("index.TPEX", errors, collect_tpex_index, y, m)
     if plan["alerts"] and _guard("alerts", errors, collect_alerts):
         undated["alerts"] = now.isoformat(timespec="seconds")
-    if plan["events"] and _guard("events", errors, collect_events, *plan["events"]):
+    got = {}
+    if plan["events"] and _guard("events", errors, lambda: got.update(collect_events(*plan["events"]))):
         undated["events_to"] = str(plan["events"][1])
+        undated["events"] = got                 # 第 24 輪 F24-7a：{"stocks": 筆數, "etfs": 筆數}
     if plan["revenue"] and not no_revenue:
         if all([_guard("revenue", errors, collect_monthly_revenue, y, m) for y, m in plan["revenue"]]):
             undated["revenue"] = str(now.date())
@@ -257,7 +259,7 @@ def _run_locked(days, date_, no_revenue, no_export, notify, now, export_all) -> 
             gap_hint = between[0]
 
     if plan_is_empty(plan):
-        print(f"✅ 最近 {len(plan['days'])} 個交易日資料齊全，不需要請求")
+        print(f"✅ 最近 {len(plan['days'])} 個交易日資料齊全，不需要請求" if plan["days"] else "✅ 休市日沒有要抓的資料，不需要請求")
         written, errors, undated = {}, {}, {}
     else:
         written, errors, undated = execute_plan(plan, now, no_revenue)
@@ -312,12 +314,12 @@ def _run_locked(days, date_, no_revenue, no_export, notify, now, export_all) -> 
         conn.close()
 
     export_failed = False
-    data_date = max((d for d, r in after["prices.TWSE"].items() if r.n), default=None)
-    # closed 的起點要和匯出時相同（export 的資料日是兩市場的最新日），否則只有上櫃公布時會誤判為變動
-    site_date = max((d for k in ("prices.TWSE", "prices.TPEx") for d, r in after[k].items() if r.n), default=None)
-    need_export = not no_export and (date_ is not None or changed or
+    # 資料日、closed 的起點都要和匯出時相同（export 的資料日是兩市場的最新日），否則只有上櫃公布時每次都會誤判為變動（QA-03）
+    data_date = max((d for k in ("prices.TWSE", "prices.TPEx") for d, r in after[k].items() if r.n), default=None)
+    # 第 24 輪 F24-7e（QA-09）：上一次有新資料或有匯出的紀錄是匯出失敗 → 這次補匯出（--no-export 除外）
+    need_export = not no_export and (date_ is not None or changed or state.get("export_failed") or
                                      (data_date is not None and status_changed(health.dataset_status(after, data_date, now, closed),
-                                                                               health.site_closed(closed, site_date))))
+                                                                               health.site_closed(closed, data_date))))
     if need_export:
         export_seconds = None
         try:

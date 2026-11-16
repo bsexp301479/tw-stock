@@ -5,6 +5,7 @@ let charts = [], syncLeader = null;
 const CHART_IDS = ['kC', 'vC', 'iC', 'gC', 'mC'];   // gC（融資融券）只在有 mg 時存在
 // 法人買賣超堆疊柱：外資在最靠近零軸的一層，往外依序投信、自營
 const INVESTORS = [['f', '外資', '#4C6EF5'], ['t', '投信', '#F08C00'], ['dl', '自營', '#AE3EC9']];
+const NET_TIP = '合計 = 官方三大法人合計（股數）換算張數，和外資、投信、自營各自四捨五入後相加可能差 1 張；週／月 K 是每日合計相加，可能和股數加總後四捨五入差 1～2 張';   // 第 24 輪 F24-8
 
 const disposeKCharts = () => { charts.forEach(c => c.remove()); charts = []; };
 // 離開個股頁時一併釋放月營收圖；切換日／週／月只重建 K 線（buildCharts），不動月營收圖
@@ -41,6 +42,30 @@ function perfHTML(pf, mkt, nt) {
   return `<section class="sec card"><div class="sec-h"><h2>近期表現</h2><span class="muted small">至 ${md(App.latest.date)}${nt ? `，本股最後成交 ${md(nt)}` : ''}</span></div>
     <div class="tbl-wrap"><table class="tbl pf-tbl"><thead><tr><th>區間</th><th>本股</th><th>${ix}</th><th>差距</th></tr></thead><tbody>` +
     pf.map(([k, b, s, i, g]) => `<tr><td>${k === 's' ? `${ls}<span>${md(b)} 起</span>` : PF_NAME[k]}</td>${td(s, '%')}${td(i, '%')}${td(g, '')}</tr>`).join('') +
+    `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
+}
+
+// 第 24 輪 F24-6：股利與填息（匯出端 dv：d 除權息日、t 類型、k 分類、c 現金股利、s 每仟股配股、a 權值＋息值（沒有 c 時）、p 除權息前收盤、
+// f 填息日、n 第幾個交易日、x = [日期, 原因] 股本變動後不再比較）；填息在匯出端算，這裡只顯示。D36-12：金額最多 4 位小數、去掉尾端 0
+const dfmt = (n, d = 4) => n == null ? '--' : Number(n).toLocaleString('zh-TW', { maximumFractionDigits: d });
+function divHTML(dv, mkt, P) {
+  const head = '<section class="sec card"><div class="sec-h"><h2>股利與填息</h2></div>', from = P.d[0];
+  if (!dv.length) return `${head}<div class="muted small">${from} 起沒有除權息紀錄</div></section>`;
+  const tr = P.c.map((c, i) => c != null ? i : -1).filter(i => i >= 0), lt = tr[tr.length - 1], lc = P.c[lt];
+  const late = P.d[lt] !== App.latest.date ? `，最後成交 ${md(P.d[lt])}` : '';      // D37-7：停牌股照算，寫最後成交日
+  const split = r => mkt === 'TWSE' && r.t === '權息' ? ` title="上市除權息的官方表只有權值＋息值合計 ${dfmt(r.a, 6)} 元，無法拆分現金與配股"` : '';
+  const cash = r => r.c > 0 ? dfmt(r.c) : `<span${split(r)}>--</span>`;
+  const stock = r => r.s ? fmt(r.s, 2) : mkt === 'TWSE' && (r.t === '權' || r.k === 's')
+    ? `<span title="上市的官方表沒有配股數${r.t === '權' && r.a != null ? `；權值＋息值 ${dfmt(r.a, 6)} 元` : ''}">有</span>` : `<span${split(r)}>--</span>`;
+  const fill = r => r.t === '權' ? '<span title="純配股不計算填權">--</span>' : r.f ? `${r.n === 1 ? '當天' : md(r.f)}<span>第 ${r.n} 個交易日</span>`
+    : r.x ? `不再比較<span>${md(r.x[0])} ${r.x[1]}後</span>` : `尚未填息<span>還差 ${fmt(r.p - lc, 2)} 元，+${fmt((r.p - lc) / lc * 100, 2)}%${late}</span>`;
+  const short = `填息 = 收盤回到除息前收盤；天數含除息日當天。資料自 ${from} 起`;     // 短句用變數：test_iter13 數 noteHTML 字面呼叫
+  const full = '填息日 = 除權息日起（含當天）第一個收盤大於或等於除權息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除權息日當天算第 1 天，無成交日也算。' +
+    '純配股（除權）不計算填權；只有現金增資的除權不列入。還沒填息就遇到之後的配股、減資或面額變更時，原始價不能再和除權息前收盤比較，寫「不再比較」。' +
+    '上市除權息的官方表只有權值＋息值合計，現金股利寫「--」（滑過可看合計）；上櫃的配股是每千股無償配股的股數。還差 = 除權息前收盤 − 最新收盤，% 以最新收盤計算。';
+  return `${head}<div class="tbl-wrap"><table class="tbl dv-tbl"><thead><tr><th>除權息日</th><th>現金股利<br>（元）</th><th>配股<br>每千股</th><th>除權息<br>前收盤</th><th>填息</th></tr></thead><tbody>` +
+    dv.slice().reverse().map(r => `<tr><td>${r.d.replaceAll('-', '/')}${r.t === '息' ? '' : `<span>${EV_LABEL[r.t]}</span>`}</td><td class="num">${cash(r)}</td>` +
+      `<td class="num">${stock(r)}</td><td class="num">${pfmt(r.p)}</td><td>${fill(r)}</td></tr>`).join('') +
     `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
 }
 
@@ -197,7 +222,8 @@ window.renderStock = async function (code, sub) {
     <section class="sec grid ${F ? 'g2' : 'g-one'}">
       <div class="card"><div class="sec-h"><h2>月營收</h2><span class="sp"></span><span id="revSegBox"></span></div><div id="revBox"></div></div>
       ${F ? `<div class="card"><div class="sec-h"><h2>季報</h2><span class="muted small">${qName(F.q.at(-1)[0])}${F.c.fs ? `｜本站收錄 ${md(F.c.fs)}` : ''}｜${FIN_TBL[F.t] || ''}</span></div><div id="finBox"></div></div>` : ''}
-    </section>` : `
+    </section>
+    ${data.dv ? divHTML(data.dv, data.market, P) : ''}` : `
 
     <section class="sec card">
       <div class="sec-h">
@@ -287,7 +313,7 @@ function aggregate(data, mode, adj) {
   P.d.forEach((d, i) => {
     const has = I?.f[i] != null;                     // ETF 沒有法人資料
     const inst = { f: has ? I.f[i] : null, t: has ? I.t[i] ?? 0 : null, dl: has ? I.dl[i] ?? 0 : null };
-    inst.net = has ? inst.f + inst.t + inst.dl : null;
+    inst.net = has ? I.n?.[i] ?? inst.f + inst.t + inst.dl : null;      // 第 24 輪 F24-8：官方合計；舊 JSON 沒有 n 時三者相加
     const e = evAt[d] ? [evAt[d]] : [];
     if (P.c[i] != null && P.o[i] != null) {
       const k = af[i], ch = P.ch?.[i] ?? null;
@@ -519,7 +545,7 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
     if (ic) $('#iLegend').innerHTML = (j !== i && N[j] != null ? `<span class="muted">${T[j]}</span>` : '') +
       INVESTORS.map(([key, name, color]) =>
         `<span class="lg"><i style="background:${color}"></i>${name} <b class="num ${cls(r[key])}">${v(r[key])}</b></span>`).join('') +
-      `<span class="lg">合計 <b class="num ${cls(N[j])}">${v(N[j])}</b></span>`;
+      `<span class="lg" title="${NET_TIP}">合計${mode === '日' ? '' : '（每日相加）'} <b class="num ${cls(N[j])}">${v(N[j])}</b></span>`;
     if (gc) {   // 融資融券比行情晚公布：最新一根還沒有時，改顯示最近有資料的那天
       let g = i;
       if (MB[g] == null && i === raw.length - 1) while (g > 0 && MB[g] == null) g--;
