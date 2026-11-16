@@ -327,3 +327,23 @@ table.dv-tbl{max-width:720px}.dv-tbl td span{white-space:normal}.dv-tbl th,.dv-t
 .bl-tbl tr[data-bl]{cursor:pointer}.bl-tbl tr.on>td{background:var(--card2)}.bl-tbl tr{scroll-margin-top:calc(var(--top-h,56px) + 44px)}.bl-tbl td.nm i{font-style:normal}   /* D28-04 泡泡清單 */
 .bl-x>td{text-align:left;white-space:normal;padding:2px 0 10px}.bl-x .tbl-wrap{width:0;min-width:100%}.panel-list{--th-y:0px}   /* 展開的成分股表不撐寬外層清單，自己橫捲 */
 @media (max-width:520px){.bl-x table.tbl{font-size:12px}.bl-x table.tbl th,.bl-x table.tbl td{padding-left:4px;padding-right:4px}}@media (max-width:380px){table.bl-tbl>*>tr>*{padding-left:4px;padding-right:4px}.bl-x table.tbl th,.bl-x table.tbl td{padding-left:3px;padding-right:3px}}   /* QA28-02：手機展開的成分股表、360 寬清單數字完整不被切 */
+/* 第 30 輪 UI/UX 全站體檢 */
+.page-tabs.pt-stick{position:sticky;top:var(--top-h,56px);z-index:15;display:flex;align-items:center;gap:10px;background:var(--bg);padding:4px 0;margin:6px 0 0}   /* D30-01 */
+.pt-nm{display:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.pt-stick.stuck .pt-nm{display:block}
+.pt-stick.stuck{box-shadow:0 1px 0 var(--border)}
+.qlist a{align-items:center}.qn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}   /* D30-02 */
+@media (max-width:720px){.search{position:static}.qlist{left:8px;right:8px;top:calc(100% + 4px)}}
+table.mx{width:100%;border-collapse:collapse;margin:6px 0 2px;font-size:13px}   /* D30-03、05 */
+.mx th,.mx td{padding:5px 4px;border-bottom:1px solid var(--border);text-align:right;vertical-align:top;font-weight:400}
+.mx thead th{color:var(--text2);font-size:12px;padding-top:0}.mx tbody th{text-align:left;color:var(--text2);font-size:12px}.mx tr:last-child>*{border-bottom:0}
+.mx .s2{font-size:11px;color:var(--text2)}.mx .s2 a{color:inherit}.mx .up{color:var(--up)}.mx .dn{color:var(--dn)}.mx .flat{color:var(--flat)}
+.etf-tbl td.nm b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}   /* D30-04 */
+a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
+.bl-tbl tr.q-hit>td:first-child{box-shadow:inset 3px 0 0 var(--blue)}.bl-hit{margin:0 0 6px}
+.al-near{line-height:1.5}   /* D30-07 */
+.bl-x .panel-list{max-height:none}.bl-x:not(:has([data-blall="1"])) .panel-list tbody tr:nth-child(n+11){display:none}.bl-x .chip{margin-top:6px}   /* D30-08 */
+.hl-more{display:none}   /* D30-09 */
+@media (max-width:520px){.hl-more{display:inline-block}.s-hl:not(.open) .hl-tag~.hl-tag,.s-hl:has(.hl-more):not(.open)>span.muted{display:none}.s-hl.open .hl-more{display:none}}
+.rk-q #rankSel{flex:none}@media (max-width:720px){.rk-q{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}.rk-q .chip{flex:none;white-space:nowrap}}   /* D30-11 */
+@media (max-width:520px){.metrics.m3{grid-template-columns:repeat(3,minmax(0,1fr))}.metrics.m3 .card{padding:8px}table.dv-tbl th,table.dv-tbl td{padding-left:4px;padding-right:4px}}   /* D30-12 */
+.mx tbody th{white-space:nowrap;width:1%}.mx tbody th .s2{white-space:normal;min-width:7em}

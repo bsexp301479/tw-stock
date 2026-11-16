@@ -91,7 +91,7 @@ def test_f14_site_source():
     assert "期貨 13:45、加權指數 13:30 收盤，時間不同" in APP and "kSer.setMarkers(" in APP and "換${Number(F.m[i].slice(4))}月" in APP
     # F14-4
     assert "，越高 = 殖利率相對越高" in APP and "<br>越高 = 殖利率相對越高" in STK
-    assert "本益比 <b>${fmt(x.pe?.v, 2)}</b>（${pos(x.pe)}）　淨值比 <b>${fmt(x.pb?.v, 2)}</b>（${pos(x.pb)}）" in APP   # 本益比、淨值比不變
+    assert "['本益比', ...c(x => `<b>${fmt(x.pe?.v, 2)}</b>${s2(pos(x.pe))}`)], ['淨值比', ...c(x => `<b>${fmt(x.pb?.v, 2)}</b>${s2(pos(x.pb))}`)]" in APP   # 本益比、淨值比不變（第 30 輪 D30-03 改成小表）
     assert ".note-dup .note[open] summary{font-size:0}" in CSS and ".note-dup .note[open] summary i{font-size:12px" in CSS
     assert "dueTxt(P.due, App.latest.date)" in APP
 

@@ -82,7 +82,7 @@ const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除
 const mgView = G => { const v = localStore('mgv', 'mb'); return v === 'sb' || (v === 'lb' && G?.lb) ? v : 'mb'; };
 const tagFold = t => t.slice(0, 2).join('') + (t.length > 2 ? `<span class="tag-rest" hidden>${t.slice(2).join('')}</span><button class="pill more" id="tagMore" data-n="+${t.length - 2}">+${t.length - 2}</button>` : '');
 
-const cardsHTML = a => a.map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('');
+const cardsHTML = a => a.map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${v === '0億' ? 'flat' : c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('');
 // 第 28 輪 D28-01：籌碼分頁的圖表區間（只在這次瀏覽記住，不存 localStorage）；第 29 輪 F29-3：預設改 20 個交易日
 const CHIP_N = [['20', '20 日'], ['60', '60 日'], ['120', '120 日'], ['all', '全部']];
 let chipN = '20';
@@ -199,7 +199,7 @@ window.renderStock = async function (code, sub) {
             <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
             ${E && E.m === 'TPEx' ? '<span class="muted small">上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日</span>' : ''}
           </div>
-          ${HL.length ? `<div class="s-hl"><a class="muted small" href="#/rank/hl">近期新訊號 →</a>${HL.map(hlTag).join('')}<span class="muted small">只描述發生了什麼，不代表之後的走勢</span></div>` : ''}
+          ${HL.length ? `<div class="s-hl"><a class="muted small" href="#/rank/hl">近期新訊號 →</a>${HL.map(hlTag).join('')}<span class="muted small">只描述發生了什麼，不代表之後的走勢</span>${HL.length > 1 ? `<button class="pill more hl-more" id="hlMore">+${HL.length - 1}</button>` : ''}</div>` : ''}
           <div class="s-ohlc small num muted"><span class="nw">開 <b>${pfmt(P.o[last])}</b></span>　<span class="nw">高 <b class="up">${pfmt(P.h[last])}</b></span>　<span class="nw">低 <b class="dn">${pfmt(P.l[last])}</b></span>　<span class="nw">昨收 <b>${pfmt(prev)}</b></span>　<span class="nw">量 <b>${fmt(P.v[last])}</b> 張</span></div>
         </div>
         <button class="star ${watching ? 'on' : ''}" id="starBtn">${watching ? '★ 已加入自選' : '☆ 加入自選'}</button>
@@ -207,7 +207,7 @@ window.renderStock = async function (code, sub) {
     </section>
 
     ${pageTabsHTML('stockTabSeg', E ? ETF_TABS : STOCK_TABS, tab)}
-    ${tab === 'chip' ? '' : `<section class="sec metrics${tab === 'k' ? ' kv' : ''}">
+    ${tab === 'chip' ? '' : `<section class="sec metrics${tab === 'k' ? ' kv' : ' m3'}">
       ${cardsHTML(tab === 'k' ? [
          [hlFrom ? '區間高' : '52週高', pfmt(E ? eHL[0] : s?.h52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'],
          [hlFrom ? '區間低' : '52週低', pfmt(E ? eHL[1] : s?.l52), '', hlFrom ? hlSub + (E ? '，原始價' : '，還原') : E ? '原始價' : '還原權值'],
@@ -252,7 +252,13 @@ window.renderStock = async function (code, sub) {
     ${data.pf ? perfHTML(data.pf, data.market, noTrade ? P.d[lt] : null) : ''}
     ${E ? '' : '<section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>'}`}`;
 
-  onSeg('stockTabSeg', v => { localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
+  const ptab = $('#view .page-tabs'), topH = () => $('.top').offsetHeight;   // 第 30 輪 D30-01
+  ptab.classList.add('pt-stick');
+  ptab.insertAdjacentHTML('beforeend', `<span class="pt-nm">${esc(data.name)} <b class="num ${cls(change)}">${pfmt(close)}</b>${noTrade || pct == null ? '' : ` <span class="num ${cls(change)}">${sgn(pct)}%</span>`}</span>`);
+  new IntersectionObserver(([e]) => ptab.classList.toggle('stuck', !e.isIntersecting), { rootMargin: `-${topH()}px 0px 0px 0px` }).observe($('#view .s-head'));
+  if (App.ptStuck) { App.ptStuck = false; ptab.style.position = 'static'; const y = ptab.getBoundingClientRect().top + scrollY; ptab.style.position = ''; scrollTo(0, y - topH()); }   // 固定狀態換分頁：新分頁從分頁列下方開始
+  onSeg('stockTabSeg', v => { App.ptStuck = $('#view .s-head').getBoundingClientRect().bottom <= topH(); localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
+  $('#hlMore')?.addEventListener('click', e => e.currentTarget.parentElement.classList.add('open'));
   $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });
   $('#starBtn')?.addEventListener('click', () => {
     App.watch.has(code) ? App.watch.delete(code) : App.watch.add(code);

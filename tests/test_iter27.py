@@ -150,7 +150,7 @@ console.log(JSON.stringify(alertBoard({json.dumps(L, ensure_ascii=False)})));"""
     o = _node(js)
     if o is not None:
         assert "即將處置 0　處置中 1　接近處置（推算）2　今日注意 1</span>" in o, o
-        assert '<a href="#/stock/2314">台揚<span class="muted">（第一款連 2 日）</span></a>' in o   # 差一次的理由直接顯示
+        assert '<a class="al-row" href="#/stock/2314"><div class="al-l"><b>台揚</b>' in o and '目前 第 1 款連 2 日</div>' in o   # 差一次的理由直接顯示（第 30 輪 D30-07：一檔一列）
         assert 'title="第一款連 2 日"' not in o
 
 
