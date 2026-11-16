@@ -1,0 +1,284 @@
+diff -ruN orig/README.md Afull/README.md
+--- orig/README.md	2026-11-17 00:02:25
++++ Afull/README.md	2026-11-17 00:02:25
+@@ -127,7 +127,7 @@
+ - 期現貨價差（第 14 輪，`latest.json` 的 `futures.sp`、`futures.stl`）：價差 = 台指期近月**日盤**收盤 − **同一天**加權指數收盤（夜盤不比；任一邊沒有收盤的日子為 null，不補、不估；加權指數目前從 2025-10-30 起），`sp` 和 `d` 逐日對齊；正值為正價差、負值為逆價差，百分比 = 價差 ÷ 加權指數。期貨日盤 13:45 收盤、加權指數 13:30 收盤，時間不同，尾盤變化大時價差會失真。結算日由本站推算：每月第三個週三，遇休市（`market_holidays`、手寫表與臨時休市，同 `check`）順延到下一個交易日；`stl` = `{d: 下次結算日, n: 資料日之後到結算日（含）的交易日數}`，n = 0 為「今天結算」，資料日已過當月結算日時為下個月。近月沿用「當天有成交的最近月份」：結算日當天仍是到期月份，下一個交易日換月；近月和前一個交易日不同時，期貨卡標「今天換月」、價差一行註明「換月」，K 線在換月日標「換 N 月」，迷你圖（近 60 個交易日）以虛線標出換月。臨時休市在匯出後才公布、或期交所另行公告時，以官方為準。第 15 輪：推算時休市集合另加「資料日下一年的 1/1」（元旦每年休市；下一年官方休市表要到 1 月才抓得到，之前 12 月中旬到月底的「還有 N 個交易日」會多算 1 天），只在匯出端，不改 `tradingcal`、`check`。價差迷你圖的 0 軸改用 `--text2`（對卡片背景淺色 6.4 : 1、深色 7.4 : 1），換月虛線維持 `--text3`。
+ - 期貨三大法人未平倉來自期交所「三大法人－區分各期貨契約」，抓大台（TXF）、小台（MXF）、微台（TMF），換算成約當大台 = 大台 + 小台/4 + 微台/20。
+ - 籌碼因子觀察（大盤漲跌預測）：以外資淨未平倉水位、外資 1 日／5 日增減、投信與自營商 1 日增減（相對近 60 日標準化）做羅吉斯迴歸，預測下一交易日台指期近月日盤漲跌。網站同時顯示 walk-forward 回測命中率與「永遠猜多數方向」的基準；模型沒有勝過基準時，首頁只顯示因子方向，機率與回測收在摺疊區；僅供籌碼面參考，非投資建議。
+-- 個股法人：排行可切換 1 日／5 日，提供外資、投信、自營、法人合計的買超／賣超與連買排行；金額 = 張數 × 當日收盤（估算值，與官方公布的買賣金額可能不同）。第 22 輪：個股頁「籌碼」分頁的卡片副行加連續天數：法人1日、外資5日、投信5日卡寫「連買／連賣 N 日」（直接用 `latest.json` 的 `s`、`fs`、`ts`，和排行、選股同一口徑：金額、最多看 30 日），融資餘額、借券賣出餘額卡寫「連增／連減 N 日」（張，逐日增減；面額變更、減資依官方換算 `mg.k`，同還原模式的融資融券圖；算到該卡資料日，增減 0 或缺值中斷，最多看 30 日）；1 日以下不寫，30 日寫「30 日以上」。ETF 個股頁不加。
++- 個股法人：排行可切換 1 日／5 日，提供外資、投信、自營、法人合計的買超／賣超與連買排行；金額 = 張數 × 當日收盤（估算值，與官方公布的買賣金額可能不同）。第 22 輪：個股頁「籌碼」分頁的卡片副行加連續天數：法人1日、外資5日、投信5日卡寫「連買／連賣 N 日」（直接用 `latest.json` 的 `s`、`fs`、`ts`，和排行、選股同一口徑：金額、最多看 30 日），融資餘額、借券賣出餘額卡寫「連增／連減 N 日」（張，逐日增減；面額變更、減資依官方換算 `mg.k`，同還原模式的融資融券圖；算到該卡資料日，增減 0 或缺值中斷，最多看 30 日）；1 日以下不寫，30 日寫「30 日以上」。ETF 個股頁不加。第 29 輪：個股頁「籌碼」分頁的法人圖改成一次看一種法人（外資（預設）、投信、自營、合計）的每日買賣超柱（張，未還原；紅 = 買超、綠 = 賣超），下方小圖是同一法人的區間累計（標題寫起算日，跨年時寫年份）；累計線的高度取決於起算日，要看斜率，最近每天的買賣看柱狀圖。圖表區間預設 20 日（可切 60、120 日、全部），法人與區間只在這次瀏覽記住。
+ - 條件選股（排行頁「選股」，`#/rank/screen`）：資料來自 `site/data/screen.json`（匯出時計算，0 個外部請求），在瀏覽器合併 `latest.json` 篩選，只做 AND。條件分流動性、價量、技術、法人、信用、基本面、排除七組（技術組為第 18 輪新增），另有 8 組預設（法人連買＋營收創新高、投信認養、帶量突破、多頭排列＋相對強勢、價值高息、營收高成長、籌碼換手、財報優於去年）與 3 組參考（融資追價、軋空觀察、本益比低但 EPS 下滑）。報酬、乖離、均線、新高新低用**還原價格**；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），用成交額所以不受面額變更影響；相對大盤 = 個股報酬 − 指數報酬（上市對加權、上櫃對櫃買）。本益比、殖利率、淨值比條件**預設排除 90 天內股本變動**的股票（官方值可能尚未調整），可關閉，關閉後結果列標示「股本變動」。營收以各股最新公布的月份計算，頁面列出各月份檔數；每月 1～10 日是公布期間，各股月份不同，月份混雜時資料日一行加註說明，營收欄標出和欄名不同的月份。第 9 輪新增「淨值比一年位置 ≤ N%」（`screen.json` 的 `pbp`，見估值位置），和其他估值條件一樣預設排除股本變動。第 10 輪新增季報條件 5 個（基本面組）：單季 EPS 年增 ≥ N%、毛利率年增 ≥ N 百分點、近 4 季 EPS > 0、單季 EPS 創 N 季新高、單季 EPS 比去年同季下滑；預設「財報優於去年」= 單季 EPS 年增 ≥ 20% 且毛利率年增 ≥ 0、成交額 ≥ 0.5 億，參考「本益比低但 EPS 下滑」= 本益比 ≤ 15 且單季 EPS 下滑。`screen.json` 新欄：`eq` 最新一季單季 EPS、`ey` 單季 EPS 年增 %（去年同季 ≤ 0 為 null）、`e4` 近 4 季 EPS、`gm` 單季毛利率 %（金融業 null）、`gmy` 毛利率年增（百分點）、`fq` 最新季別（YYYYQQ）、`eh` 單季 EPS 創幾季新高、`fqd` 各季別檔數；null 一律不符合條件。各股最新一季可能不同（財報公布期間），欄名依檔數最多的季別，季別不同的列加小字季別，資料日一行列出各季別檔數，沒有任何季別 ≥ 98% 時加「財報公布期間，各股季別不同」。第 11 輪新增借券條件 2 個（信用組）：借券占股本 ≥ N%（3／5／8，預設 5）、借券 5 日增加 ≥ N 張（500／1,000／5,000，預設 1,000）；`screen.json` 新欄 `lb` 借券賣出餘額（張）、`l1`／`l5` 1 日／5 日增減（張）、`lp` 占股本 %（沒有股數為 null），`head.sd` 為各市場借券資料日。選股「毛利率」「毛利率年增」欄也和單季 EPS 一樣，季別不同的列加小字季別。「重設」回到預設（保留排除處置股、今日無成交、股本變動與預設排序），不是全部清空。條件存在瀏覽器，網址也會帶條件，可用「複製條件連結」分享。排行另加量比、創新高、20 日相對強勢、營收年增、殖利率、本益比最低（後兩者排除虧損與股本變動）。`screen.json` 不存在時這些功能不出現，既有排行照常。第 12 輪新增流動性條件 2 個：市值 ≥ N 億（50／100／500／1,000，預設 100）、週轉率 ≥ N%（1／3／5／10，預設 3）；`screen.json` 新欄 `mc` 市值（億元，收盤 × 目前發行股數）、`to` 週轉率（% = 今日成交股數 ÷ 目前發行股數，今天沒有成交為 0），沒有股數為 null，null 一律不符合。排行「價量」組加「週轉率」（欄位：週轉率、市值；成交額門檻同其他排行）。市值、週轉率都用目前股數，增資、減資前後可能失真。第 14 輪：排行「營收年增」只列營收月份 ≥ 欄名月份（檔數最多的月份）的股票，表下一行寫出未列入的檔數（市場、成交額門檻同排行）；選股的「營收年增 ≥」條件不排除舊月份。`screen.json` 新欄 `rb` 去年同月營收（千元，沒有去年同月為 null）、`eb` 最新一季的去年同季單季 EPS（元，和個股 `fin.q` 第 7 欄同一口徑）。營收年增有值且 `rb` < 10,000 千元（1,000 萬元）時，營收年增欄加「基期低」小標；單季 EPS 年增有值（去年同季 > 0）且 `eb` < 0.1 元時，EPS 年增欄改顯示「基期低」與去年同季 EPS（個股季報卡與柱狀圖提示同規則）。只標示，不排除、不改排序；去年同季 ≤ 0 照舊顯示「轉盈」。第 18 輪新增技術條件 3 個：KD 黃金交叉（K < 20／30／50，預設 20）、RSI(14) ≤ 20／30（預設 30）、RSI(14) ≥ 70／80（預設 70）；`screen.json` 新欄 `k`（K 值）、`kx`（今日 K 由下往上穿過 D 為 1，否則 0）、`rsi`，公式同個股頁，用還原價；今天無成交或根數不足為 null（不符合）。選了這些條件時，結果上方列「今日全市場」各條件的檔數與比例（分母 = 有 K 或 RSI 值的股票），因為急漲急跌時會一次出現上百檔（例：2026-11-06 KD 黃金交叉且 K < 20 有 220 檔、RSI ≤ 30 有 1,017 檔）。不提供預設組合。第 22 輪新增「單季 EPS 轉盈」（基本面組，開關）：最新一季單季 EPS > 0 且去年同季（`eb`）≤ 0，和季報卡的「轉盈」相同（年增無法計算，和「單季 EPS 年增 ≥」不會同時符合）；結果欄位為單季 EPS 與去年同季 EPS。
+ - 近期新訊號（排行頁「新訊號」，`#/rank/hl`，第 21 輪）：匯出時算出每檔股票最近 5 個交易日在四個面向「新出現」的事件，存在 `latest.json` 的 `stocks[代號].hl` = [[種類, 日期, 附加值], ...]（沒有事件的股票沒有這個鍵）。「新出現」= 當天符合、該股前一個交易日不符合，逐日用和選股相同的算法（`price_stats`、連買天數）重算。種類：價量 `nh` 創 60 日以上新高且量比 ≥ 1.5、`vu` 量比 ≥ 2 且漲幅 ≥ 3%；法人 `s3` 法人連買達 3 日、`t3` 投信連買達 3 日、`t5` 投信 5 日買超 ≥ 5 日成交額（20 日均額 × 5）的 5%（法人看法人資料日的最近 5 天）；營收 `rv` 最新一個月年增 ≥ 30% 且創新高，日期為本站首次收錄日（`monthly_revenue.created_at`，晚於次月 10 日 5 天以上視為補抓、改用次月 10 日），看最近 20 個交易日，附加值為年月；主動 ETF `ae` 有持股資料的主動 ETF 相鄰兩個持股日「前一日沒有、後一日有」（同持股頁「新」，每檔 ETF 第一個持股日不算），附加值為 ETF 代號。畫面列 20 日均成交額 ≥ 0.5 億、不含處置股與今日無成交的股票，依面向數（同一面向多個事件算 1 個）、再依 20 日均額排序，可切換面向 ≥ 3／≥ 2（記在瀏覽器 `tw.hlmin`，預設 ≥ 3）。只描述發生了什麼，不代表之後的走勢；不顯示回測數字（分析見 `docs/iterations/21/01-analyst.md`）。`screen.json` 不存在時無法取 20 日均額，頁面顯示尚未產生。第 22 輪：「營收」面向改稱「基本面」，加 EPS 事件 `et` 單季 EPS 轉盈（去年同季 ≤ 0、本季 > 0）與 `eg` 單季 EPS 年增 ≥ 50%（去年同季 < 0.1 元的基期低不算），附加值為季別 YYYYQQ，標籤如「26Q3 EPS 轉盈」；只看全市場最新一季（`quarterly_financials` 最大的年、季），看最近 20 個交易日，和選股 `eq`、`ey`、`eb` 同一套算法。日期為本站收錄日：`first_seen`，補抓的列（NULL）改用 `created_at`（資料庫時間是 UTC，加 8 小時取日期），補抓且晚於該季金融業截止日 5 天以上改用截止日；再對齊到該日或之前最後一個交易日（午夜後收集的 `first_seen` 可能是週六）。季報集中在 3、5、8、11 月公布，這幾個月 EPS 事件會比較多。個股頁頁首（族群標籤下方）列出這檔的全部事件（文字同新訊號頁，不套用 20 日均額與處置股篩選），沒有事件時不顯示。
+ - 今日頁三大法人卡：上市為證交所 BFI82U 官方買賣金額（含 ETF；外資 = 外資及陸資，不含外資自營商，外資自營商已計入自營商），附近 20 日外資買賣超與連買／連賣天數；上櫃為櫃買 `insti/summary` 官方買賣金額（第 9 輪，2026-07-31 起；`latest.json` 的 `insti_official_tpex`，結構同 `insti_official`），另列一行（合計、外資、投信、自營）與上櫃外資 20 日迷你圖，日期早於網站資料日時標示「尚未更新」；上櫃官方尚無任何資料時才退回張數 × 收盤估算（不含 ETF）。上市、上櫃同一天時可相加，卡片不另列合計。資料表 `insti_amount` 以 `market`（`TWSE`／`TPEx`）區分市場。
+diff -ruN orig/site/app.css Afull/site/app.css
+--- orig/site/app.css	2026-11-17 00:02:25
++++ Afull/site/app.css	2026-11-17 00:02:25
+@@ -320,7 +320,7 @@
+ table.dv-tbl{max-width:720px}.dv-tbl td span{white-space:normal}.dv-tbl th,.dv-tbl td{padding-left:5px;padding-right:5px}.dv-tbl td span{display:block;color:var(--text2);font-size:11px}   /* 第 24 輪 F24-6 股利與填息 */
+ @media (max-width:480px){.tbl th.hl-th,.tbl td.hl-tags{display:none}.tbl tr.hl-sub{display:table-row}.tbl tr:has(+.hl-sub) td{border-bottom:0;padding-bottom:2px}.tbl tr.hl-sub td{padding-top:0;white-space:normal;box-shadow:none}.hl-sub .hl-tag{white-space:nowrap}}   /* 第 27 輪 D27-02 */
+ /* ─── 第 28 輪（D28-xx）────────────────────────── */
+-.chip-rng{display:flex;align-items:center;gap:8px;margin:10px 0 0}.chip-g .kv{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);margin-bottom:4px}   /* D28-01 籌碼分組：寬螢幕一組一列 */
++.chip-rng{display:flex;align-items:center;gap:8px;margin:10px 0 0}.chip-inv{margin:8px 0 0}.chip-g .kv{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);margin-bottom:4px}   /* D28-01 籌碼分組：寬螢幕一組一列 */
+ @media (max-width:520px){.chip-g .kv{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr))}.chip-g .kv .card:only-child{grid-column:1/-1}}
+ .ch-label{row-gap:2px}.mg-l{align-items:center}                                                                                         /* D28-06 子圖標題區換行不留 12px 空白 */
+ @media (max-width:520px){table.oi-tbl th,table.oi-tbl td{padding:8px 4px}table.bl-tbl>*>tr>*{padding-left:5px;padding-right:5px}}   /* D28-02 375 寬「增減」最後一位數不被切（表 321 → 301，框 309）；原本的 5px 被後面的 .tbl 6px 蓋掉 */
+diff -ruN orig/site/index.html Afull/site/index.html
+--- orig/site/index.html	2026-11-17 00:02:25
++++ Afull/site/index.html	2026-11-17 00:02:25
+@@ -7,11 +7,11 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=141ea2d8">
++<link rel="stylesheet" href="app.css?v=d654f1a6">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+ <script src="app.js?v=656083f0" defer></script>
+-<script src="stock.js?v=fd99de3d" defer></script>
++<script src="stock.js?v=01859664" defer></script>
+ </head>
+ <body>
+ <header class="top">
+diff -ruN orig/site/stock.js Afull/site/stock.js
+--- orig/site/stock.js	2026-11-17 00:02:25
++++ Afull/site/stock.js	2026-11-17 00:02:25
+@@ -83,9 +83,12 @@
+ const tagFold = t => t.slice(0, 2).join('') + (t.length > 2 ? `<span class="tag-rest" hidden>${t.slice(2).join('')}</span><button class="pill more" id="tagMore" data-n="+${t.length - 2}">+${t.length - 2}</button>` : '');
+ 
+ const cardsHTML = a => a.map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('');
+-// 第 28 輪 D28-01：籌碼分頁的圖表區間（預設 60 個交易日；只在這次瀏覽記住，不存 localStorage）
++// 第 28 輪 D28-01：籌碼分頁的圖表區間（只在這次瀏覽記住，不存 localStorage）；第 29 輪 F29-3：預設改 20 個交易日
+ const CHIP_N = [['20', '20 日'], ['60', '60 日'], ['120', '120 日'], ['all', '全部']];
+-let chipN = '60';
++let chipN = '20';
++// 第 29 輪 F29-1：法人圖一次看一種法人的每日買賣超（預設外資；只在這次瀏覽記住）
++const CHIP_I = [['f', '外資'], ['t', '投信'], ['dl', '自營'], ['net', '合計']];
++let chipI = 'f';
+ 
+ window.renderStock = async function (code, sub) {
+   const E = !App.latest.stocks[code] && App.latest.etfs?.rows?.[code];   // 第 15 輪 F15-2：ETF 個股頁（頁首用 etfs.rows，資料 data/etfp/）
+@@ -213,7 +216,8 @@
+          ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', subs(fundSub(fund.dy), valSub('dy', fund.dy))]])}
+     </section>`}
+     ${tab === 'chip' ? `<div class="sec chip-rng"><span class="muted small">圖表區間</span>${segHTML('chipSeg', CHIP_N, chipN)}</div>
+-    ${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards, chLeg(E ? '收盤（原始價）' : '收盤（還原）', 'cpC', 64) + chLeg('區間累計買賣超（張，未還原；從區間第一天起加總）', 'ciC', 150))}
++    ${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards, chLeg(E ? '收盤（原始價）' : '收盤（還原）', 'cpC', 64) + `<div class="chip-inv">${segHTML('chipInv', CHIP_I, chipI)}</div>` + chLeg('每日買賣超（張，未還原）', 'ciC', 120) +
++      chLeg('<span id="cuCT">區間累計（張）</span>', 'cuC', 72), '<div class="muted small val-note">累計線的高度取決於起算日，看斜率不看高度；最近每天的買賣看上方柱狀圖。</div>')}
+     ${chipSec('信用交易', MG ? md(MG.d) : '', mgCards, data.mg ? chLeg(`融資餘額（張${GK}）`, 'cmC', 110) : '')}
+     ${chipSec('借券賣出', SL ? `${md(SL.d)}，晚上 8 點半以後更新` : '', slCards, data.mg?.lb ? chLeg(`借券賣出餘額（張${GK}）`, 'clC', 110) : '',
+       `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。${E ? '' : '占股本以目前發行股數計算。'}</div>`)}
+@@ -259,6 +263,7 @@
+   });
+   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
+   if (tab === 'chip') onSeg('chipSeg', v => { chipN = v; document.querySelectorAll('#chipSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
++  if (tab === 'chip' && $('#chipInv')) onSeg('chipInv', v => { chipI = v; document.querySelectorAll('#chipInv button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
+   if (tab === 'chip') buildChip(data, E);
+   if (tab !== 'k') return;
+   // 第 25 輪 D25-05：關鍵數字列在寬螢幕併進頁首卡、手機放到 K 線卡下方，主圖進第一屏
+@@ -577,6 +582,7 @@
+ }
+ 
+ // 第 28 輪 D28-01：籌碼分頁時間序列（張）。法人：收盤小面板＋外資／投信／自營區間累計（不用雙 Y 軸）；信用：融資餘額；借券：借券賣出餘額。
++// 第 29 輪 F29-1、2：法人改成「選一種法人」的每日買賣超柱（主）＋同一法人的區間累計小面板（輔，標題寫起算日）
+ // 區間由 #chipSeg 決定，不能拖曳縮放（避免手機捲頁時誤拖）；十字線四張圖同步，圖例顯示該日數字
+ function buildChip(data, E) {
+   disposeKCharts();
+@@ -600,16 +606,23 @@
+   const day = (i, j) => `<span><b>${T[j].slice(5).replace('-', '/')}</b></span>`;
+   const anchors = [], legs = [];
+   if ($('#cpC')) {
+-    const C = raw.map(r => r.c), cp = mk('cpC', false), ci = mk('ciC', true);
++    const C = raw.map(r => r.c), cp = mk('cpC', false), ci = mk('ciC', true), cu = mk('cuC', true);
+     anchors.push([cp, line(cp, C, text2, 1, px), C]);
+-    const cum = INVESTORS.map(([k]) => { let a = 0; return raw.map(r => r[k] == null ? null : (a += r[k])); });
+-    const ser = INVESTORS.map(([, , color], n) => line(ci, cum[n], color));
+-    ser[0].createPriceLine({ price: 0, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+-    anchors.push([ci, ser[0], cum[0]]);
++    const V = raw.map(r => r[chipI]), up = css('--up'), dn = css('--dn'), name = CHIP_I.find(x => x[0] === chipI)[1];
++    let a = 0;
++    const cum = V.map(v => v == null ? null : (a += v));
++    const bar = ci.addHistogramSeries({ priceFormat: lots, priceLineVisible: false, lastValueVisible: false });
++    bar.setData(V.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v, color: v >= 0 ? up : dn }));
++    bar.createPriceLine({ price: 0, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
++    const cl = line(cu, cum, text2, 1);
++    cl.createPriceLine({ price: 0, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
++    anchors.push([ci, bar, V], [cu, cl, cum]);
++    $('#cuCT').textContent = `區間累計（張，自 ${T[0].slice(0, 4) === T[last].slice(0, 4) ? md(T[0]) : T[0].replace(/-/g, '/')} 起加總）`;   // 跨年寫年份
+     legs.push(i => { $('#cpCL').innerHTML = `${day(i, i)}<span>收 <b>${pfmt(C[i])}</b></span>`; },
+-      i => { const j = at(cum[0], i);
+-        $('#ciCL').innerHTML = (j !== i ? `<span class="muted">${T[j].slice(5).replace('-', '/')}</span>` : '') + INVESTORS.map(([k, n, color], m) =>
+-          `<span class="lg"><i style="background:${color}"></i>${n} <b class="num ${cls(cum[m][j])}">${cum[m][j] == null ? '--' : sgn(cum[m][j], 0)}</b><span class="muted">（當日 ${raw[j][k] == null ? '--' : sgn(raw[j][k], 0)}）</span></span>`).join(''); });
++      i => { const j = at(V, i);
++        const lag = j !== i ? `<span class="muted">${T[j].slice(5).replace('-', '/')}</span>` : '';
++        $('#ciCL').innerHTML = `${lag}<span>${name} <b class="num ${cls(V[j])}">${V[j] == null ? '--' : sgn(V[j], 0)}</b></span>`;
++        $('#cuCL').innerHTML = `${lag}<span>累計 <b class="num ${cls(cum[j])}">${cum[j] == null ? '--' : sgn(cum[j], 0)}</b></span>`; });
+   }
+   if ($('#cmC')) {
+     const MB = raw.map(r => r.mb), SB = raw.map(r => r.sb), cm = mk('cmC', true);
+diff -ruN orig/tests/test_iter28.py Afull/tests/test_iter28.py
+--- orig/tests/test_iter28.py	2026-11-17 00:02:25
++++ Afull/tests/test_iter28.py	2026-11-17 00:02:25
+@@ -43,9 +43,9 @@
+ # ─── D28-01：籌碼分頁分組小卡＋時間序列 ─────────────────────
+ def test_chip_groups_source():
+     assert "const CHIP_N = [['20', '20 日'], ['60', '60 日'], ['120', '120 日'], ['all', '全部']];" in STK
+-    assert "let chipN = '60';" in STK and "localStore('chipN'" not in STK                     # 預設 60 日，不新增 localStorage 鍵
++    assert "let chipN = '20';" in STK and "localStore('chipN'" not in STK                     # 預設 20 日（第 29 輪 F29-3），不新增 localStorage 鍵
+     assert "${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards," in STK          # 卡片：億（估算）
+-    assert "chLeg('區間累計買賣超（張，未還原；從區間第一天起加總）', 'ciC', 150)" in STK        # 圖：張
++    assert "chLeg('每日買賣超（張，未還原）', 'ciC', 120)" in STK                                # 圖：張（第 29 輪 F29-1 改每日柱）
+     assert "${chipSec('信用交易', MG ? md(MG.d) : '', mgCards," in STK
+     assert "${chipSec('借券賣出', SL ? `${md(SL.d)}，晚上 8 點半以後更新` : '', slCards," in STK
+     assert "'資料 ' + md(MG.d)" not in STK and "'資料 ' + md(SL.d)" not in STK                # 日期只寫在組標題
+@@ -55,12 +55,12 @@
+ 
+ 
+ def test_chip_charts_node():
+-    js = HELPERS + "\n" + "\n".join(_grab(STK, n) for n in ("INVESTORS", "disposeKCharts", "adjFactors", "aggregate", "buildChip")) + r"""
+-let charts = [], chipN = 'all';
++    js = HELPERS + "\n" + "\n".join(_grab(STK, n) for n in ("INVESTORS", "CHIP_I", "disposeKCharts", "adjFactors", "aggregate", "buildChip")) + r"""
++let charts = [], chipN = 'all', chipI = 'f';
+ const css = () => '#888', created = [], els = {};
+ const $ = s => s in els ? els[s] : (els[s] = { innerHTML: '' });
+ const window = { LightweightCharts: { createChart: (el, opt) => {
+-  const c = { el, opt, ser: [], addLineSeries(o) { const s = { o, setData(d) { this.data = d; }, createPriceLine(p) { this.pl = p; } }; this.ser.push(s); return s; },
++  const c = { el, opt, ser: [], addHistogramSeries(o) { return this.addLineSeries(o); }, addLineSeries(o) { const s = { o, setData(d) { this.data = d; }, createPriceLine(p) { this.pl = p; } }; this.ser.push(s); return s; },
+     timeScale: () => ({ fitContent() {} }), subscribeCrosshairMove(f) { this.cb = f; }, setCrosshairPosition(v, t) { this.cross = [v, t]; },
+     clearCrosshairPosition() { this.cross = null; }, remove() { this.removed = true; } };
+   created.push(c); return c; } } };
+@@ -68,34 +68,34 @@
+ const data = { market: 'TWSE', prices: { d: D, o: [10, 11, 12, 13, 14], h: [10, 11, 12, 13, 14], l: [10, 11, 12, 13, 14], c: [10, 11, 12, 13, 14], v: [1, 1, 1, 1, 1], ch: [0, 1, 1, 1, 1] },
+   insti: { f: [10, -20, 30, 5, null], t: [1, 1, 1, 1, null], dl: [0, 0, 0, -2, null] }, mg: { mb: [100, 110, 120, 130, 140], sb: [1, 2, 3, 4, 5], lb: [50, 60, 70, null, null] }, ev: [] };
+ buildChip(data, false);
+-const all = { n: created.length, ids: created.map(c => c.el === els['#cpC'] ? 'cp' : c.el === els['#ciC'] ? 'ci' : c.el === els['#cmC'] ? 'cm' : 'cl'),
++const all = { n: created.length, ids: created.map(c => c.el === els['#cpC'] ? 'cp' : c.el === els['#ciC'] ? 'ci' : c.el === els['#cuC'] ? 'cu' : c.el === els['#cmC'] ? 'cm' : 'cl'),
+   scroll: created.map(c => c.opt.handleScroll || c.opt.handleScale), entire: created.every(c => c.opt.rightPriceScale.entireTextOnly),
+-  cum: created[1].ser.map(s => s.data.map(p => p.value ?? null)), zero: created[1].ser[0].pl.price,
+-  ci: els['#ciCL'].innerHTML, cm: els['#cmCL'].innerHTML, cl: els['#clCL'].innerHTML, cp: els['#cpCL'].innerHTML };
++  cum: [created[1], created[2]].map(c => c.ser[0].data.map(p => p.value ?? null)), zero: created[1].ser[0].pl.price,
++  ci: els['#ciCL'].innerHTML, cu: els['#cuCL'].innerHTML, cm: els['#cmCL'].innerHTML, cl: els['#clCL'].innerHTML, cp: els['#cpCL'].innerHTML };
+ created[1].cb({ logical: 1, time: D[1] });
+-const hover = { ci: els['#ciCL'].innerHTML, cross: created[0].cross, cm: created[2].cross };
++const hover = { ci: els['#ciCL'].innerHTML, cross: created[0].cross, cm: created[3].cross };
+ const before = created.slice();
+ chipN = '2'; created.length = 0; buildChip(data, false);
+-const two = { removed: before.every(c => c.removed), cum: created[1].ser[0].data.map(p => p.value ?? null), ci: els['#ciCL'].innerHTML };
++const two = { removed: before.every(c => c.removed), cum: created[2].ser[0].data.map(p => p.value ?? null), ci: els['#cuCL'].innerHTML };
+ created.length = 0; els['#cpC'] = null; chipN = 'all'; buildChip(data, true);   // ETF：沒有法人圖
+ console.log(JSON.stringify({ all, hover, two, etf: created.length }));"""
+     o = _node(js)
+     if o is None:
+         return
+     a = o["all"]
+-    assert a["n"] == 4 and a["ids"] == ["cp", "ci", "cm", "cl"] and a["scroll"] == [False] * 4 and a["entire"], a
+-    assert a["cum"] == [[10, -10, 20, 25, None], [1, 2, 3, 4, None], [0, 0, 0, -2, None]], a["cum"]      # 從區間第一天起加總；缺值不補
++    assert a["n"] == 5 and a["ids"] == ["cp", "ci", "cu", "cm", "cl"] and a["scroll"] == [False] * 5 and a["entire"], a
++    assert a["cum"] == [[10, -20, 30, 5, None], [10, -10, 20, 25, None]], a["cum"]      # 每日柱（外資）；累計從區間第一天起加總；缺值不補
+     assert a["zero"] == 0
+     # 最新一天法人還沒有：圖例改顯示最近有資料的那天，並寫出日期
+-    assert a["ci"].startswith('<span class="muted">11/12</span>') and '外資 <b class="num up">+25</b><span class="muted">（當日 +5）</span>' in a["ci"], a["ci"]
+-    assert '自營 <b class="num dn">-2</b>' in a["ci"]
++    assert a["ci"].startswith('<span class="muted">11/12</span>') and '外資 <b class="num up">+5</b>' in a["ci"], a["ci"]
++    assert '累計 <b class="num up">+25</b>' in a["cu"], a["cu"]
+     assert "融資 <b class=\"num\">140</b>" in a["cm"] and "券資比 <b class=\"num\">3.57%</b>" in a["cm"] and "<b>11/13</b>" in a["cm"]
+     assert "<b>11/11</b>" in a["cl"] and "借券賣出 <b class=\"num\">70</b>" in a["cl"]
+     assert "收 <b>14</b>" in a["cp"]
+     h = o["hover"]
+-    assert '外資 <b class="num dn">-10</b><span class="muted">（當日 -20）</span>' in h["ci"] and h["cross"] == [11, D1] and h["cm"] == [110, D1], h
++    assert '外資 <b class="num dn">-20</b>' in h["ci"] and h["cross"] == [11, D1] and h["cm"] == [110, D1], h
+     t = o["two"]
+-    assert t["removed"] and t["cum"] == [5, None] and '外資 <b class="num up">+5</b>' in t["ci"], t
++    assert t["removed"] and t["cum"] == [5, None] and '累計 <b class="num up">+5</b>' in t["ci"], t
+     assert o["etf"] == 2                                            # ETF：只有融資、借券兩張
+ 
+ 
+diff -ruN orig/tests/test_iter29.py Afull/tests/test_iter29.py
+--- orig/tests/test_iter29.py	1970-01-01 08:00:00
++++ Afull/tests/test_iter29.py	2026-11-17 00:02:25
+@@ -0,0 +1,86 @@
++"""
++第 29 輪（不連網、不連資料庫）：
++F29-1～3 籌碼分頁法人圖：選一種法人的每日買賣超柱（預設外資）＋同一法人的區間累計小面板（標題寫起算日、跨年寫年份），預設 20 日，
++         不新增 localStorage 鍵（有 node 時逐字取出 stock.js 的 buildChip 執行）；
++（F29-4 外資持股的測試在階段二加入。）
++
++  python3 tests/test_iter29.py      （也相容 pytest）
++"""
++import json
++import sys
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++
++import test_iter28 as t28  # noqa: E402
++
++STK, CSS = t28.STK, t28.CSS
++
++
++# ─── F29-1～3：原始碼 ──────────────────────────────────
++def test_chip_source():
++    assert "let chipN = '20';" in STK and "localStore('chipN'" not in STK                         # F29-3 預設 20 日
++    assert "const CHIP_I = [['f', '外資'], ['t', '投信'], ['dl', '自營'], ['net', '合計']];" in STK
++    assert "let chipI = 'f';" in STK and "localStore('chipI'" not in STK                          # 預設外資，只在這次瀏覽記住
++    assert "segHTML('chipInv', CHIP_I, chipI)" in STK and "onSeg('chipInv'," in STK
++    assert "chLeg('每日買賣超（張，未還原）', 'ciC', 120)" in STK and "'cuC', 72)" in STK
++    assert "累計線的高度取決於起算日，看斜率不看高度；最近每天的買賣看上方柱狀圖。" in STK             # F29-2 讀法
++    assert ".chip-inv{margin:8px 0 0}" in CSS
++
++
++def _run(chipN, chipI, data, extra=""):
++    js = t28.HELPERS + "\n" + "\n".join(t28._grab(STK, n) for n in ("INVESTORS", "CHIP_I", "disposeKCharts", "adjFactors", "aggregate", "buildChip")) + r"""
++let charts = [], chipN = '%s', chipI = '%s';
++const css = v => v, created = [], els = {};
++const $ = s => s in els ? els[s] : (els[s] = { innerHTML: '', textContent: '' });
++const window = { LightweightCharts: { createChart: (el, opt) => {
++  const c = { el, opt, ser: [], addHistogramSeries(o) { return this.addLineSeries(Object.assign({ hist: true }, o)); },
++    addLineSeries(o) { const s = { o, setData(d) { this.data = d; }, createPriceLine(p) { this.pl = p; } }; this.ser.push(s); return s; },
++    timeScale: () => ({ fitContent() {} }), subscribeCrosshairMove(f) { this.cb = f; }, setCrosshairPosition(v, t) { this.cross = [v, t]; },
++    clearCrosshairPosition() { this.cross = null; }, remove() {} };
++  created.push(c); return c; } } };
++const data = %s;
++%s
++buildChip(data, false);
++const id = c => Object.keys(els).find(k => els[k] === c.el);
++console.log(JSON.stringify({ ids: created.map(id), ser: created.map(c => c.ser.map(s => ({ hist: !!s.o.hist, v: s.data.map(p => p.value ?? null), col: s.data.map(p => p.color || null) }))),
++  ci: els['#ciCL'].innerHTML, cu: els['#cuCL'].innerHTML, cuT: els['#cuCT'].textContent, fh: els['#fhCL'] ? els['#fhCL'].innerHTML : null }));""" % (chipN, chipI, json.dumps(data), extra)
++    return t28._node(js)
++
++
++DATES = ['2025-12-30', '2025-12-31', '2026-01-02', '2026-01-05', '2026-01-06']
++DATA = {"market": "TWSE", "prices": {"d": DATES, "o": [10] * 5, "h": [10] * 5, "l": [10] * 5, "c": [10, 11, 12, 13, 14], "v": [1] * 5, "ch": [0, 1, 1, 1, 1]},
++        "insti": {"f": [10, -20, 30, 5, -4], "t": [1, 2, 0, -3, 1], "dl": [0, 0, 0, -2, 0], "n": [11, -18, 30, 0, -3]}, "ev": []}
++
++
++def test_chip_bars_node():
++    o = _run("all", "f", DATA)
++    if o is None:
++        return
++    assert o["ids"] == ["#cpC", "#ciC", "#cuC", "#cmC", "#clC"], o["ids"]       # 沒有 fh：不畫持股比率圖
++    bar, cum = o["ser"][1][0], o["ser"][2][0]
++    assert bar["hist"] and bar["v"] == [10, -20, 30, 5, -4] and bar["col"] == ["--up", "--dn", "--up", "--up", "--dn"]   # 每日柱：正紅負綠
++    assert not cum["hist"] and cum["v"] == [10, -10, 20, 25, 21]                                                     # 區間累計
++    assert o["cuT"] == "區間累計（張，自 2025/12/30 起加總）"                                                         # 跨年寫年份
++    assert '外資 <b class="num dn">-4</b>' in o["ci"] and '累計 <b class="num up">+21</b>' in o["cu"]
++    o = _run("2", "net", DATA)                                                                                       # 合計（官方 n）、近 2 日
++    assert o["ser"][1][0]["v"] == [0, -3] and o["ser"][2][0]["v"] == [0, -3] and o["cuT"] == "區間累計（張，自 01/05 起加總）"
++    assert '合計 <b class="num dn">-3</b>' in o["ci"]
++    o = _run("3", "t", DATA)
++    assert o["ser"][1][0]["v"] == [0, -3, 1] and o["ser"][2][0]["v"] == [0, -3, -2] and '投信 <b class="num up">+1</b>' in o["ci"]
++
++
++def test_no_advice_words():
++    seg = "\n".join(t28._grab(STK, n) for n in ("CHIP_I", "buildChip"))
++    for w in ("買進", "賣出", "反彈", "見底", "買點", "超賣", "超買", "推薦", "強勢股", "飆股", "勝率", "亮點", "低估", "高估", "建議"):
++        assert w not in seg.replace("借券賣出", ""), w
++
++
++if __name__ == "__main__":
++    for name, fn in list(globals().items()):
++        if name.startswith("test_"):
++            print("==", name)
++            fn()
++            print("✅", name)
++    print("全部通過")

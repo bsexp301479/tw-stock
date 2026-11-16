@@ -83,9 +83,12 @@ const mgView = G => { const v = localStore('mgv', 'mb'); return v === 'sb' || (v
 const tagFold = t => t.slice(0, 2).join('') + (t.length > 2 ? `<span class="tag-rest" hidden>${t.slice(2).join('')}</span><button class="pill more" id="tagMore" data-n="+${t.length - 2}">+${t.length - 2}</button>` : '');
 
 const cardsHTML = a => a.map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('');
-// 第 28 輪 D28-01：籌碼分頁的圖表區間（預設 60 個交易日；只在這次瀏覽記住，不存 localStorage）
+// 第 28 輪 D28-01：籌碼分頁的圖表區間（只在這次瀏覽記住，不存 localStorage）；第 29 輪 F29-3：預設改 20 個交易日
 const CHIP_N = [['20', '20 日'], ['60', '60 日'], ['120', '120 日'], ['all', '全部']];
-let chipN = '60';
+let chipN = '20';
+// 第 29 輪 F29-1：法人圖一次看一種法人的每日買賣超（預設外資；只在這次瀏覽記住）
+const CHIP_I = [['f', '外資'], ['t', '投信'], ['dl', '自營'], ['net', '合計']];
+let chipI = 'f';
 
 window.renderStock = async function (code, sub) {
   const E = !App.latest.stocks[code] && App.latest.etfs?.rows?.[code];   // 第 15 輪 F15-2：ETF 個股頁（頁首用 etfs.rows，資料 data/etfp/）
@@ -213,7 +216,8 @@ window.renderStock = async function (code, sub) {
          ['殖利率', fund.dy != null ? fmt(fund.dy, 2) + '%' : '--', '', subs(fundSub(fund.dy), valSub('dy', fund.dy))]])}
     </section>`}
     ${tab === 'chip' ? `<div class="sec chip-rng"><span class="muted small">圖表區間</span>${segHTML('chipSeg', CHIP_N, chipN)}</div>
-    ${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards, chLeg(E ? '收盤（原始價）' : '收盤（還原）', 'cpC', 64) + chLeg('區間累計買賣超（張，未還原；從區間第一天起加總）', 'ciC', 150))}
+    ${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards, chLeg(E ? '收盤（原始價）' : '收盤（還原）', 'cpC', 64) + `<div class="chip-inv">${segHTML('chipInv', CHIP_I, chipI)}</div>` + chLeg('每日買賣超（張，未還原）', 'ciC', 120) +
+      chLeg('<span id="cuCT">區間累計（張）</span>', 'cuC', 72), '<div class="muted small val-note">累計線的高度取決於起算日，看斜率不看高度；最近每天的買賣看上方柱狀圖。</div>')}
     ${chipSec('信用交易', MG ? md(MG.d) : '', mgCards, data.mg ? chLeg(`融資餘額（張${GK}）`, 'cmC', 110) : '')}
     ${chipSec('借券賣出', SL ? `${md(SL.d)}，晚上 8 點半以後更新` : '', slCards, data.mg?.lb ? chLeg(`借券賣出餘額（張${GK}）`, 'clC', 110) : '',
       `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。${E ? '' : '占股本以目前發行股數計算。'}</div>`)}
@@ -259,6 +263,7 @@ window.renderStock = async function (code, sub) {
   });
   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
   if (tab === 'chip') onSeg('chipSeg', v => { chipN = v; document.querySelectorAll('#chipSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
+  if (tab === 'chip' && $('#chipInv')) onSeg('chipInv', v => { chipI = v; document.querySelectorAll('#chipInv button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
   if (tab === 'chip') buildChip(data, E);
   if (tab !== 'k') return;
   // 第 25 輪 D25-05：關鍵數字列在寬螢幕併進頁首卡、手機放到 K 線卡下方，主圖進第一屏
@@ -577,6 +582,7 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
 }
 
 // 第 28 輪 D28-01：籌碼分頁時間序列（張）。法人：收盤小面板＋外資／投信／自營區間累計（不用雙 Y 軸）；信用：融資餘額；借券：借券賣出餘額。
+// 第 29 輪 F29-1、2：法人改成「選一種法人」的每日買賣超柱（主）＋同一法人的區間累計小面板（輔，標題寫起算日）
 // 區間由 #chipSeg 決定，不能拖曳縮放（避免手機捲頁時誤拖）；十字線四張圖同步，圖例顯示該日數字
 function buildChip(data, E) {
   disposeKCharts();
@@ -600,16 +606,23 @@ function buildChip(data, E) {
   const day = (i, j) => `<span><b>${T[j].slice(5).replace('-', '/')}</b></span>`;
   const anchors = [], legs = [];
   if ($('#cpC')) {
-    const C = raw.map(r => r.c), cp = mk('cpC', false), ci = mk('ciC', true);
+    const C = raw.map(r => r.c), cp = mk('cpC', false), ci = mk('ciC', true), cu = mk('cuC', true);
     anchors.push([cp, line(cp, C, text2, 1, px), C]);
-    const cum = INVESTORS.map(([k]) => { let a = 0; return raw.map(r => r[k] == null ? null : (a += r[k])); });
-    const ser = INVESTORS.map(([, , color], n) => line(ci, cum[n], color));
-    ser[0].createPriceLine({ price: 0, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
-    anchors.push([ci, ser[0], cum[0]]);
+    const V = raw.map(r => r[chipI]), up = css('--up'), dn = css('--dn'), name = CHIP_I.find(x => x[0] === chipI)[1];
+    let a = 0;
+    const cum = V.map(v => v == null ? null : (a += v));
+    const bar = ci.addHistogramSeries({ priceFormat: lots, priceLineVisible: false, lastValueVisible: false });
+    bar.setData(V.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v, color: v >= 0 ? up : dn }));
+    bar.createPriceLine({ price: 0, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+    const cl = line(cu, cum, text2, 1);
+    cl.createPriceLine({ price: 0, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+    anchors.push([ci, bar, V], [cu, cl, cum]);
+    $('#cuCT').textContent = `區間累計（張，自 ${T[0].slice(0, 4) === T[last].slice(0, 4) ? md(T[0]) : T[0].replace(/-/g, '/')} 起加總）`;   // 跨年寫年份
     legs.push(i => { $('#cpCL').innerHTML = `${day(i, i)}<span>收 <b>${pfmt(C[i])}</b></span>`; },
-      i => { const j = at(cum[0], i);
-        $('#ciCL').innerHTML = (j !== i ? `<span class="muted">${T[j].slice(5).replace('-', '/')}</span>` : '') + INVESTORS.map(([k, n, color], m) =>
-          `<span class="lg"><i style="background:${color}"></i>${n} <b class="num ${cls(cum[m][j])}">${cum[m][j] == null ? '--' : sgn(cum[m][j], 0)}</b><span class="muted">（當日 ${raw[j][k] == null ? '--' : sgn(raw[j][k], 0)}）</span></span>`).join(''); });
+      i => { const j = at(V, i);
+        const lag = j !== i ? `<span class="muted">${T[j].slice(5).replace('-', '/')}</span>` : '';
+        $('#ciCL').innerHTML = `${lag}<span>${name} <b class="num ${cls(V[j])}">${V[j] == null ? '--' : sgn(V[j], 0)}</b></span>`;
+        $('#cuCL').innerHTML = `${lag}<span>累計 <b class="num ${cls(cum[j])}">${cum[j] == null ? '--' : sgn(cum[j], 0)}</b></span>`; });
   }
   if ($('#cmC')) {
     const MB = raw.map(r => r.mb), SB = raw.map(r => r.sb), cm = mk('cmC', true);

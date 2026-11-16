@@ -43,9 +43,9 @@ HELPERS = "\n".join(_grab(APP, n) for n in ("esc", "fmt", "pfmt", "sgn", "cls", 
 # ─── D28-01：籌碼分頁分組小卡＋時間序列 ─────────────────────
 def test_chip_groups_source():
     assert "const CHIP_N = [['20', '20 日'], ['60', '60 日'], ['120', '120 日'], ['all', '全部']];" in STK
-    assert "let chipN = '60';" in STK and "localStore('chipN'" not in STK                     # 預設 60 日，不新增 localStorage 鍵
+    assert "let chipN = '20';" in STK and "localStore('chipN'" not in STK                     # 預設 20 日（第 29 輪 F29-3），不新增 localStorage 鍵
     assert "${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards," in STK          # 卡片：億（估算）
-    assert "chLeg('區間累計買賣超（張，未還原；從區間第一天起加總）', 'ciC', 150)" in STK        # 圖：張
+    assert "chLeg('每日買賣超（張，未還原）', 'ciC', 120)" in STK                                # 圖：張（第 29 輪 F29-1 改每日柱）
     assert "${chipSec('信用交易', MG ? md(MG.d) : '', mgCards," in STK
     assert "${chipSec('借券賣出', SL ? `${md(SL.d)}，晚上 8 點半以後更新` : '', slCards," in STK
     assert "'資料 ' + md(MG.d)" not in STK and "'資料 ' + md(SL.d)" not in STK                # 日期只寫在組標題
@@ -55,12 +55,12 @@ def test_chip_groups_source():
 
 
 def test_chip_charts_node():
-    js = HELPERS + "\n" + "\n".join(_grab(STK, n) for n in ("INVESTORS", "disposeKCharts", "adjFactors", "aggregate", "buildChip")) + r"""
-let charts = [], chipN = 'all';
+    js = HELPERS + "\n" + "\n".join(_grab(STK, n) for n in ("INVESTORS", "CHIP_I", "disposeKCharts", "adjFactors", "aggregate", "buildChip")) + r"""
+let charts = [], chipN = 'all', chipI = 'f';
 const css = () => '#888', created = [], els = {};
 const $ = s => s in els ? els[s] : (els[s] = { innerHTML: '' });
 const window = { LightweightCharts: { createChart: (el, opt) => {
-  const c = { el, opt, ser: [], addLineSeries(o) { const s = { o, setData(d) { this.data = d; }, createPriceLine(p) { this.pl = p; } }; this.ser.push(s); return s; },
+  const c = { el, opt, ser: [], addHistogramSeries(o) { return this.addLineSeries(o); }, addLineSeries(o) { const s = { o, setData(d) { this.data = d; }, createPriceLine(p) { this.pl = p; } }; this.ser.push(s); return s; },
     timeScale: () => ({ fitContent() {} }), subscribeCrosshairMove(f) { this.cb = f; }, setCrosshairPosition(v, t) { this.cross = [v, t]; },
     clearCrosshairPosition() { this.cross = null; }, remove() { this.removed = true; } };
   created.push(c); return c; } } };
@@ -68,34 +68,34 @@ const D = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13']
 const data = { market: 'TWSE', prices: { d: D, o: [10, 11, 12, 13, 14], h: [10, 11, 12, 13, 14], l: [10, 11, 12, 13, 14], c: [10, 11, 12, 13, 14], v: [1, 1, 1, 1, 1], ch: [0, 1, 1, 1, 1] },
   insti: { f: [10, -20, 30, 5, null], t: [1, 1, 1, 1, null], dl: [0, 0, 0, -2, null] }, mg: { mb: [100, 110, 120, 130, 140], sb: [1, 2, 3, 4, 5], lb: [50, 60, 70, null, null] }, ev: [] };
 buildChip(data, false);
-const all = { n: created.length, ids: created.map(c => c.el === els['#cpC'] ? 'cp' : c.el === els['#ciC'] ? 'ci' : c.el === els['#cmC'] ? 'cm' : 'cl'),
+const all = { n: created.length, ids: created.map(c => c.el === els['#cpC'] ? 'cp' : c.el === els['#ciC'] ? 'ci' : c.el === els['#cuC'] ? 'cu' : c.el === els['#cmC'] ? 'cm' : 'cl'),
   scroll: created.map(c => c.opt.handleScroll || c.opt.handleScale), entire: created.every(c => c.opt.rightPriceScale.entireTextOnly),
-  cum: created[1].ser.map(s => s.data.map(p => p.value ?? null)), zero: created[1].ser[0].pl.price,
-  ci: els['#ciCL'].innerHTML, cm: els['#cmCL'].innerHTML, cl: els['#clCL'].innerHTML, cp: els['#cpCL'].innerHTML };
+  cum: [created[1], created[2]].map(c => c.ser[0].data.map(p => p.value ?? null)), zero: created[1].ser[0].pl.price,
+  ci: els['#ciCL'].innerHTML, cu: els['#cuCL'].innerHTML, cm: els['#cmCL'].innerHTML, cl: els['#clCL'].innerHTML, cp: els['#cpCL'].innerHTML };
 created[1].cb({ logical: 1, time: D[1] });
-const hover = { ci: els['#ciCL'].innerHTML, cross: created[0].cross, cm: created[2].cross };
+const hover = { ci: els['#ciCL'].innerHTML, cross: created[0].cross, cm: created[3].cross };
 const before = created.slice();
 chipN = '2'; created.length = 0; buildChip(data, false);
-const two = { removed: before.every(c => c.removed), cum: created[1].ser[0].data.map(p => p.value ?? null), ci: els['#ciCL'].innerHTML };
+const two = { removed: before.every(c => c.removed), cum: created[2].ser[0].data.map(p => p.value ?? null), ci: els['#cuCL'].innerHTML };
 created.length = 0; els['#cpC'] = null; chipN = 'all'; buildChip(data, true);   // ETF：沒有法人圖
 console.log(JSON.stringify({ all, hover, two, etf: created.length }));"""
     o = _node(js)
     if o is None:
         return
     a = o["all"]
-    assert a["n"] == 4 and a["ids"] == ["cp", "ci", "cm", "cl"] and a["scroll"] == [False] * 4 and a["entire"], a
-    assert a["cum"] == [[10, -10, 20, 25, None], [1, 2, 3, 4, None], [0, 0, 0, -2, None]], a["cum"]      # 從區間第一天起加總；缺值不補
+    assert a["n"] == 5 and a["ids"] == ["cp", "ci", "cu", "cm", "cl"] and a["scroll"] == [False] * 5 and a["entire"], a
+    assert a["cum"] == [[10, -20, 30, 5, None], [10, -10, 20, 25, None]], a["cum"]      # 每日柱（外資）；累計從區間第一天起加總；缺值不補
     assert a["zero"] == 0
     # 最新一天法人還沒有：圖例改顯示最近有資料的那天，並寫出日期
-    assert a["ci"].startswith('<span class="muted">11/12</span>') and '外資 <b class="num up">+25</b><span class="muted">（當日 +5）</span>' in a["ci"], a["ci"]
-    assert '自營 <b class="num dn">-2</b>' in a["ci"]
+    assert a["ci"].startswith('<span class="muted">11/12</span>') and '外資 <b class="num up">+5</b>' in a["ci"], a["ci"]
+    assert '累計 <b class="num up">+25</b>' in a["cu"], a["cu"]
     assert "融資 <b class=\"num\">140</b>" in a["cm"] and "券資比 <b class=\"num\">3.57%</b>" in a["cm"] and "<b>11/13</b>" in a["cm"]
     assert "<b>11/11</b>" in a["cl"] and "借券賣出 <b class=\"num\">70</b>" in a["cl"]
     assert "收 <b>14</b>" in a["cp"]
     h = o["hover"]
-    assert '外資 <b class="num dn">-10</b><span class="muted">（當日 -20）</span>' in h["ci"] and h["cross"] == [11, D1] and h["cm"] == [110, D1], h
+    assert '外資 <b class="num dn">-20</b>' in h["ci"] and h["cross"] == [11, D1] and h["cm"] == [110, D1], h
     t = o["two"]
-    assert t["removed"] and t["cum"] == [5, None] and '外資 <b class="num up">+5</b>' in t["ci"], t
+    assert t["removed"] and t["cum"] == [5, None] and '累計 <b class="num up">+5</b>' in t["ci"], t
     assert o["etf"] == 2                                            # ETF：只有融資、借券兩張
 
 
