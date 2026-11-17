@@ -407,8 +407,28 @@ function calcRSI(C, n = 14) {
   return out;
 }
 
+// 第 33 輪 F33-1：週／月 K 事件標籤的位置（純函式）。items：[{x: K 棒中心, top: 標籤底邊的上限, w: 標籤寬}]，W：繪圖區寬（不含右側刻度）
+// bars：[{l, r, y}] 每根 K 棒的左右範圍與最高價位置；標籤底邊也要在「標籤寬度範圍內每根 K 棒的最高點」之上（QA D33-QA-1）
+// 水平置中、靠邊往內收；和已放好的標籤重疊時往上一層，還重疊就不顯示（只留箭頭，游標停在 K 棒上時資訊列有說明）；K 棒不在可見範圍回傳 null
+function evLabelPos(items, W, bars = [], h = 18) {
+  const done = [];
+  return items.map(({ x, top, w }) => {
+    if (x == null || top == null || x < 0 || x > W) return null;
+    const left = Math.max(2, Math.min(x - w / 2, W - w - 2));
+    const hits = t => done.filter(p => left < p.left + p.w + 4 && p.left < left + w + 4 && t < p.t + h + 2 && p.t < t + h + 2);
+    const under = bars.filter(b => b.l < left + w && b.r > left).map(b => b.y - 2);
+    let t = Math.max(Math.min(top, ...under) - h, 0);   // 碰到圖的上緣就貼齊上緣
+    const near = hits(t);
+    if (near.length) t = Math.min(...near.map(p => p.t)) - h - 2;   // 放到相撞標籤的上方一層
+    if (t < 0 || hits(t).length) return null;
+    done.push({ left, w, t });
+    return { left: Math.round(left), top: Math.round(t) };
+  });
+}
+
 function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   disposeKCharts();
+  $('#kC .ev-lbls')?.remove();   // 第 33 輪 F33-1：上一次的週／月 K 事件標籤
   if (!raw.length || !window.LightweightCharts) return;
   const LC = window.LightweightCharts;
   const UP = css('--up'), DN = css('--dn'), FLAT = css('--flat'), text2 = css('--text2'), grid = css('--border');
@@ -454,10 +474,29 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   // 除權息、減資、面額變更標記（還原／原始都顯示）；週／月線同一根有多筆時合併文字，第 19 輪 F19-2：週／月線寫事件日「M/D 類型」
   const mdn = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
   const mkPos = mode === '日' ? { position: 'belowBar', shape: 'arrowUp' } : { position: 'aboveBar', shape: 'arrowDown' };   // 第 23 輪 F23-4b：週／月 K 標記在 K 棒上方
+  const evText = r => [...new Set(r.ev.map(e => (mode === '日' ? '' : mdn(e.d) + ' ') + evMark(e)))].join('・');
   kSer.setMarkers(raw.flatMap((r, i) => r.ev.length ? [{ time: T[i], ...mkPos,
-    color: css('--blue'), text: [...new Set(r.ev.map(e => (mode === '日' ? '' : mdn(e.d) + ' ') + evMark(e)))].join('・') }]
-    : r.gx ? [{ time: T[i], ...mkPos, color: css('--text2'), text: r.gx }] : []));   // 第 15 輪：ETF 推測的價格調整日
+    color: css('--blue'), text: mode === '日' ? evText(r) : '' }]
+    : r.gx ? [{ time: T[i], ...mkPos, color: css('--text2'), text: mode === '日' ? r.gx : '' }] : []));   // 第 15 輪：ETF 推測的價格調整日；第 33 輪：週／月 K 的文字改自繪標籤
   line(kc, ma5, '#888780'); line(kc, ma20, '#EF9F27'); line(kc, ma60, '#7F77DD');
+  // 第 33 輪 F33-1：週／月 K 的事件文字改成 HTML 標籤（有底色），放在標籤寬度範圍內每根 K 棒的最高價之上，避開上影線；捲動、縮放、改變寬度後重新定位
+  const tags = mode === '日' ? [] : raw.flatMap((r, i) => r.ev.length || r.gx ? [[i, r.ev.length ? evText(r) : r.gx, !r.ev.length]] : []);
+  if (tags.length) {
+    const lay = document.createElement('div'), ts = kc.timeScale(), y = p => kSer.priceToCoordinate(p);
+    lay.className = 'ev-lbls';
+    lay.innerHTML = tags.map(([, t, g]) => `<span class="ev-lbl${g ? ' gx' : ''}">${esc(t)}</span>`).join('');
+    $('#kC').append(lay);
+    const els = [...lay.children];
+    const place = () => {
+      if (!lay.isConnected || !charts.includes(kc)) return;
+      const s = ts.options().barSpacing / 2, bars = T.flatMap((d, j) => { const x = ts.timeToCoordinate(d); return x == null ? [] : [{ l: x - s, r: x + s, y: y(H[j]) }]; });
+      evLabelPos(tags.map(([i], k) => ({ x: ts.timeToCoordinate(T[i]), w: els[k].offsetWidth, top: y(H[i]) - 18 })),   // 事件那根的箭頭之上
+        lay.clientWidth - kc.priceScale('right').width(), bars)   // 主圖沒有時間軸，timeScale().width() 是 0
+        .forEach((p, k) => { const st = els[k].style; st.visibility = p ? '' : 'hidden'; if (p) { st.left = p.left + 'px'; st.top = p.top + 'px'; } });   // 用 visibility 隱藏，寬度才量得到
+    };
+    const later = () => requestAnimationFrame(() => requestAnimationFrame(place));   // 等圖表重畫、價格刻度縮放完才量
+    ts.subscribeVisibleLogicalRangeChange(later); ts.subscribeSizeChange(later); kc.subscribeCrosshairMove(later); later();
+  }
 
   const vc = mk('vC', false);
   const vSer = vc.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });

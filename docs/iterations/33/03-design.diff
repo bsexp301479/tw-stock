@@ -1,0 +1,203 @@
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -407,8 +407,25 @@
+   return out;
+ }
+ 
++// 第 33 輪 F33-1：週／月 K 事件標籤的位置（純函式）。items：[{x: K 棒中心, top: 標籤底邊的上限, w: 標籤寬}]，W：繪圖區寬（不含右側刻度）
++// 水平置中、靠邊往內收；和已放好的標籤重疊時往上一層，還重疊就不顯示（只留箭頭，游標停在 K 棒上時資訊列有說明）；K 棒不在可見範圍回傳 null
++function evLabelPos(items, W, h = 18) {
++  const done = [];
++  return items.map(({ x, top, w }) => {
++    if (x == null || top == null || x < 0 || x > W) return null;
++    const left = Math.max(2, Math.min(x - w / 2, W - w - 2));
++    const hit = t => done.some(p => left < p.left + p.w + 4 && p.left < left + w + 4 && t < p.t + h + 2 && p.t < t + h + 2);
++    let t = Math.max(top - h, 0);                       // 碰到圖的上緣就貼齊上緣
++    if (hit(t)) t -= h + 2;
++    if (t < 0 || hit(t)) return null;
++    done.push({ left, w, t });
++    return { left: Math.round(left), top: Math.round(t) };
++  });
++}
++
+ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
+   disposeKCharts();
++  $('#kC .ev-lbls')?.remove();   // 第 33 輪 F33-1：上一次的週／月 K 事件標籤
+   if (!raw.length || !window.LightweightCharts) return;
+   const LC = window.LightweightCharts;
+   const UP = css('--up'), DN = css('--dn'), FLAT = css('--flat'), text2 = css('--text2'), grid = css('--border');
+@@ -454,10 +471,28 @@
+   // 除權息、減資、面額變更標記（還原／原始都顯示）；週／月線同一根有多筆時合併文字，第 19 輪 F19-2：週／月線寫事件日「M/D 類型」
+   const mdn = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
+   const mkPos = mode === '日' ? { position: 'belowBar', shape: 'arrowUp' } : { position: 'aboveBar', shape: 'arrowDown' };   // 第 23 輪 F23-4b：週／月 K 標記在 K 棒上方
++  const evText = r => [...new Set(r.ev.map(e => (mode === '日' ? '' : mdn(e.d) + ' ') + evMark(e)))].join('・');
+   kSer.setMarkers(raw.flatMap((r, i) => r.ev.length ? [{ time: T[i], ...mkPos,
+-    color: css('--blue'), text: [...new Set(r.ev.map(e => (mode === '日' ? '' : mdn(e.d) + ' ') + evMark(e)))].join('・') }]
+-    : r.gx ? [{ time: T[i], ...mkPos, color: css('--text2'), text: r.gx }] : []));   // 第 15 輪：ETF 推測的價格調整日
++    color: css('--blue'), text: mode === '日' ? evText(r) : '' }]
++    : r.gx ? [{ time: T[i], ...mkPos, color: css('--text2'), text: mode === '日' ? r.gx : '' }] : []));   // 第 15 輪：ETF 推測的價格調整日；第 33 輪：週／月 K 的文字改自繪標籤
+   line(kc, ma5, '#888780'); line(kc, ma20, '#EF9F27'); line(kc, ma60, '#7F77DD');
++  // 第 33 輪 F33-1：週／月 K 的事件文字改成 HTML 標籤（有底色），放在事件那根與左右各 2 根最高價之上，避開上影線；捲動、縮放、改變寬度後重新定位
++  const tags = mode === '日' ? [] : raw.flatMap((r, i) => r.ev.length || r.gx ? [[i, r.ev.length ? evText(r) : r.gx, !r.ev.length]] : []);
++  if (tags.length) {
++    const lay = document.createElement('div'), ts = kc.timeScale(), y = p => kSer.priceToCoordinate(p);
++    lay.className = 'ev-lbls';
++    lay.innerHTML = tags.map(([, t, g]) => `<span class="ev-lbl${g ? ' gx' : ''}">${esc(t)}</span>`).join('');
++    $('#kC').append(lay);
++    const els = [...lay.children];
++    const place = () => {
++      if (!lay.isConnected || !charts.includes(kc)) return;
++      evLabelPos(tags.map(([i], k) => ({ x: ts.timeToCoordinate(T[i]), w: els[k].offsetWidth,
++        top: Math.min(...H.slice(Math.max(0, i - 2), i + 3).map(y), y(H[i]) - 16) - 2 })), lay.clientWidth - kc.priceScale('right').width())   // 主圖沒有時間軸，timeScale().width() 是 0
++        .forEach((p, k) => { const st = els[k].style; st.visibility = p ? '' : 'hidden'; if (p) { st.left = p.left + 'px'; st.top = p.top + 'px'; } });   // 用 visibility 隱藏，寬度才量得到
++    };
++    const later = () => requestAnimationFrame(() => requestAnimationFrame(place));   // 等圖表重畫、價格刻度縮放完才量
++    ts.subscribeVisibleLogicalRangeChange(later); ts.subscribeSizeChange(later); kc.subscribeCrosshairMove(later); later();
++  }
+ 
+   const vc = mk('vC', false);
+   const vSer = vc.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
+--- a/site/app.css
++++ b/site/app.css
+@@ -154,7 +154,9 @@
+ .metrics .card{padding:10px 12px}
+ .kleg{font-size:12px;color:var(--text2);margin-bottom:6px;min-height:18px;display:flex;flex-wrap:wrap;gap:4px 12px}
+ .kleg b{font-weight:500;color:var(--text)}
+-.chart-box{width:100%;cursor:grab}
++.chart-box{width:100%;cursor:grab;position:relative}
++.ev-lbls{position:absolute;inset:0;pointer-events:none;z-index:3;overflow:hidden}   /* 第 33 輪 F33-1：週／月 K 事件標籤 */
++.ev-lbl{position:absolute;box-sizing:border-box;height:18px;line-height:16px;padding:0 5px;font-size:11px;white-space:nowrap;color:var(--blue);background:var(--card);border:1px solid var(--border2);border-radius:4px}.ev-lbl.gx{color:var(--text2)}
+ .chart-box:active{cursor:grabbing}
+ .ch-label{font-size:12px;color:var(--text2);margin:8px 0 2px;display:flex;gap:12px;flex-wrap:wrap}
+ .lg{display:inline-flex;align-items:center;gap:4px}
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,11 +7,11 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=65320274">
++<link rel="stylesheet" href="app.css?v=38e9e084">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+ <script src="app.js?v=9294a296" defer></script>
+-<script src="stock.js?v=41db19b1" defer></script>
++<script src="stock.js?v=2c94e005" defer></script>
+ </head>
+ <body>
+ <header class="top">
+--- /dev/null
++++ b/tests/test_iter33.py
+@@ -0,0 +1,112 @@
++"""第 33 輪（不連網、不連資料庫）：F33-1 週／月 K 事件文字改自繪標籤（有底色、避開上影線、相近時錯開一層）。
++有 node 時逐字取出 stock.js 的 evLabelPos 執行（node 14 可跑：不用 .at()、replaceAll）。"""
++import json
++import re
++import shutil
++import subprocess
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++STK = (ROOT / "site" / "stock.js").read_text(encoding="utf-8")
++CSS = (ROOT / "site" / "app.css").read_text(encoding="utf-8")
++
++
++def _grab(src, name):
++    m = re.search(rf"^function {name}\(", src, re.M)
++    i, n = src.index("{", src.index(")", m.start())), 0
++    for j in range(i, len(src)):
++        n += {"{": 1, "}": -1}.get(src[j], 0)
++        if n == 0:
++            return src[m.start():j + 1]
++
++
++def _node(js):
++    node = shutil.which("node")
++    if not node:
++        print("  （沒有 node，略過執行）")
++        return None
++    return json.loads(subprocess.run([node, "-e", js], capture_output=True, text=True, check=True).stdout)
++
++
++def _pos(cases):
++    return _node(_grab(STK, "evLabelPos") + f"\nconsole.log(JSON.stringify({json.dumps(cases)}.map(([items, W]) => evLabelPos(items, W))));")
++
++
++# ─── 位置計算（純函式）────────────────────────────────────
++def test_label_position():
++    o = _pos([
++        [[{"x": 100, "top": 80, "w": 40}], 300],                                  # 置中、底邊對齊 top
++        [[{"x": 5, "top": 80, "w": 40}, {"x": 298, "top": 80, "w": 40}], 300],    # 靠左、靠右往內收 2 px
++        [[{"x": None, "top": 80, "w": 40}, {"x": -3, "top": 80, "w": 40}, {"x": 301, "top": 80, "w": 40}, {"x": 50, "top": None, "w": 40}], 300],   # 不在可見範圍
++        [[{"x": 100, "top": 10, "w": 40}], 300],                                  # 碰到上緣貼齊 0
++    ])
++    if o is None:
++        return
++    assert o[0] == [{"left": 80, "top": 62}]
++    assert o[1] == [{"left": 2, "top": 62}, {"left": 258, "top": 62}]
++    assert o[2] == [None, None, None, None]
++    assert o[3] == [{"left": 80, "top": 0}]
++
++
++def test_label_stacking():
++    o = _pos([
++        [[{"x": 100, "top": 80, "w": 40}, {"x": 120, "top": 80, "w": 40}], 300],                                  # 重疊 → 往上一層（18 + 2）
++        [[{"x": 100, "top": 80, "w": 40}, {"x": 120, "top": 80, "w": 40}, {"x": 140, "top": 80, "w": 40}], 300],  # 第三個還重疊 → 不顯示
++        [[{"x": 100, "top": 80, "w": 40}, {"x": 144, "top": 80, "w": 40}], 300],                                  # 間隔 4 px 不算重疊
++        [[{"x": 100, "top": 80, "w": 40}, {"x": 143, "top": 80, "w": 40}], 300],                                  # 間隔 3 px（不到 4）算重疊
++        [[{"x": 100, "top": 10, "w": 40}, {"x": 120, "top": 10, "w": 40}], 300],                                  # 貼上緣時沒有地方往上 → 不顯示
++        [[{"x": 100, "top": 80, "w": 40}, {"x": 120, "top": 140, "w": 40}], 300],                                 # 高度錯開就不重疊
++    ])
++    if o is None:
++        return
++    assert o[0] == [{"left": 80, "top": 62}, {"left": 100, "top": 42}]
++    assert o[1] == [{"left": 80, "top": 62}, {"left": 100, "top": 42}, None]
++    assert o[2][1] == {"left": 124, "top": 62}
++    assert o[3][1] == {"left": 123, "top": 42}
++    assert o[4] == [{"left": 80, "top": 0}, None]
++    assert o[5] == [{"left": 80, "top": 62}, {"left": 100, "top": 122}]
++
++
++# ─── 接到 K 線圖 ─────────────────────────────────────────
++def test_wiring():
++    b = _grab(STK, "buildCharts")
++    # 舊測試鎖定的內容照舊（test_iter23:250-251、test_iter19:151、test_iter14:91）
++    assert "const mkPos = mode === '日' ? { position: 'belowBar', shape: 'arrowUp' } : { position: 'aboveBar', shape: 'arrowDown' };" in b
++    assert b.count("{ time: T[i], ...mkPos,") == 2 and "kSer.setMarkers(" in b
++    assert "const evText = r => [...new Set(r.ev.map(e => (mode === '日' ? '' : mdn(e.d) + ' ') + evMark(e)))].join('・');" in b
++    # 日 K 文字照舊；週／月 K 的 setMarkers 不寫文字（只留箭頭）
++    assert "text: mode === '日' ? evText(r) : '' }]" in b and "text: mode === '日' ? r.gx : '' }]" in b
++    # 只有週／月 K 建標籤；ETF 推測標記同規則（另一個 class）；文字跳脫
++    assert "const tags = mode === '日' ? [] : raw.flatMap((r, i) => r.ev.length || r.gx ? [[i, r.ev.length ? evText(r) : r.gx, !r.ev.length]] : []);" in b
++    assert '`<span class="ev-lbl${g ? \' gx\' : \'\'}">${esc(t)}</span>`' in b
++    # 重畫前清掉上一次的標籤；圖已釋放就不再定位
++    assert b.index("$('#kC .ev-lbls')?.remove();") < b.index("if (!raw.length || !window.LightweightCharts) return;")
++    assert "if (!lay.isConnected || !charts.includes(kc)) return;" in b
++    # 左右各 2 根最高價之上、事件那根的箭頭之上；繪圖區寬 = 容器寬 − 右側刻度寬
++    assert "top: Math.min(...H.slice(Math.max(0, i - 2), i + 3).map(y), y(H[i]) - 16) - 2" in b
++    assert "lay.clientWidth - kc.priceScale('right').width()" in b
++    # 捲動、縮放、改變寬度、十字線移動後重新定位（等圖表重畫完）
++    assert "ts.subscribeVisibleLogicalRangeChange(later); ts.subscribeSizeChange(later); kc.subscribeCrosshairMove(later); later();" in b
++    assert "requestAnimationFrame(() => requestAnimationFrame(place))" in b
++    assert "st.visibility = p ? '' : 'hidden'" in b and "st.display" not in b   # display:none 會讓寬度量成 0
++
++
++def test_css():
++    assert ".chart-box{width:100%;cursor:grab;position:relative}" in CSS
++    assert ".ev-lbls{position:absolute;inset:0;pointer-events:none;z-index:3;overflow:hidden}" in CSS     # 不擋拖曳、十字線
++    lbl = re.search(r"\.ev-lbl\{[^}]*\}", CSS).group(0)
++    assert "box-sizing:border-box" in lbl and "height:18px" in lbl                 # 和 evLabelPos 的 h = 18 一致
++    assert "background:var(--card)" in lbl and "color:var(--blue)" in lbl and ".ev-lbl.gx{color:var(--text2)}" in CSS
++
++
++def test_no_advice_words():
++    seg = _grab(STK, "evLabelPos") + "".join(l for l in STK.splitlines() + CSS.splitlines() if "第 33 輪" in l)
++    for w in ("買進", "賣出", "反彈", "見底", "買點", "超賣", "超買", "推薦", "強勢", "飆股", "勝率", "亮點", "建議", "低估", "高估"):
++        assert w not in seg, w
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")

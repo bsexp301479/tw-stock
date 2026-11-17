@@ -937,7 +937,9 @@ function stockTable(list, span = '1', rm = false) {   // rm：自選頁（名稱
   const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
   const amt = v => `<td class="num ${ycls(v)}">${yi(v)}</td>`;
   const fd = md(App.latest.flow_date);
-  return `${flowNote()}<div class="muted small tbl-cap">${k === '5' ? `法人欄位為截至 ${fd} 的近 5 日累計（億）` : `法人欄位為 ${fd} 當日買賣超（億）`}</div>
+  // 自選頁：1日／5日放在表格說明列的最左邊，切換資金／表現／基本面、1日／5日時按鈕都不移位
+  const cap = `<div class="muted small tbl-cap">${k === '5' ? `法人欄位為截至 ${fd} 的近 5 日累計（億）` : `法人欄位為 ${fd} 當日買賣超（億）`}</div>`;
+  return `${flowNote()}${rm ? `<div class="cap-row">${spanSeg(span)}${cap}</div>` : cap}
     <div class="tbl-wrap"><table class="tbl"><thead><tr>
       <th>股票</th><th>收盤</th><th>漲跌</th><th>成交額</th><th>外資${lbl}</th><th>投信${lbl}</th><th>自營${lbl}</th><th>法人${lbl}</th>
       <th>外資連</th><th>投信連</th><th>法人連</th></tr></thead><tbody>` +
@@ -1544,7 +1546,7 @@ function renderWatch() {
   $('#view').innerHTML = `<section class="sec watch${App.watchEdit ? ' editing' : ''}">
       ${App.watchAdd ? watchAddNote(S, R) : ''}${App.watchShare ? `<div class="flow-note">${App.watchShare.ok ? '已複製分享連結。' : '請複製這個連結，'}在另一台裝置開啟，確認後會加入那裡的自選。<input class="w-url" readonly value="${esc(App.watchShare.url)}"></div>` : ''}
       ${App.watchUndo ? `<div class="flow-note">已從自選移除 ${esc(App.watchUndo.filter(c => !App.watch.has(c)).map(c => (S[c] || R[c])?.n || c).join('、'))}　<button class="chip" id="watchUndo">復原</button></div>` : ''}
-      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${list.length ? App.screen === null ? '<span class="muted small">表現、基本面資料尚未產生</span>' : segHTML('wcolSeg', [['flow', '資金'], ['perf', '表現'], ['fund', '基本面']], wc) : ''}${stk && wc === 'flow' ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button><button class="chip" id="watchShare">分享清單</button>` : ''}</div>
+      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${list.length ? App.screen === null ? '<span class="muted small">表現、基本面資料尚未產生</span>' : segHTML('wcolSeg', [['flow', '資金'], ['perf', '表現'], ['fund', '基本面']], wc) : ''}${stk && !list.length ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button><button class="chip" id="watchShare">分享清單</button>` : ''}</div>
       ${stk ? `<div class="card">${list.length ? wc === 'flow' ? stockTable(list, span, true) : watchColTable(list, wc)
         : '<div class="empty">還沒有自選股。打開任一檔個股或 ETF，按名稱旁的「☆ 加入自選」；或在上方搜尋，按清單右側的 ☆ 直接加入。<div style="margin-top:10px"><button class="chip" id="watchFind">搜尋股票</button></div></div>'}</div>` : ''}
       ${etfs.length ? `${stk ? '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2><span class="muted small">當日行情；成交量為張、成交額為億元</span></div>' : ''}
@@ -1554,7 +1556,7 @@ function renderWatch() {
         return `<a class="al-row" href="#/stock/${c}"><b>${esc(s.n)}</b>${alertBadge(s)}${d ? `　<span class="small num">${d[0] > App.latest.date ? '即將處置' : '處置'} ${md(d[0])}～${md(d[1])}${d[1] === App.latest.date ? '（最後一天）' : ''}</span>` : ''}` +
           `　${s.hl ? s.hl.filter(e => HL_KINDS[e[0]]).map(hlTag).join('') : ''}${r ? `<div class="muted small al-why">注意：${esc(r)}</div>` : ''}</a>`; }).join('')}</div>` : ''}
       ${list.length || etfs.length ? '<div class="muted small w-tip">按「✕」從自選移除；按住「≡」上下拖曳調整順序（也可按上下鍵）。完成後按「完成」</div>' : ''}</section>`;
-  if (stk && wc === 'flow') onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
+  if ($('#rspanSeg')) onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
   if ($('#wcolSeg')) onSeg('wcolSeg', v => { App.watchCols = v; renderWatch(); });
   $('#watchShare')?.addEventListener('click', () => shareWatch());
   $('#watchAddOk')?.addEventListener('click', () => { watchAddList(S, R).add.forEach(c => App.watch.add(c)); saveWatch(); App.watchAdd = null; renderWatch(); });

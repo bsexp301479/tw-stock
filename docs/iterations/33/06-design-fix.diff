@@ -1,0 +1,123 @@
+diff --git a/site/index.html b/site/index.html
+index 803de9b..406410b 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -11,7 +11,7 @@
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+ <script src="app.js?v=9294a296" defer></script>
+-<script src="stock.js?v=2c94e005" defer></script>
++<script src="stock.js?v=d65e3485" defer></script>
+ </head>
+ <body>
+ <header class="top">
+diff --git a/site/stock.js b/site/stock.js
+index 9fcf1fa..3acfe2a 100644
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -408,16 +408,19 @@ function calcRSI(C, n = 14) {
+ }
+ 
+ // 第 33 輪 F33-1：週／月 K 事件標籤的位置（純函式）。items：[{x: K 棒中心, top: 標籤底邊的上限, w: 標籤寬}]，W：繪圖區寬（不含右側刻度）
++// bars：[{l, r, y}] 每根 K 棒的左右範圍與最高價位置；標籤底邊也要在「標籤寬度範圍內每根 K 棒的最高點」之上（QA D33-QA-1）
+ // 水平置中、靠邊往內收；和已放好的標籤重疊時往上一層，還重疊就不顯示（只留箭頭，游標停在 K 棒上時資訊列有說明）；K 棒不在可見範圍回傳 null
+-function evLabelPos(items, W, h = 18) {
++function evLabelPos(items, W, bars = [], h = 18) {
+   const done = [];
+   return items.map(({ x, top, w }) => {
+     if (x == null || top == null || x < 0 || x > W) return null;
+     const left = Math.max(2, Math.min(x - w / 2, W - w - 2));
+-    const hit = t => done.some(p => left < p.left + p.w + 4 && p.left < left + w + 4 && t < p.t + h + 2 && p.t < t + h + 2);
+-    let t = Math.max(top - h, 0);                       // 碰到圖的上緣就貼齊上緣
+-    if (hit(t)) t -= h + 2;
+-    if (t < 0 || hit(t)) return null;
++    const hits = t => done.filter(p => left < p.left + p.w + 4 && p.left < left + w + 4 && t < p.t + h + 2 && p.t < t + h + 2);
++    const under = bars.filter(b => b.l < left + w && b.r > left).map(b => b.y - 2);
++    let t = Math.max(Math.min(top, ...under) - h, 0);   // 碰到圖的上緣就貼齊上緣
++    const near = hits(t);
++    if (near.length) t = Math.min(...near.map(p => p.t)) - h - 2;   // 放到相撞標籤的上方一層
++    if (t < 0 || hits(t).length) return null;
+     done.push({ left, w, t });
+     return { left: Math.round(left), top: Math.round(t) };
+   });
+@@ -476,7 +479,7 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
+     color: css('--blue'), text: mode === '日' ? evText(r) : '' }]
+     : r.gx ? [{ time: T[i], ...mkPos, color: css('--text2'), text: mode === '日' ? r.gx : '' }] : []));   // 第 15 輪：ETF 推測的價格調整日；第 33 輪：週／月 K 的文字改自繪標籤
+   line(kc, ma5, '#888780'); line(kc, ma20, '#EF9F27'); line(kc, ma60, '#7F77DD');
+-  // 第 33 輪 F33-1：週／月 K 的事件文字改成 HTML 標籤（有底色），放在事件那根與左右各 2 根最高價之上，避開上影線；捲動、縮放、改變寬度後重新定位
++  // 第 33 輪 F33-1：週／月 K 的事件文字改成 HTML 標籤（有底色），放在標籤寬度範圍內每根 K 棒的最高價之上，避開上影線；捲動、縮放、改變寬度後重新定位
+   const tags = mode === '日' ? [] : raw.flatMap((r, i) => r.ev.length || r.gx ? [[i, r.ev.length ? evText(r) : r.gx, !r.ev.length]] : []);
+   if (tags.length) {
+     const lay = document.createElement('div'), ts = kc.timeScale(), y = p => kSer.priceToCoordinate(p);
+@@ -486,8 +489,9 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
+     const els = [...lay.children];
+     const place = () => {
+       if (!lay.isConnected || !charts.includes(kc)) return;
+-      evLabelPos(tags.map(([i], k) => ({ x: ts.timeToCoordinate(T[i]), w: els[k].offsetWidth,
+-        top: Math.min(...H.slice(Math.max(0, i - 2), i + 3).map(y), y(H[i]) - 16) - 2 })), lay.clientWidth - kc.priceScale('right').width())   // 主圖沒有時間軸，timeScale().width() 是 0
++      const s = ts.options().barSpacing / 2, bars = T.flatMap((d, j) => { const x = ts.timeToCoordinate(d); return x == null ? [] : [{ l: x - s, r: x + s, y: y(H[j]) }]; });
++      evLabelPos(tags.map(([i], k) => ({ x: ts.timeToCoordinate(T[i]), w: els[k].offsetWidth, top: y(H[i]) - 18 })),   // 事件那根的箭頭之上
++        lay.clientWidth - kc.priceScale('right').width(), bars)   // 主圖沒有時間軸，timeScale().width() 是 0
+         .forEach((p, k) => { const st = els[k].style; st.visibility = p ? '' : 'hidden'; if (p) { st.left = p.left + 'px'; st.top = p.top + 'px'; } });   // 用 visibility 隱藏，寬度才量得到
+     };
+     const later = () => requestAnimationFrame(() => requestAnimationFrame(place));   // 等圖表重畫、價格刻度縮放完才量
+diff --git a/tests/test_iter33.py b/tests/test_iter33.py
+index 4c62392..c98e46a 100644
+--- a/tests/test_iter33.py
++++ b/tests/test_iter33.py
+@@ -1,4 +1,4 @@
+-"""第 33 輪（不連網、不連資料庫）：F33-1 週／月 K 事件文字改自繪標籤（有底色、避開上影線、相近時錯開一層）。
++"""第 33 輪（不連網、不連資料庫）：F33-1 週／月 K 事件文字改自繪標籤（有底色、避開標籤寬度範圍內的上影線、相近時錯開一層）。
+ 有 node 時逐字取出 stock.js 的 evLabelPos 執行（node 14 可跑：不用 .at()、replaceAll）。"""
+ import json
+ import re
+@@ -29,7 +29,7 @@ def _node(js):
+ 
+ 
+ def _pos(cases):
+-    return _node(_grab(STK, "evLabelPos") + f"\nconsole.log(JSON.stringify({json.dumps(cases)}.map(([items, W]) => evLabelPos(items, W))));")
++    return _node(_grab(STK, "evLabelPos") + f"\nconsole.log(JSON.stringify({json.dumps(cases)}.map(([items, W, bars]) => evLabelPos(items, W, bars))));")
+ 
+ 
+ # ─── 位置計算（純函式）────────────────────────────────────
+@@ -67,6 +67,26 @@ def test_label_stacking():
+     assert o[5] == [{"left": 80, "top": 62}, {"left": 100, "top": 122}]
+ 
+ 
++def test_label_bars():
++    # QA D33-QA-1：標籤寬度範圍內任何一根 K 棒的最高點都要在標籤之下（不只左右各 2 根）
++    o = _pos([
++        [[{"x": 100, "top": 80, "w": 40}], 300, [{"l": 60, "r": 70, "y": 10}, {"l": 115, "r": 125, "y": 50}]],   # 範圍外的高 K 棒不管；範圍內的 → 底邊 50 − 2
++        [[{"x": 100, "top": 80, "w": 40}], 300, [{"l": 120, "r": 126, "y": 10}, {"l": 74, "r": 80, "y": 10}]],   # 剛好碰到邊不算
++        [[{"x": 5, "top": 80, "w": 40}], 300, [{"l": 30, "r": 36, "y": 40}]],                                    # 靠左往內收後，用收進去的範圍找
++        [[{"x": 100, "top": 80, "w": 40}], 300, [{"l": 95, "r": 105, "y": 10}]],                                 # 太高就貼齊上緣
++        [[{"x": 100, "top": 80, "w": 40}, {"x": 120, "top": 80, "w": 40}], 300, [{"l": 95, "r": 105, "y": 60}]], # 錯開一層也從新的底邊算
++        [[{"x": 100, "top": 50, "w": 40}, {"x": 130, "top": 64, "w": 40}], 300],                                 # 後面那個比較低：放到相撞標籤的上方一層，不是固定往上 20 px
++    ])
++    if o is None:
++        return
++    assert o[0] == [{"left": 80, "top": 30}]
++    assert o[1] == [{"left": 80, "top": 62}]
++    assert o[2] == [{"left": 2, "top": 20}]
++    assert o[3] == [{"left": 80, "top": 0}]
++    assert o[4] == [{"left": 80, "top": 40}, {"left": 100, "top": 20}]
++    assert o[5] == [{"left": 80, "top": 32}, {"left": 110, "top": 12}]
++
++
+ # ─── 接到 K 線圖 ─────────────────────────────────────────
+ def test_wiring():
+     b = _grab(STK, "buildCharts")
+@@ -82,9 +102,10 @@ def test_wiring():
+     # 重畫前清掉上一次的標籤；圖已釋放就不再定位
+     assert b.index("$('#kC .ev-lbls')?.remove();") < b.index("if (!raw.length || !window.LightweightCharts) return;")
+     assert "if (!lay.isConnected || !charts.includes(kc)) return;" in b
+-    # 左右各 2 根最高價之上、事件那根的箭頭之上；繪圖區寬 = 容器寬 − 右側刻度寬
+-    assert "top: Math.min(...H.slice(Math.max(0, i - 2), i + 3).map(y), y(H[i]) - 16) - 2" in b
+-    assert "lay.clientWidth - kc.priceScale('right').width()" in b
++    # 事件那根的箭頭之上；標籤寬度範圍內每根 K 棒的最高價（範圍 = K 棒中心 ± 半個間距）；繪圖區寬 = 容器寬 − 右側刻度寬
++    assert "top: y(H[i]) - 18 }))" in b and "H.slice(" not in b
++    assert "const s = ts.options().barSpacing / 2, bars = T.flatMap((d, j) => { const x = ts.timeToCoordinate(d); return x == null ? [] : [{ l: x - s, r: x + s, y: y(H[j]) }]; });" in b
++    assert "lay.clientWidth - kc.priceScale('right').width(), bars)" in b
+     # 捲動、縮放、改變寬度、十字線移動後重新定位（等圖表重畫完）
+     assert "ts.subscribeVisibleLogicalRangeChange(later); ts.subscribeSizeChange(later); kc.subscribeCrosshairMove(later); later();" in b
+     assert "requestAnimationFrame(() => requestAnimationFrame(place))" in b
