@@ -282,6 +282,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .watch tr.dragging td{transform:translateY(var(--dy,0));z-index:4;background:var(--card2);box-shadow:0 10px 16px -10px rgba(0,0,0,.5)}
 .watch tr.dragging td:not(:first-child){position:relative}.watch tr.dragging .wh{cursor:grabbing}
 .w-tip{margin-top:8px}
+.w-url{display:block;width:100%;margin-top:6px;padding:4px 6px;font-size:12px;border:1px solid var(--border2);border-radius:6px;background:var(--card);color:var(--text)}   /* 第 32 輪 F32-2 */
 .card.w-ev{margin-top:12px}.w-ev .sec-h{margin-bottom:4px}
 .rk-q{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
 /* ─── 第 27 輪（D27-xx）────────────────────────── */

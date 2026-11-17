@@ -72,11 +72,13 @@ const routes = {
 const scrollAt = {};
 let scrollKey = null;
 async function route() {
+  const share = location.hash.match(/^#\/watch\?add=([^&#]*)/);   // 第 32 輪 F32-2：分享連結先記下代號、網址換回 #/watch（重新整理不會再問）
+  if (share) { App.watchAdd = share[1].split(','); history.replaceState(history.state, '', '#/watch'); }
   const [, page = 'today', arg, sub] = location.hash.split('/');
   const k = history.state?.k;
   scrollKey = null;                                                     // 換頁中（內容長度改變）的捲動不記
   if ((page === 'watch' || page === 'bubble') && arg) history.replaceState(history.state, '', '#/' + page);   // D28-08：這兩頁沒有子頁
-  if (page !== 'watch') App.watchUndo = App.watchEdit = null;   // 離開自選頁：清掉復原、結束編輯
+  if (page !== 'watch') App.watchShare = App.watchAdd = App.watchUndo = App.watchEdit = null;   // 離開自選頁：清掉復原、結束編輯
   // 第 27 輪 D27-10：瀏覽器分頁標題帶頁面名稱（個股頁由 renderStock 換成「名稱 代號」）
   document.title = ({ today: '今日', bubble: '泡泡圖', rank: { hl: '新訊號', screen: '選股' }[String(arg).split('?')[0]] || '排行',
     etf: arg === 'active' ? '主動 ETF 彙總' : arg ? arg + ' 持股' : 'ETF', watch: '自選' }[page] || (page === 'stock' ? arg : '今日')) + '｜台股資金流';
@@ -1163,14 +1165,14 @@ const STOCK_KEYS = ['', 'c', 'p', 'tv', 'f', 't', 'd', 'n', 'fs', 'ts', 's'];
 const rankKeyCol = (by, field, src, byAmt) => !src ? STOCK_KEYS.indexOf(/^[ftdn][15]$/.test(field) ? field[0] : field)
   : src === 'm' ? { m: byAmt ? 6 : 5, mr: 7, s: 8, sr: 9, mu: 10 }[by.replace(/[+-]$/, '')]
   : src === 'l' ? { 'l+': 6, lp: 7 }[by] : 4;
-// 固定欄（股票｜收盤｜漲跌｜成交額）＋ cols；o = {sort: 目前排序欄, cap: 是否標示股本變動}；sort 有值時欄名可點排序
+// 固定欄（股票｜收盤｜漲跌｜成交額）＋ cols；o = {sort: 目前排序欄, cap: 是否標示股本變動, rm: 自選頁（加移除、排序鈕，不列成交額）}；sort 有值時欄名可點排序
 function screenTable(list, cols, o = {}) {
   const head = k => { const c = SCR_COLS[k], M = revMonth(), Fq = finQ();
     return k === 'ry' && M ? `營收年增（${Number(M.slice(4))} 月）` : (k === 'eq' || k === 'ey') && Fq ? `${c[0]}（Q${Number(Fq.slice(4))}）` : c[0]; };
   const th = (k, t) => o.sort ? `<th class="sort" data-k="${k}">${t}</th>` : `<th>${t}</th>`;
-  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th>${th('p', '漲跌')}${th('tv', '成交額')}${cols.map(k => th(k, head(k))).join('')}</tr></thead><tbody>` +
-    list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
-      <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.tv, 1)}億</td>` +
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th>${th('p', '漲跌')}${o.rm ? '' : th('tv', '成交額')}${cols.map(k => th(k, head(k))).join('')}</tr></thead><tbody>` +
+    list.map(x => `<tr data-code="${x.code}"><td class="nm">${o.rm ? wCtl(x.code) : ''}<b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
+      <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}${o.rm ? '' : `<td class="num">${fmt(x.tv, 1)}億</td>`}` +
       cols.map(k => { const [, get, f] = SCR_COLS[k], v = get(x);
         return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh', 'lb', 'lp', 'mc', 'to'].includes(k) ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
     '</tbody></table></div>';
@@ -1538,10 +1540,12 @@ function renderWatch() {
   const etfs = [...App.watch].filter(c => !S[c] && R[c]).map(c => [c, R[c]]);     // 第 20 輪 F20-1：自選的 ETF 另列一張表
   const stk = list.length || !etfs.length;                                         // 只有 ETF 時不顯示股票表與 1 日／5 日
   const ev = list.filter(([, s]) => s.hl || s.dsp || s.ntc);                        // 第 25 輪 D25-09：自選股的近期新訊號、處置／注意
+  const wc = App.screen === null ? 'flow' : App.watchCols || 'flow';                // 第 32 輪 F32-1：欄位組只記在這次瀏覽；screen.json 不存在時只有資金
   $('#view').innerHTML = `<section class="sec watch${App.watchEdit ? ' editing' : ''}">
+      ${App.watchAdd ? watchAddNote(S, R) : ''}${App.watchShare ? `<div class="flow-note">${App.watchShare.ok ? '已複製分享連結。' : '請複製這個連結，'}在另一台裝置開啟，確認後會加入那裡的自選。<input class="w-url" readonly value="${esc(App.watchShare.url)}"></div>` : ''}
       ${App.watchUndo ? `<div class="flow-note">已從自選移除 ${esc(App.watchUndo.filter(c => !App.watch.has(c)).map(c => (S[c] || R[c])?.n || c).join('、'))}　<button class="chip" id="watchUndo">復原</button></div>` : ''}
-      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${stk ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button>` : ''}</div>
-      ${stk ? `<div class="card">${list.length ? stockTable(list, span, true)
+      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${list.length ? App.screen === null ? '<span class="muted small">表現、基本面資料尚未產生</span>' : segHTML('wcolSeg', [['flow', '資金'], ['perf', '表現'], ['fund', '基本面']], wc) : ''}${stk && wc === 'flow' ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button><button class="chip" id="watchShare">分享清單</button>` : ''}</div>
+      ${stk ? `<div class="card">${list.length ? wc === 'flow' ? stockTable(list, span, true) : watchColTable(list, wc)
         : '<div class="empty">還沒有自選股。打開任一檔個股或 ETF，按名稱旁的「☆ 加入自選」；或在上方搜尋，按清單右側的 ☆ 直接加入。<div style="margin-top:10px"><button class="chip" id="watchFind">搜尋股票</button></div></div>'}</div>` : ''}
       ${etfs.length ? `${stk ? '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2><span class="muted small">當日行情；成交量為張、成交額為億元</span></div>' : ''}
       <div class="card">${etfWatchTable(etfs)}</div>` : ''}
@@ -1550,11 +1554,50 @@ function renderWatch() {
         return `<a class="al-row" href="#/stock/${c}"><b>${esc(s.n)}</b>${alertBadge(s)}${d ? `　<span class="small num">${d[0] > App.latest.date ? '即將處置' : '處置'} ${md(d[0])}～${md(d[1])}${d[1] === App.latest.date ? '（最後一天）' : ''}</span>` : ''}` +
           `　${s.hl ? s.hl.filter(e => HL_KINDS[e[0]]).map(hlTag).join('') : ''}${r ? `<div class="muted small al-why">注意：${esc(r)}</div>` : ''}</a>`; }).join('')}</div>` : ''}
       ${list.length || etfs.length ? '<div class="muted small w-tip">按「✕」從自選移除；按住「≡」上下拖曳調整順序（也可按上下鍵）。完成後按「完成」</div>' : ''}</section>`;
-  if (stk) onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
+  if (stk && wc === 'flow') onSeg('rspanSeg', v => { localStore('rspan', null, v); renderWatch(); });
+  if ($('#wcolSeg')) onSeg('wcolSeg', v => { App.watchCols = v; renderWatch(); });
+  $('#watchShare')?.addEventListener('click', () => shareWatch());
+  $('#watchAddOk')?.addEventListener('click', () => { watchAddList(S, R).add.forEach(c => App.watch.add(c)); saveWatch(); App.watchAdd = null; renderWatch(); });
+  $('#watchAddNo')?.addEventListener('click', () => { App.watchAdd = null; renderWatch(); });
   watchGestures($('#view .watch'));
   $('#watchFind')?.addEventListener('click', () => $('#q').focus());
   $('#view').addEventListener('click', onRowClick);
   $('#view').addEventListener('click', onEtfRow);
+}
+// 第 32 輪 F32-1：自選頁的「表現」「基本面」欄位組（沿用選股結果表的欄位定義；screen.json 第一次用到時才載入）
+const WATCH_COLS = { perf: ['r5', 'r20', 'r60', 'hd', 'b20'], fund: ['ry', 'ey', 'pe', 'dy', 'pbp'] };
+function watchColTable(list, wc) {
+  const S = App.screen;
+  if (!S) { loadScreen().then(() => location.hash === '#/watch' && renderWatch()); return '<div class="empty">載入中…</div>'; }
+  return `<div class="muted small tbl-cap">${wc === 'perf' ? `報酬、乖離為 ${md(S.d)} 收盤；距 52 週高 = (52 週高 − 收盤) ÷ 52 週高`
+    : '營收、EPS 為各股最新一期，和欄名的月份、季別不同時另外標示；淨值比位置 = 目前淨值比在近一年高低之間的位置（0% 最低）'}</div>` +
+    screenTable(list.map(([c, s]) => screenRow(c, s, S)), WATCH_COLS[wc], { rm: true, cap: wc === 'fund' });
+}
+// 第 32 輪 F32-2：分享連結只帶代號；去重、最多 200 個，只加入認得且還不在自選的（接在後面）
+function watchAddList(S, R) {
+  const A = [...new Set(App.watchAdd.filter(Boolean).map(c => c.toUpperCase()))], B = A.slice(0, 200);
+  const ok = B.filter(c => /^[0-9A-Z]{4,6}$/.test(c) && (S[c] || R[c]));
+  return { more: A.length > 200, ok, add: ok.filter(c => !App.watch.has(c)), bad: B.filter(c => !ok.includes(c)) };
+}
+function watchAddNote(S, R) {
+  const { more, ok, add, bad } = watchAddList(S, R), nm = c => esc((S[c] || R[c]).n);
+  return `<div class="flow-note">${add.length ? `要把以下 ${add.length} 檔加入自選嗎？${add.map(nm).join('、')}　<button class="chip" id="watchAddOk">加入</button> <button class="chip" id="watchAddNo">取消</button>`
+    : `分享連結裡沒有可以加入的股票。　<button class="chip" id="watchAddNo">關閉</button>`}` +
+    (ok.length > add.length ? `<div class="muted small">${ok.length - add.length} 檔已在自選</div>` : '') +
+    (bad.length ? `<div class="muted small">略過 ${bad.length} 個不認得的代號：${esc(bad.slice(0, 10).map(c => c.slice(0, 12)).join('、'))}${bad.length > 10 ? '…' : ''}</div>` : '') +
+    (more ? '<div class="muted small">連結超過 200 個代號，只讀前 200 個</div>' : '') + '</div>';
+}
+// 有系統分享時用系統分享（取消就不顯示）；否則複製到剪貼簿；都不行時顯示連結讓使用者自己複製
+async function shareWatch() {
+  const S = App.latest.stocks, R = App.latest.etfs?.rows || {};
+  const url = location.href.split('#')[0] + '#/watch?add=' + [...App.watch].filter(c => S[c] || R[c]).join(',');
+  let ok = false;
+  try {
+    if (navigator.share) { await navigator.share({ title: '自選清單', url }); return; }
+    await navigator.clipboard.writeText(url); ok = true;
+  } catch (e) { if (e.name === 'AbortError') return; }
+  App.watchShare = { url, ok };
+  renderWatch();
 }
 // 自選頁每列：「✕」移除（走 onRowClick 的 data-unwatch，可復原）、「≡」拖曳排序；兩顆鈕只在編輯模式顯示
 const wCtl = c => `<button class="wdel" data-unwatch="${c}" title="從自選移除" aria-label="從自選移除">✕</button><button class="wh" data-drag="${c}" title="拖曳調整順序（也可按上下鍵）" aria-label="調整順序">≡</button>`;
