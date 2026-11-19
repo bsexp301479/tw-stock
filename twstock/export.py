@@ -52,7 +52,8 @@ PF_DAYS = (5, 20, 60, 120)       # 第 23 輪 F23-1：個股頁近期表現的 N
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
-               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to", "rb", "eb", "k", "kx", "rsi")
+               "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to", "rb", "eb", "k", "kx", "rsi",
+               "dvd", "dvp", "dvn", "dvx", "dvk")                                                     # 第 35 輪 F35-1：股利
 VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
 VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
 VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
@@ -321,6 +322,17 @@ def dividends(d_, c, ev, official):
                 row.update(f=str(d_[j]), n=j - i + 1)
                 break
     return out
+
+
+def div_screen(dv, today):
+    """
+    第 35 輪 F35-1：screen.json 的股利欄。dv = dividends() 的結果（舊到新）；today = 資料日。
+    只看近 365 天（含第 365 天）的「息」「權息」，純配股的「權」不算：
+    dvd 最近一次除息日、dvp 除息前收盤、dvn 填息天數（未填、中斷 = None）、dvx 中斷原因、dvk 次數。
+    """
+    y = [r for r in dv if r["t"] != "權" and (today - date.fromisoformat(r["d"])).days <= 365]
+    r = y[-1] if y else {}
+    return {"dvd": r.get("d"), "dvp": r.get("p"), "dvn": r.get("n"), "dvx": (r.get("x") or [None, None])[1], "dvk": len(y)}
 
 
 def amount_by_market(rows):
@@ -1731,6 +1743,7 @@ def export_all() -> float:
                         **{k: (sbl or {}).get(k) for k in ("lb", "l1", "l5", "lp")},   # 第 11 輪 B14
                         "mc": mc, "to": to,                                               # 第 12 輪 B11
                         "rb": rev_base(rev_rows), "eb": fin_base(fin.get(code)),         # 第 14 輪 F14-1、F14-2：基期
+                        **div_screen(dividends(d_, c, ev, events.get(code, [])), latest_date),   # 第 35 輪 F35-1：股利（同個股 JSON 的 dv）
                         **osc_stats(o, h, l, c, af)}                                      # 第 18 輪 F18-2：KD、RSI
 
     industries = defaultdict(list)
