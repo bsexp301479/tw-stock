@@ -156,8 +156,12 @@ window.renderStock = async function (code, sub) {
   const slCards = !SL ? [] : [['借券賣出餘額', fmt(SL.lb) + ' 張', '', subs(`1日 ${sgn(SL.l1, 0)}　5日 ${SL.l5 == null ? '--' : sgn(SL.l5, 0)}`, !E && runTxt(balStreak(data.mg, P.d, 'lb', SL.d), '增', '減'))],
     ...E ? [] : [['借券占股本', SL.lp == null ? '--' : fmt(SL.lp, 2) + '%', '', SL.lx == null ? '' : `融券的 ${fmt(SL.lx, 1)} 倍`]]];
   // 第 28 輪 D28-01：籌碼分頁分三組，日期寫在組標題一次；每組下方是同主題的時間序列圖（張），區間共用
+  // 第 29 輪 F29-4：外資及陸資持股比率（最近有資料的那天；5 日、20 日變化是百分點）
+  const FH = data.fh, fj = FH ? FH.map((v, i) => v == null ? -1 : i).filter(i => i >= 0).pop() : undefined;
+  const fhd = k => fj - k >= 0 && FH[fj - k] != null ? sgn(FH[fj] - FH[fj - k], 2) : '--';
   const inCards = E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')], ['法人5日', yi(s?.n5), cls(s?.n5), ''],
-    ['外資5日', yi(s?.f5), cls(s?.f5), runTxt(s?.fs, '買', '賣')], ['投信5日', yi(s?.t5), cls(s?.t5), runTxt(s?.ts, '買', '賣')]];
+    ['外資5日', yi(s?.f5), cls(s?.f5), runTxt(s?.fs, '買', '賣')], ['投信5日', yi(s?.t5), cls(s?.t5), runTxt(s?.ts, '買', '賣')],
+    ...fj == null ? [] : [['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`5日 ${fhd(5)}　20日 ${fhd(20)}（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]]];
   const chipSec = (h, note, cards, chart, foot = '') => !cards.length ? '' : `<section class="sec card chip-g"><div class="sec-h"><h2>${h}</h2><span class="muted small">${note}</span></div>
       <div class="metrics kv">${cardsHTML(cards)}</div>${chart}${foot}</section>`;
   const chLeg = (t, id, h) => `<div class="ch-label">${t}<span id="${id}L" style="display:contents"></span></div><div id="${id}" class="chart-box" style="height:${h}px"></div>`;
@@ -217,7 +221,8 @@ window.renderStock = async function (code, sub) {
     </section>`}
     ${tab === 'chip' ? `<div class="sec chip-rng"><span class="muted small">圖表區間</span>${segHTML('chipSeg', CHIP_N, chipN)}</div>
     ${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards, chLeg(E ? '收盤（原始價）' : '收盤（還原）', 'cpC', 64) + `<div class="chip-inv">${segHTML('chipInv', CHIP_I, chipI)}</div>` + chLeg('每日買賣超（張，未還原）', 'ciC', 120) +
-      chLeg('<span id="cuCT">區間累計（張）</span>', 'cuC', 72), '<div class="muted small val-note">累計線的高度取決於起算日，看斜率不看高度；最近每天的買賣看上方柱狀圖。</div>')}
+      chLeg('<span id="cuCT">區間累計（張）</span>', 'cuC', 72), '<div class="muted small val-note">累計線的高度取決於起算日，看斜率不看高度；最近每天的買賣看上方柱狀圖。</div>' +
+      (FH ? chLeg('外資及陸資持股比率（%，以當日發行股數為分母，增資、減資時會跳動）', 'fhC', 90) : ''))}
     ${chipSec('信用交易', MG ? md(MG.d) : '', mgCards, data.mg ? chLeg(`融資餘額（張${GK}）`, 'cmC', 110) : '')}
     ${chipSec('借券賣出', SL ? `${md(SL.d)}，晚上 8 點半以後更新` : '', slCards, data.mg?.lb ? chLeg(`借券賣出餘額（張${GK}）`, 'clC', 110) : '',
       `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。${E ? '' : '占股本以目前發行股數計算。'}</div>`)}
@@ -662,6 +667,11 @@ function buildChip(data, E) {
     const cl = line(cu, cum, text2, 1);
     cl.createPriceLine({ price: 0, color: text2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
     anchors.push([ci, bar, V], [cu, cl, cum]);
+    if (data.fh && $('#fhC')) {          // 第 29 輪 F29-4：外資持股比率（水位，不受區間起點影響）
+      const fm = Object.fromEntries(data.prices.d.map((d, i) => [d, data.fh[i]])), F = raw.map(r => fm[r.d] ?? null), fh = mk('fhC', true);
+      anchors.push([fh, line(fh, F, '#4C6EF5', 2, { type: 'custom', minMove: 0.01, formatter: v => fmt(v, 2) + '%' }), F]);
+      legs.push(i => { const j = at(F, i); $('#fhCL').innerHTML = `${j !== i ? `<span class="muted">${T[j].slice(5).replace('-', '/')}</span>` : ''}<span>外資持股 <b class="num">${F[j] == null ? '--' : fmt(F[j], 2) + '%'}</b></span>`; });
+    }
     $('#cuCT').textContent = `區間累計（張，自 ${T[0].slice(0, 4) === T[last].slice(0, 4) ? md(T[0]) : T[0].replace(/-/g, '/')} 起加總）`;   // 跨年寫年份
     legs.push(i => { $('#cpCL').innerHTML = `${day(i, i)}<span>收 <b>${pfmt(C[i])}</b></span>`; },
       i => { const j = at(V, i);

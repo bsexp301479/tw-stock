@@ -54,6 +54,7 @@ SPECS = (
     Spec("etf.TWSE", "上市ETF", 150, False), Spec("etf.TPEx", "上櫃ETF", 80, False),
     Spec("margin.TWSE", "上市融資融券", 800, False), Spec("margin.TPEx", "上櫃融資融券", 550, False),
     Spec("sbl.TWSE", "上市借券", 800, False), Spec("sbl.TPEx", "上櫃借券", 550, False),     # 第 11 輪 B14：股票檔數
+    Spec("qfii.TWSE", "上市外資持股", 800, False), Spec("qfii.TPEx", "上櫃外資持股", 650, False),   # 第 29 輪 F29-4：股票檔數
     Spec("breadth.TWSE", "上市漲跌家數", 1, False, BREADTH_FROM), Spec("breadth.TPEx", "上櫃漲跌家數", 1, False, BREADTH_FROM),
 ) + tuple(Spec(f"holdings.{c}", f"{c}持股", 1, False, f.since, f.delay) for c, f in HOLDINGS.items())
 SPEC = {s.key: s for s in SPECS}
@@ -65,6 +66,7 @@ _MARKET_SQL = {
     "insti": "SELECT x.trade_date, s.market_type, COUNT(*), 0, 0, 0 FROM institutional_trades x",
     "margin": "SELECT x.trade_date, s.market_type, COUNT(*), 0, 0, 0 FROM margin_trades x",
     "sbl": "SELECT x.trade_date, s.market_type, COUNT(*), 0, 0, 0 FROM sbl_trades x",
+    "qfii": "SELECT x.trade_date, s.market_type, COUNT(*), 0, 0, 0 FROM foreign_holdings x",
 }
 
 

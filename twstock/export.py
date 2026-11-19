@@ -639,6 +639,14 @@ def _load_sbl(cur):
     return sdates, {m: {sdates[m][-1]: by_m[m][sdates[m][-1]]} for m in sdates}, per_stock
 
 
+def _load_qfii(cur):
+    """第 29 輪 F29-4：外資及陸資持股比率 {代號: {日期: %}}（官方值）。"""
+    out = defaultdict(dict)
+    for code, d, r in cur.execute("SELECT s.stock_code, x.trade_date, x.fh_ratio FROM foreign_holdings x JOIN stocks s ON s.stock_id = x.stock_id"):
+        out[code][d] = float(r)
+    return out
+
+
 def market_margin(dates, official, stocks, etfs, close):
     """
     一個市場的融資融券區塊（latest.json 的 margin.TWSE／margin.TPEx）。
@@ -1530,6 +1538,7 @@ def export_all() -> float:
     valuation, stock_val, val_date = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe
     fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
+    fh = _load_qfii(cur)                                       # 第 29 輪 F29-4
     edates, esbl, esbl_m = _load_etf_sbl(cur)                  # 第 12 輪 ETF 借券
     closed = load_closed(cur)                                  # 第 14 輪 F14-3：結算日推算用的休市日
     epx, emg, esb, esd = _load_etf_hist(cur)                   # 第 15 輪 F15-2：ETF 個股頁
@@ -1628,6 +1637,7 @@ def export_all() -> float:
             **({"sbl": sbl} if sbl else {}),                                     # 第 11 輪 B14：該股最新借券日沒有列 → 不輸出
             **({"mt": {"d": str(latest_date), "mc": mc, "to": to}} if mc is not None else {}),   # 第 12 輪 B11
             **({"mg": mg} if mg else {}),
+            **({"fh": [fhr.get(x) for x in d_]} if (fhr := fh.get(code)) else {}),   # 第 29 輪 F29-4：外資持股比率 %，對齊 prices.d；沒有資料的股票不輸出
             **({"act": act} if act else {}),
             # 第 23 輪 F23-1：近期表現；最後一列不是資料日（停牌、下市）或從沒成交 → 不輸出（同 latest.stocks）
             **({"pf": stock_perf(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))], p_days,

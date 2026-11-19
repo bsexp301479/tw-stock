@@ -19,17 +19,19 @@ TPEX = "https://www.tpex.org.tw/www/zh-tw"
 # history --only 的資料集名稱；INDEX = 加權指數（抓行情時會一併寫入），TPEX_INDEX = 櫃買指數（月查詢）
 PRICES, PE, INSTI, INDEX, AMOUNT, TPEX_INDEX = "prices", "pe", "insti", "index", "amount", "tpex_index"
 ETF, MARGIN, HOLDINGS_DS, SBL = "etf", "margin", "holdings", "sbl"
+QFII = "qfii"                   # 第 29 輪 F29-4：外資及陸資持股
 ALL_DATASETS = (PRICES, PE, INSTI, ETF, MARGIN)
 HOLDINGS_KEYS = tuple(f"holdings.{c}" for c in HOLDINGS)
 # 每個資料集對應的細項（分市場），也是 collect_for_date 與 health.SPECS 共用的鍵
 DATASET_KEYS = {PRICES: ("prices.TWSE", "prices.TPEx"), PE: ("pe.TWSE", "pe.TPEx"),
                 INSTI: ("insti.TWSE", "insti.TPEx"), INDEX: ("index.TAIEX",), AMOUNT: ("amount", "amount.TPEx"),
                 ETF: ("etf.TWSE", "etf.TPEx"), MARGIN: ("margin.TWSE", "margin.TPEx"), HOLDINGS_DS: HOLDINGS_KEYS,
-                SBL: ("sbl.TWSE", "sbl.TPEx")}
+                SBL: ("sbl.TWSE", "sbl.TPEx"), QFII: ("qfii.TWSE", "qfii.TPEx")}
 # 一天之內的收集順序：行情先於本益比、法人；ETF 行情先於融資融券、借券與持股（都只寫入 etfs 已有的 ETF）
 # 漲跌家數不補歷史（health.BREADTH_FROM），所以不在 DATASET_KEYS；上市家數與行情共用同一個 MI_INDEX 回應
 DAY_KEYS = ("prices.TWSE", "prices.TPEx", "index.TAIEX", "etf.TWSE", "etf.TPEx", "pe.TWSE", "pe.TPEx",
-            "insti.TWSE", "insti.TPEx", "amount", "amount.TPEx", "margin.TWSE", "margin.TPEx", "sbl.TWSE", "sbl.TPEx", "breadth.TWSE", "breadth.TPEx") + HOLDINGS_KEYS
+            "insti.TWSE", "insti.TPEx", "amount", "amount.TPEx", "margin.TWSE", "margin.TPEx", "sbl.TWSE", "sbl.TPEx", "qfii.TWSE", "qfii.TPEx",
+            "breadth.TWSE", "breadth.TPEx") + HOLDINGS_KEYS
 PARSE_ERRORS = (SchemaError, KeyError, IndexError, TypeError, ValueError, AttributeError)
 
 
@@ -460,6 +462,48 @@ def fetch_sbl(d: date, market: str) -> list:
     return parse_sbl(data, d, market)
 
 
+# ─── 外資及陸資持股（第 29 輪 F29-4；上市 MI_QFIIS、上櫃 insti/qfii；股數為股、比率為 %；股票、ETF 同一個回應）──
+QFII_COLS = ("issued", "fh_shares", "fh_ratio", "avail_ratio", "limit_ratio")
+QFII_POS = {"TWSE": {0: "證券代號", 3: "發行股數", 5: "全體外資及陸資持有股數", 6: "外資及陸資尚可投資比率",
+                     7: "全體外資及陸資持股比率", 8: "外資及陸資共用法令投資上限比率"},
+            "TPEx": {1: "代號", 3: "發行股數(A)", 5: "僑外資及陸資持有股數(C)", 6: "僑外資及陸資尚可投資比率(D=B/A)",
+                     7: "僑外資及陸資持股比率(E=C/A)", 8: "法令投資上限比率(F)"}}
+
+
+def parse_qfii(data: dict, d: date, market: str) -> list:
+    """
+    MI_QFIIS（上市）／insti/qfii（上櫃）→ [{stock_code, issued, fh_shares（股）, fh_ratio, avail_ratio, limit_ratio（%）}]，含 ETF，由呼叫端只留股票。
+    回應日期不是 d、stat 不是 OK、沒有資料列 → []（尚未公布，不算失敗）；欄位不符 → SchemaError。
+    """
+    if str(data.get("stat", "")).upper() != "OK" or str(data.get("date")) != f"{d:%Y%m%d}":
+        return []
+    t = data if market == "TWSE" else next(iter(data.get("tables") or []), {})
+    if not t.get("data"):
+        return []
+    fields, pos = t.get("fields") or [], QFII_POS[market]
+    bad = [f"{i}:{name}" for i, name in pos.items() if i >= len(fields) or fields[i] != name]
+    if bad:
+        raise SchemaError(f"外資持股（{market}）欄位不符：{'、'.join(bad)}")
+    k, pct = min(pos), lambda v: clean_number(str(v).replace("%", ""))      # 代號欄：上市第 0 欄、上櫃第 1 欄（第 0 欄是排行）
+    rows = []
+    for r in t["data"]:
+        if len(r) <= 8:
+            continue
+        row = {"stock_code": str(r[k]).strip(), "issued": clean_number(r[3], int), "fh_shares": clean_number(r[5], int),
+               "fh_ratio": pct(r[7]), "avail_ratio": pct(r[6]), "limit_ratio": pct(r[8])}
+        if row["stock_code"] and row["fh_ratio"] is not None:
+            rows.append(row)
+    return rows
+
+
+def fetch_qfii(d: date, market: str) -> list:
+    if market == "TWSE":
+        data = request("GET", f"{TWSE}/fund/MI_QFIIS", params={"date": f"{d:%Y%m%d}", "selectType": "ALLBUT0999", "response": "json"})
+    else:
+        data = request("POST", f"{TPEX}/insti/qfii", data={"date": f"{d:%Y/%m/%d}", "response": "json"})
+    return parse_qfii(data, d, market)
+
+
 # ─── 批次寫入 ─────────────────────────────────────────────
 def merge_stocks(cursor, rows: list, trade_date: date):
     """
@@ -648,6 +692,27 @@ def merge_sbl(cursor, trade_date, rows: list, kind: str):
         WHEN NOT MATCHED THEN
             INSERT ({key}, trade_date, {", ".join(SBL_COLS)}, note)
             VALUES (s.{key}, ?, {", ".join(f"s.{c}" for c in SBL_COLS)}, s.note);
+    """, db.to_json(rows), trade_date, trade_date)
+
+
+def merge_qfii(cursor, trade_date, rows: list):
+    """外資持股（第 29 輪 F29-4）：只寫 stocks 已有的股票；同一天重抓 = 覆寫。"""
+    cursor.execute(f"""
+        MERGE foreign_holdings AS t
+        USING (
+            SELECT r.stock_id, j.*
+            FROM OPENJSON(?) WITH (
+                stock_code NVARCHAR(10), issued BIGINT, fh_shares BIGINT,
+                fh_ratio DECIMAL(6,2), avail_ratio DECIMAL(6,2), limit_ratio DECIMAL(6,2)
+            ) AS j
+            JOIN stocks r ON r.stock_code = j.stock_code
+        ) AS s
+        ON t.stock_id = s.stock_id AND t.trade_date = ?
+        WHEN MATCHED THEN UPDATE SET
+            {", ".join(f"{c} = s.{c}" for c in QFII_COLS)}
+        WHEN NOT MATCHED THEN
+            INSERT (stock_id, trade_date, {", ".join(QFII_COLS)})
+            VALUES (s.stock_id, ?, {", ".join(f"s.{c}" for c in QFII_COLS)});
     """, db.to_json(rows), trade_date, trade_date)
 
 
@@ -916,6 +981,11 @@ def _collect_key(key: str, d: date, cache: dict) -> int:
             print(f"  ⚠️  {key} 有 {len(bad)} 檔不符「前日 + 賣出 − 還券 + 調整 = 餘額」（照存）：{'、'.join(bad[:5])}")
         _save(lambda cur: (merge_sbl(cur, d, stocks, "stock"), etfs and merge_sbl(cur, d, etfs, "etf")))
         return len(stocks)
+    if dataset == QFII:
+        stocks = [r for r in fetch_qfii(d, market) if is_valid_stock_code(r["stock_code"])]
+        if stocks:
+            _save(merge_qfii, d, stocks)
+        return len(stocks)                              # 0 = 尚未公布
     amount = (fetch_tpex_insti_amount if market == "TPEx" else fetch_twse_insti_amount)(d)    # "amount" = 上市、"amount.TPEx" = 上櫃
     if amount:
         _save(merge_insti_amount, amount)
@@ -933,8 +1003,8 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
     for key in keys:
         dataset, _, market = key.partition(".")
         # "amount"（上市法人金額）partition 後市場是空字串：視為 TWSE（第 10 輪 P24；鍵名不改）
-        if dataset in ("pe", "insti", MARGIN, SBL, "breadth", AMOUNT) and written.get(f"prices.{market or 'TWSE'}") == 0:
-            continue                # 同市場行情還沒有：本益比、法人、融資融券、借券、漲跌家數、法人金額不可能先有，不發請求
+        if dataset in ("pe", "insti", MARGIN, SBL, QFII, "breadth", AMOUNT) and written.get(f"prices.{market or 'TWSE'}") == 0:
+            continue                # 同市場行情還沒有：本益比、法人、融資融券、借券、外資持股、漲跌家數、法人金額不可能先有，不發請求
         if dataset == "pe" and f"prices.{market}" in errors:
             continue                # 本益比只寫入有行情列的股票
         try:
@@ -954,4 +1024,4 @@ def collect_for_date(d: date, keys=DAY_KEYS) -> tuple:
     return written, errors
 
 
-__all__ = ["collect_for_date", "FetchError", "PRICES", "PE", "INSTI", "ETF", "MARGIN", "HOLDINGS_DS", "SBL", "ALL_DATASETS"]
+__all__ = ["collect_for_date", "FetchError", "PRICES", "PE", "INSTI", "ETF", "MARGIN", "HOLDINGS_DS", "SBL", "QFII", "ALL_DATASETS"]

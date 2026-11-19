@@ -522,6 +522,22 @@ DDL = [
         CONSTRAINT UQ_etf_events UNIQUE (etf_id, event_date, source)
     )
     """,
+    # 第 29 輪 F29-4：外資及陸資持股（上市 MI_QFIIS、上櫃 insti/qfii；官方值，股數為股、比率為 %；只存股票）
+    """
+    IF OBJECT_ID('foreign_holdings') IS NULL
+    CREATE TABLE foreign_holdings (
+        id           BIGINT IDENTITY(1,1) PRIMARY KEY,
+        stock_id     INT           NOT NULL REFERENCES stocks(stock_id),
+        trade_date   DATE          NOT NULL,
+        issued       BIGINT        NULL,      -- 發行股數
+        fh_shares    BIGINT        NULL,      -- 外資及陸資持有股數
+        fh_ratio     DECIMAL(6,2)  NOT NULL,  -- 外資及陸資持股比率 %
+        avail_ratio  DECIMAL(6,2)  NULL,      -- 尚可投資比率 %
+        limit_ratio  DECIMAL(6,2)  NULL,      -- 法令投資上限比率 %
+        created_at   DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_foreign_holdings UNIQUE (stock_id, trade_date)
+    )
+    """,
     # 第 11 輪：發行股數（update_industry 一併寫入；目前股數，不保留歷史）
     "IF COL_LENGTH('stocks', 'shares') IS NULL ALTER TABLE stocks ADD shares BIGINT NULL",
     # 第 19 輪：減除股利參考價（只扣股利、不扣現金增資；TWT49U、TPEX_EX 才有，其他來源 NULL），分辨配股與現金增資
@@ -545,6 +561,8 @@ DDL = [
     "CREATE INDEX IX_margin_trades_date ON margin_trades(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_sbl_trades_date') "
     "CREATE INDEX IX_sbl_trades_date ON sbl_trades(trade_date)",
+    "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_foreign_holdings_date') "
+    "CREATE INDEX IX_foreign_holdings_date ON foreign_holdings(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_daily_date') "
     "CREATE INDEX IX_etf_daily_date ON etf_daily(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_holdings_code') "
@@ -570,4 +588,4 @@ def setup_database():
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
           "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
-          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、etf_holding_gaps")
+          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、etf_holding_gaps")
