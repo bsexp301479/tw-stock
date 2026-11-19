@@ -1,0 +1,262 @@
+// 台股資金流 第 34 輪：試算工具 #/tools/dt 交易成本（含當沖、漲跌停）、#/tools/cp 複利、#/tools/pl 股票質借。
+// 只在瀏覽器計算；網址帶 ?c=代號 時只讀同站 data/（loadStock，個股頁看過的不再請求）。
+// 共用 app.js 的 $、esc、fmt、pfmt、md、segHTML、onSeg、pageTabsHTML、localStore、loadStock
+'use strict';
+
+// 規則常數（查證 2026-11-19，編號見 docs/iterations/34/01-analyst.md）。期限到了只提醒、不自動改稅率（D48 = A）
+const TL_RULES = {
+  fee: 1425,                                                       // R1 手續費率 0.1425%（百萬分之 1425），元以下捨去
+  minFee: 20,                                                      // R2 每筆最低 20 元（各券商不同，可改）
+  tax: { s: [30], dt: [15, '2027-12-31'], e: [10], b: [0, '2026-12-31'] },   // 萬分之：R3 股票 0.3%、R4 現股當沖 0.15%、R3／R5 ETF 0.1%、R6 債券 ETF 停徵
+  limit: 10,                                                       // R9 漲跌幅 10%
+  pl: { cap: 60, call: 130, back: 166, term: 183, max: 548 },      // P3 成數上限、P9 追繳 130%／補繳至 166%、P2 每次 6 個月（續借 2 次）
+};
+const TL_TABS = [['dt', '交易成本'], ['cp', '複利'], ['pl', '股票質借']];
+
+// R7 升降單位（分）：股票六級、ETF 二級（e 為 true）。≥ 1,000 元改 1 元的新制尚未生效（D49 = A）
+const tlTick = (p, e) => e ? (p < 5000 ? 1 : 5) : p < 1000 ? 1 : p < 5000 ? 5 : p < 10000 ? 10 : p < 50000 ? 50 : p < 100000 ? 100 : 500;
+const tlNext = (p, e) => p + tlTick(p, e), tlPrev = (p, e) => p - tlTick(p - 1, e);   // 上一檔、下一檔（往下跨級距用下方級距）
+const tlPx = (p, e) => { const t = tlTick(p, e); return fmt(p / 100, t < 10 ? 2 : t < 100 ? 1 : 0); };   // 依升降單位的小數位
+// R9 漲跌停：參考價 × 1.1 依「漲停價所在級距」捨去、× 0.9 依「跌停價所在級距」進位（本站歷史日線實證，例：參考價 108 → 跌停 97.2）
+function tlLimit(r, e) {
+  const u = Math.floor(r * (100 + TL_RULES.limit) / 100), d = Math.ceil(r * (100 - TL_RULES.limit) / 100), t = tlTick(d, e);
+  return [u - u % tlTick(u, e), d % t ? d - d % t + t : d];
+}
+
+// 金額一律用「分」的整數；手續費、證交稅為元（BigInt 避免大金額超過浮點精度）。dz 折扣（千分之，6 折 = 600）
+const tlFee = (a, dz, min) => Math.max(min, Number(BigInt(a) * BigInt(TL_RULES.fee * dz) / 100000000000n));
+function tlTax(k, dt, today) {
+  const [r, until] = TL_RULES.tax[k === 's' && dt ? 'dt' : k];
+  return { r, until, over: !!until && today > until };
+}
+// 一筆交易：b 買價、s 賣價（分），n 股數，k 商品（s 股票、e ETF、b 債券 ETF），dt 現股當沖，min 最低手續費；net 淨損益（分）
+function tlTrade(o) {
+  const ba = o.b * o.n, sa = o.s * o.n, bf = tlFee(ba, o.dz, o.min), sf = tlFee(sa, o.dz, o.min), t = tlTax(o.k, o.dt, o.today);
+  const tax = Number(BigInt(sa) * BigInt(t.r) / 1000000n);
+  return { ba, sa, bf, sf, tax, t, net: sa - ba - (bf + sf + tax) * 100 };
+}
+// 損益兩平（Q34-1）：先買後賣從買價逐檔往上、先賣後買（rev）從賣價逐檔往下，第一個淨損益 ≥ 0 的價位；最多 2,000 檔
+function tlBreak(o) {
+  const e = o.k !== 's', f = TL_RULES.fee * o.dz / 1e9, t = tlTax(o.k, o.dt, o.today).r / 1e4, p0 = o.rev ? o.s : o.b;
+  const th = o.rev ? p0 * (1 - f - t) / (1 + f) : p0 * (1 + f) / (1 - f - t);   // 理論值（不計最低手續費與捨去）
+  for (let i = 0, p = p0; i <= 2000 && p > 0; i++, p = o.rev ? tlPrev(p, e) : tlNext(p, e)) {
+    const net = tlTrade(Object.assign({}, o, o.rev ? { b: p } : { s: p })).net;
+    if (net >= 0) return { th, p, n: i, net };
+  }
+  return { th, p: null };
+}
+
+// 複利：單筆 P 每年複利、每月 M 以 r ÷ 12 按月複利（期初投入多一個月）；y 殖利率：每年底市值 × y 為股利，re 再投入（併入單筆），否則累計為已領股利
+function tlCompound(o) {
+  const i = o.r / 1200, rows = [];
+  let a = o.P, m = 0, paid = 0;
+  for (let y = 1; y <= o.n; y++) {
+    a *= 1 + o.r / 100;
+    for (let k = 0; k < 12; k++) m = o.begin ? (m + o.M) * (1 + i) : m * (1 + i) + o.M;
+    const dv = (a + m) * o.y / 100;
+    if (o.re) a += dv; else paid += dv;
+    rows.push([y, o.P + o.M * 12 * y, a + m, paid]);
+  }
+  return rows;
+}
+
+// 股票質借（單檔）：p1 擔保價格（算上限）、p2 試算價格（算維持率，D57 = A），皆為分；n 股數；cap 成數 %；loan 借款（元，null = 以上限計）；
+// rate 年利率（千分之一 %）；base 365／360；call 追繳門檻 %。整數運算：維持率等於門檻不算低於，追繳價無條件進位到分
+function tlPledge(o) {
+  const B = BigInt, n = B(o.n), call = B(o.call), max = B(o.p1) * n * B(o.cap) / 10000n;   // ⌊市值 × 成數⌋（元）
+  const L = o.loan == null || B(o.loan) > max ? max : B(o.loan), id = 100000n * B(o.base);
+  const r = { max: Number(max), L: Number(L), over: o.loan != null && B(o.loan) > max, I: Number((2n * L * B(o.rate) * B(o.days) + id) / (2n * id)) };   // 利息四捨五入到元
+  if (!L || !o.p2) return r;
+  const v = B(o.p2) * n, back = B(Math.max(TL_RULES.pl.back, o.call));                 // 試算市值（分）；補繳目標 166%（門檻改高時不低於門檻）
+  Object.assign(r, { ratio: Number((200n * v + L) / (2n * L)), below: v < call * L, eq: v === call * L, pc: Number((call * L + n - 1n) / n), back: Number(back) });
+  if (r.below) Object.assign(r, { add: Number((back * L - v + 99n) / 100n), repay: Number(L - v / back) });
+  return r;
+}
+
+// ─── 輸入與畫面 ───────────────────────────────────────────
+const tlNum = (s, k = 9) => { const t = String(s == null ? '' : s).replace(/,/g, '').trim();
+  return new RegExp('^-?\\d+' + (k ? '(\\.\\d{1,' + k + '})?' : '') + '$').test(t) && Math.abs(t) < 1e12 ? +t || 0 : NaN; };   // 太大的數字當作不合法；-0 當作 0（QA34-01）
+const tlC = s => { const x = tlNum(s, 2); return x > 0 ? Math.round(x * 100) : NaN; };   // 價格（分）
+const tlY = c => fmt(c / 100, c % 100 ? 2 : 0), tlS = (c, d) => { const t = fmt(c, d); return (c > 0 ? '+' : '') + (/^-[0.,]+$/.test(t) ? t.slice(1) : t); };   // 四捨五入後為 0 不顯示負號（QA34-01）
+const tlToday = () => { const d = new Date(), z = x => String(x).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`; };
+const tlRow = (l, v, c = '') => `<tr><th>${l}</th><td class="num ${c}">${v}</td></tr>`;
+const tlMsg = a => `<div class="tl-msg">${a.join('<br>')}</div>`;
+const tlNote = a => a.filter(Boolean).map(x => `<div class="muted small tl-note">${x}</div>`).join('');
+const tlIn = (k, label, v, ph = '') => `<label class="tl-f"><span>${label}</span><input data-k="${k}" inputmode="decimal" autocomplete="off" value="${esc(v)}"${ph ? ` placeholder="${esc(ph)}"` : ''}></label>`;
+const tlSeg = (k, opts, v) => `<div data-g="${k}">${segHTML('tl-' + k, opts, v)}</div>`;
+// D46 = B：tw.fee 只存折扣與最低手續費；壞值（非數字、負數、空字串）回到預設 10 折、20 元
+function tlFeePref(raw) {
+  let o = null;
+  try { o = JSON.parse(raw); } catch (e) { /* 壞值當作沒有存 */ }
+  const d = tlNum(o && o.d, 2), m = tlNum(o && o.m, 0);
+  return { d: d > 0 && d <= 10 ? String(d) : '10', m: m >= 0 ? String(m) : String(TL_RULES.minFee) };
+}
+const TL = { code: undefined, info: null,
+  dt: { mode: 'dt', dir: 'b', k: 's', b: '', s: '', n: '1000', ref: '' },
+  cp: { P: '0', M: '5000', at: 'end', r: '', n: '10', dv: '0', y: '' },
+  pl: { p1: '', p2: '', q: '1', u: 'lot', cap: '60', loan: '', rate: '', days: '180', base: '365', fee: '0', call: '130' } };
+
+function tlTaxTxt(k, dt, t) {
+  const s = k === 'b' ? '債券 ETF 停徵（至 2026/12/31）' : k === 'e' ? 'ETF 0.1%（當沖不減半）' : dt ? '股票現股當沖 0.15%（至 2027/12/31）' : '股票 0.3%';
+  return '證交稅：' + s + (t.over ? `；<b class="tl-warn">${k === 'b' ? '停徵' : '減半'}期限已過，請確認最新稅率</b>` : '');
+}
+function tlDtOut(st, I, today) {
+  const e = st.k !== 's', dt = st.mode === 'dt', rev = dt && st.dir === 's', b = tlC(st.b), s = tlC(st.s), n = tlNum(st.n, 0), d = tlNum(st.d, 2), m = tlNum(st.m, 0);
+  const p0 = rev ? s : b, ref = tlC(st.ref), msg = [];
+  if (!(p0 > 0)) msg.push(`請輸入${rev ? '賣價' : '買價'}`);
+  if (!(n > 0)) msg.push('請輸入股數'); else if (dt && n % 1000) msg.push('現股當沖股數須為 1,000 的倍數（零股不能當沖）');
+  if (!(d > 0 && d <= 10)) msg.push('手續費折扣請輸入 0～10 折（不打折為 10）');
+  if (!(m >= 0)) msg.push('最低手續費請輸入 0 以上的整數');
+  const t = tlTax(st.k, dt, today), rules = tlNote([tlTaxTxt(st.k, dt, t),
+    `手續費：成交金額 × 0.1425% × ${d > 0 && d <= 10 ? pfmt(d) : '--'} 折，元以下捨去，每筆最低 ${m >= 0 ? fmt(m) : '--'} 元（折扣與最低手續費依券商）`,
+    dt ? '現股當沖需符合券商資格；處置股、全額交割股可能不能當沖。' + (rev ? '先賣後買須在當日收盤前買回。' : '') : '']);
+  if (msg.length) return tlMsg(msg) + rules;
+  const o = { b, s, n, dz: Math.round(d * 100), min: m, k: st.k, dt, rev, today }, lim = ref > 0 ? tlLimit(ref, e) : null, out = [];
+  let rows = '';
+  if ((rev ? b : s) > 0) {
+    const r = tlTrade(o);
+    rows = tlRow('買方金額', tlY(r.ba)) + tlRow('買方手續費', fmt(r.bf)) + tlRow('賣方金額', tlY(r.sa)) + tlRow('賣方手續費', fmt(r.sf)) +
+      tlRow('證交稅', fmt(r.tax)) + tlRow('淨損益', tlS(r.net / 100, r.net % 100 ? 2 : 0) + ' 元', cls(r.net)) + tlRow('報酬率（÷ 買方金額）', tlS(r.net / r.ba * 100, 2) + '%', cls(r.net));
+  }
+  const tk = tlTick(p0, e), pn = rev ? '賣價' : '買價';
+  if (p0 % tk) out.push(`${pn} ${pfmt(p0 / 100)} 不是可成交價位（此價位升降單位 ${pfmt(tk / 100)} 元），損益兩平只在可成交價位計算`);
+  else {
+    const be = tlBreak(o);
+    rows += tlRow(`損益兩平價（理論）`, fmt(be.th / 100, 2)) + (be.p == null ? tlRow('損益兩平價（可成交）', rev ? '無法打平' : '2,000 檔內仍未打平')
+      : tlRow(`損益兩平價（可成交${rev ? '，買價不高於此價' : ''}）`, `<b class="tl-big">${tlPx(be.p, e)}</b>`) + tlRow(rev ? '需下跌' : '需上漲', `${be.n} 檔`) +
+        tlRow('以此價成交淨損益', tlS(be.net / 100, be.net % 100 ? 2 : 0) + ' 元', cls(be.net)));
+    if (be.p != null && dt && lim && (rev ? be.p < lim[1] : be.p > lim[0])) out.push(`兩平價${rev ? '低於跌停' : '高於漲停'}，當日無法以此價成交`);
+  }
+  if (lim) {
+    const rd = I && I.d && I.c != null && ref === tlC(String(I.c)) ? `（${md(I.d)} 收盤，用於下一交易日）` : '';   // QA34-03：帶入的收盤是下一交易日的參考價
+    out.push(`參考價 ${pfmt(ref / 100)}${rd}：漲停 ${tlPx(lim[0], e)}、跌停 ${tlPx(lim[1], e)}（漲跌幅 10%，試算）` + (e ? '；部分 ETF（國外成分、槓桿／反向）漲跌幅規定不同' : ''));
+    [[b, '買價'], [s, '賣價']].forEach(([p, l]) => { if (p > 0 && (p > lim[0] || p < lim[1])) out.push(`${l}超出漲跌停範圍`); });
+  }
+  if (I && I.ex) out.push(`${md(I.ex)} 除權息，參考價另計`);
+  out.push(`升降單位：${pn} ${pfmt(p0 / 100)} 元的價位每檔 ${pfmt(tk / 100)} 元（${e ? 'ETF' : '股票'}）`);
+  return `<table class="tl-kv">${rows}</table>` + tlNote(out) + rules;
+}
+
+function tlCpOut(st) {
+  const P = tlNum(st.P), M = tlNum(st.M), r = tlNum(st.r), n = tlNum(st.n, 0), dv = st.dv !== '0', y = tlNum(st.y), msg = [];
+  if (!(P >= 0 && M >= 0 && P + M > 0)) msg.push('請輸入初始金額或每月投入（0 以上，至少一項大於 0）');
+  if (!(r > -100 && r <= 100)) msg.push(`請輸入${dv ? '價格年變動率' : '年報酬率'}（自行假設，-99～100%）`);
+  if (!(n >= 1 && n <= 50)) msg.push('年數請輸入 1～50 的整數');
+  if (dv && !(y >= 0 && y <= 100)) msg.push('請輸入殖利率（0～100%）');
+  const note = tlNote(['未計稅負、二代健保、ETF 內扣費用、交易手續費，也未做通膨調整；結果依你填的數字計算，不代表本站預期。',
+    dv ? '股利以每年年底市值 × 殖利率計算' + (st.dv === 're' ? '，當年底再投入。' : '，領出不再投入。') : '']);
+  if (msg.length) return tlMsg(msg) + note;
+  const R = tlCompound({ P, M, r, n, begin: st.at === 'begin', y: dv ? y : 0, re: st.dv === 're' }), [, inv, v, paid] = R[R.length - 1], out = st.dv === 'out';
+  return `<table class="tl-kv">${tlRow('期末金額', fmt(v) + ' 元') + (out ? tlRow('已領股利', fmt(paid) + ' 元') : '') + tlRow('投入本金合計', fmt(inv) + ' 元') +
+    tlRow(out ? '增加金額（含已領股利）' : '增加金額', tlS(Math.round(v + paid - inv), 0) + ' 元')}</table>` + note +
+    `<div class="tbl-wrap"><table class="tbl tl-yr" id="tlYr"><thead><tr><th>第幾年</th><th>累計投入</th><th>期末金額</th>${out ? '<th>已領股利</th>' : ''}</tr></thead><tbody>` +
+    R.map(([k, a, b, c]) => `<tr${k % 5 && k !== n ? ' class="tl-x"' : ''}><td>${k}</td><td class="num">${fmt(a)}</td><td class="num">${fmt(b)}</td>${out ? `<td class="num">${fmt(c)}</td>` : ''}</tr>`).join('') +
+    `</tbody></table></div>${n > 5 ? '<button class="chip tl-all" id="tlAll">顯示每一年</button>' : ''}`;
+}
+
+function tlPlOut(st, I) {
+  const p1 = tlC(st.p1), p2 = String(st.p2).trim() === '' ? p1 : tlC(st.p2), q = tlNum(st.q, 0), n = st.u === 'lot' ? q * 1000 : q;
+  const cap = tlNum(st.cap, 0), loan = String(st.loan).trim() === '' ? null : tlNum(st.loan, 0), rate = tlNum(st.rate, 3), days = tlNum(st.days, 0), fee = tlNum(st.fee, 0), call = tlNum(st.call, 0), msg = [];
+  if (!(p1 > 0)) msg.push('請輸入擔保價格');
+  if (!(n > 0)) msg.push('請輸入數量');
+  if (!(cap >= 0 && cap <= 100)) msg.push('可借成數請輸入 0～100 的整數');
+  if (loan !== null && !(loan >= 0)) msg.push('借款金額請輸入 0 以上的整數（空白 = 以上限計算）');
+  if (!(rate >= 0 && rate <= 100)) msg.push('請輸入年利率（各券商不同，本站不預填）');
+  if (!(days >= 1 && days <= TL_RULES.pl.max)) msg.push(`借款天數請輸入 1～${TL_RULES.pl.max} 的整數`);
+  if (!(fee >= 0)) msg.push('手續費請輸入 0 以上的整數');
+  if (!(call >= 100 && call <= 999)) msg.push('追繳門檻請輸入 100～999 的整數');
+  const D = TL_RULES.pl, note = tlNote([I && I.al && I.al.some(a => a.t === 'disposal') ? '<b class="tl-warn">處置股可能不適用為擔保品，請洽券商</b>' : '',
+    `證券商不限用途款項借貸：維持率低於 ${D.call}% 時須於 2 個營業日內補繳至 ${D.back}%，未補繳且仍低於 ${D.call}% 時，自第 3 營業日起處分擔保品（俗稱斷頭）；銀行、證券金融公司依各自契約。`,
+    `借滿 60% 時追繳價約為現價 −22%，借 40% 時約 −48%：借得越多，離追繳價越近。`,
+    '試算價格可改低，看下跌時的維持率。',
+    '維持率 = 擔保品市值 ÷ 借款本金（不含利息），每日以收盤價整戶計算，本頁只算單檔；除權息後擔保品市值下降，維持率也會下降。',
+    '可借成數：得為融資融券的上市櫃股票最高為前一營業日收盤價 × 60%，其餘 40%，各券商可再調低；全額交割股不得為擔保品，處置股、槓桿／反向 ETF 是否適用請洽券商。']);
+  if (msg.length) return tlMsg(msg) + note;
+  const R = tlPledge({ p1, p2: p2 > 0 ? p2 : 0, n, cap, loan, rate: Math.round(rate * 1000), days, base: +st.base, call }), warn = [];
+  if (cap > D.cap) warn.push(`成數超過證券商不限用途借貸官方上限 ${D.cap}%（其他管道依各自契約）`);
+  if (R.over) warn.push(`超過可借上限，以上限 ${fmt(R.max)} 計算`);
+  if (days > D.term) warn.push('每次最長 6 個月，超過需申請續借');
+  let rows = tlRow('可借金額上限', fmt(R.max) + ' 元<br><span class="muted small">以元計，實際核撥金額以券商為準</span>') + tlRow('本次借款', fmt(R.L) + ' 元') +
+    tlRow('利息', fmt(R.I) + ` 元<br><span class="muted small">÷${st.base}，四捨五入到元，實際以券商計算為準</span>`) + tlRow('手續費', fmt(fee) + ' 元') +
+    tlRow('到期應還（本金＋利息）', fmt(R.L + R.I) + ' 元') + tlRow('總成本（利息＋手續費）', fmt(R.I + fee) + ' 元') +
+    tlRow('換算年化成本', R.L ? fmt((R.I + fee) / R.L * 365 / days * 100, 2) + '%' : '--');
+  if (R.ratio != null) {
+    const dp = Math.round((R.pc / p2 - 1) * 1000) / 10 || 0;
+    rows += tlRow('目前擔保維持率', `<b class="tl-big">${fmt(R.ratio / 100, 2)}%</b><br><span class="small">${R.below ? '<b class="tl-warn">低於</b>' : R.eq ? '等於' : '高於'}追繳門檻 ${call}%${R.eq ? '（低於才追繳）' : ''}</span>`) +
+      tlRow('追繳價', `<b class="tl-big">${fmt(R.pc / 100, 2)}</b><br><span class="small">收盤價低於 ${fmt(R.pc / 100, 2)} 時，維持率低於 ${call}%；與試算價格差 ${tlS(dp, 1)}%${p2 < R.pc ? '（目前已低於）' : ''}</span>`);
+    if (R.below) rows += tlRow(`回到 ${R.back}%`, `需補擔保品市值 ${fmt(R.add)} 元<br>或償還本金 ${fmt(R.repay)} 元`);
+  } else warn.push(R.L ? '請輸入試算價格（空白 = 擔保價格）' : '借款為 0，不計算維持率與追繳價');
+  return (warn.length ? tlMsg(warn) : '') + `<table class="tl-kv">${rows}</table>` + note;
+}
+
+function tlDtForm(st) {
+  const dt = st.mode === 'dt', rev = dt && st.dir === 's', bs = [tlIn('b', '買價（元）', st.b, rev ? '空白 = 只算兩平' : ''), tlIn('s', '賣價（元）', st.s, rev ? '' : '空白 = 只算兩平')];
+  return `<div class="tl-segs">${tlSeg('mode', [['dt', '現股當沖'], ['g', '一般（非當沖）']], st.mode)}${dt ? tlSeg('dir', [['b', '先買後賣'], ['s', '先賣後買']], st.dir) : ''}` +
+    `${tlSeg('k', [['s', '股票'], ['e', 'ETF'], ['b', '債券 ETF']], st.k)}</div>` + (rev ? bs.reverse() : bs).join('') +
+    tlIn('n', '股數', st.n, dt ? '1,000 的倍數' : '零股可填') + tlIn('ref', '參考價（算漲跌停）', st.ref, '可空白') +
+    tlIn('d', '手續費折扣（折，不打折為 10）', st.d) + tlIn('m', '最低手續費（元）', st.m);
+}
+function tlCpForm(st, I) {
+  const dv = st.dv !== '0';
+  return `<div class="tl-segs">${tlSeg('at', [['end', '每月期末投入'], ['begin', '每月期初投入']], st.at)}${tlSeg('dv', [['0', '不計股利'], ['re', '股利再投入'], ['out', '股利領出']], st.dv)}</div>` +
+    tlIn('P', '初始金額（元）', st.P) + tlIn('M', '每月投入（元）', st.M) + tlIn('r', dv ? '價格年變動率（%）' : '年報酬率（%）', st.r, '自行假設，必填') + tlIn('n', '年數（1～50）', st.n) +
+    (dv ? tlIn('y', '殖利率（%）', st.y, '必填') + (I && I.dy != null ? `<div class="muted small tl-f">本站資料：最新殖利率 ${fmt(I.dy, 2)}%（可改）</div>` : '') : '');
+}
+function tlPlForm(st) {
+  return `<div class="tl-segs">${tlSeg('u', [['lot', '張'], ['sh', '股']], st.u)}${tlSeg('base', [['365', '計息 ÷365'], ['360', '計息 ÷360']], st.base)}</div>` +
+    tlIn('p1', '擔保價格（算可借上限）', st.p1) + tlIn('p2', '試算價格（算維持率）', st.p2, '空白 = 擔保價格') +
+    tlIn('q', st.u === 'lot' ? '數量（張）' : '數量（股）', st.q) +
+    `<div class="tl-f">${tlIn('cap', '可借成數（%）', st.cap)}<div data-g="cap" class="tl-chips"><button class="chip" data-v="60">60%：得為融資融券</button><button class="chip" data-v="40">40%：其他</button></div></div>` +   // 快捷鈕放在可借成數下方；質借表單改頂端對齊（.tl-pl），不把同列欄位往下推
+    tlIn('loan', '借款金額（元）', st.loan, '空白 = 以上限計算') + tlIn('rate', '年利率（%）', st.rate, '必填，各券商不同') +
+    tlIn('days', `借款天數（1～${TL_RULES.pl.max}）`, st.days) + tlIn('fee', '手續費（一次，元）', st.fee) + tlIn('call', '追繳門檻（%）', st.call);
+}
+const TL_VIEW = { dt: ['交易成本與損益兩平', tlDtForm, tlDtOut], cp: ['複利', tlCpForm, tlCpOut], pl: ['股票質借（單檔擔保品）', tlPlForm, tlPlOut] };
+const TL_FOOT = '本頁為試算，結果僅供參考，不代表實際成交、扣款或核貸金額；費率、稅率與規則以券商與主管機關公告為準。';
+
+// 網址帶代號時讀最新收盤（股票 data/stocks、ETF data/etfp）；不在 latest.json 的代號不發請求
+async function tlLoad(code) {
+  TL.code = code; TL.info = null;
+  if (!code) return;
+  const L = App.latest, E = !L.stocks[code] && L.etfs && L.etfs.rows && L.etfs.rows[code];
+  let d = null;
+  if (/^[0-9A-Za-z]{4,6}$/.test(code) && (L.stocks[code] || E)) try { d = await loadStock(code, E ? 'etfp' : 'stocks'); } catch (e) { /* 讀不到就當作找不到 */ }
+  const P = d && d.prices, i = P ? P.c.map(c => c != null).lastIndexOf(true) : -1;
+  if (i < 0) { TL.info = { miss: code }; return; }
+  const c = String(P.c[i]), last = P.d[P.d.length - 1];
+  TL.info = { code, name: d.name, e: !!E, c: P.c[i], d: P.d[i], al: d.alerts || [], dy: d.fund && d.fund.dy, ex: (d.dv || []).map(x => x.d).filter(x => x > last).sort()[0] };
+  Object.assign(TL.dt, { b: c, s: '', ref: c, k: E ? 'e' : 's' });
+  Object.assign(TL.pl, { p1: c, p2: '' });
+  TL.cp.y = TL.info.dy != null ? String(TL.info.dy) : '';
+}
+function tlInfo(I) {
+  if (!I) return '';
+  if (I.miss) return `<span class="muted small">找不到 ${esc(I.miss)} 的資料，請自行輸入價格</span>`;
+  return `<span class="small"><a href="#/stock/${I.code}">${esc(I.name)} ${I.code}</a> ${md(I.d)} 收盤 <b class="num">${pfmt(I.c)}</b></span>${I.e ? '<span class="pill">ETF</span>' : ''}` +
+    I.al.map(a => a.t === 'disposal' ? `<span class="pill al-d">${a.s > App.latest.date ? `即將處置（${md(a.s)} 起）` : `處置中（至 ${md(a.e)}）`}</span>` : '<span class="pill al-n">注意</span>').join('');
+}
+function tlDraw(tab) {
+  const [title, form, out] = TL_VIEW[tab], st = TL[tab], I = TL.info, draw = () => out(st, I, tlToday());
+  $('#view').innerHTML = pageTabsHTML('toolTabSeg', TL_TABS, tab) +
+    `<section class="sec card"><div class="sec-h"><h2>${title}</h2>${tlInfo(I)}</div><div class="tl-form tl-${tab}" id="tlForm">${form(st, I)}</div></section>` +
+    `<section class="sec card tl-out tl-o${tab}" id="tlOut">${draw()}</section><div class="muted small tl-foot">${TL_FOOT}${tab === 'pl' ? '可借成數、利率、手續費、計息方式與追繳門檻依各機構契約為準。本站不提供投資或借貸建議。' : '本站不提供投資建議。'}</div>`;
+  onSeg('toolTabSeg', t => { history.replaceState(null, '', '#/tools/' + t + (TL.code ? '?c=' + TL.code : '')); tlDraw(t); });
+  $('#tlForm').addEventListener('input', e => {
+    const k = e.target.dataset.k;
+    if (!k) return;
+    st[k] = e.target.value;
+    $('#tlOut').innerHTML = draw();
+    const d = tlNum(st.d, 2), m = tlNum(st.m, 0);
+    if (tab === 'dt' && (k === 'd' || k === 'm') && d > 0 && d <= 10 && m >= 0) localStore('fee', null, JSON.stringify({ d, m }));
+  });
+  $('#tlForm').addEventListener('click', e => {
+    const b = e.target.closest('button'), g = b && b.closest('[data-g]');
+    if (g) { st[g.dataset.g] = b.dataset.v; tlDraw(tab); }
+  });
+  $('#tlOut').addEventListener('click', e => { if (e.target.id === 'tlAll') { $('#tlYr').classList.add('all'); e.target.remove(); } });
+}
+window.renderTools = async function (arg) {
+  const [t0, q = ''] = String(arg || '').split('?'), code = (q.match(/(?:^|&)c=([^&]*)/) || [])[1] || null;
+  if (TL.dt.d == null) Object.assign(TL.dt, tlFeePref(localStore('fee', null)));
+  if (code !== TL.code) await tlLoad(code);
+  tlDraw(TL_VIEW[t0] ? t0 : 'dt');
+};

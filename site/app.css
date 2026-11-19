@@ -351,3 +351,17 @@ a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
 .rk-q #rankSel{flex:none}@media (max-width:720px){.rk-q{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}.rk-q .chip{flex:none;white-space:nowrap}}   /* D30-11 */
 @media (max-width:520px){.metrics.m3{grid-template-columns:repeat(3,minmax(0,1fr))}.metrics.m3 .card{padding:8px}table.dv-tbl th,table.dv-tbl td{padding-left:4px;padding-right:4px}}   /* D30-12 */
 .mx tbody th{white-space:nowrap;width:1%}.mx tbody th .s2{white-space:normal;min-width:7em}
+/* 第 34 輪：試算工具 #/tools 與個股頁首「試算」 */
+.tl-go{flex:none;border:1px solid var(--border2);background:var(--card);border-radius:999px;padding:6px 14px;color:var(--text)}
+.tl-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px 12px;align-items:end}
+.tl-segs{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}.tl-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.tl-form.tl-pl{align-items:start}
+.tl-f{display:flex;flex-direction:column;gap:4px;min-width:0;font-size:12px;color:var(--text2)}
+.tl-f input{width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border2);border-radius:8px;background:var(--card);color:var(--text);font-size:16px;font-variant-numeric:tabular-nums;outline:none}
+.tl-f input:focus{border-color:var(--blue)}.tl-f input::placeholder{font-size:14px}
+.tl-kv{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}.tl-kv th,.tl-kv td{padding:7px 0;border-bottom:1px solid var(--border);vertical-align:top}
+.tl-kv th{text-align:left;font-weight:400;color:var(--text2);padding-right:12px;white-space:nowrap}.tl-kv td{text-align:right}
+.tl-big{font-size:20px}.tl-warn{color:var(--amber);font-weight:600}.tl-msg{color:var(--amber);font-size:13px;margin-bottom:8px}.tl-note{margin-top:6px}.tl-foot{margin:4px 0 16px}
+.tl-all{display:none;margin-top:8px}
+@media (max-width:520px){.tl-yr:not(.all) .tl-x{display:none}.tl-all{display:inline-block}}
+@media (max-width:520px){.tl-opl .tl-kv,.tl-opl .tl-kv tbody{display:block}.tl-opl .tl-kv tr{display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:12px;border-bottom:1px solid var(--border)}.tl-opl .tl-kv th,.tl-opl .tl-kv td{border-bottom:0}.tl-opl .tl-kv td{flex:1 1 auto}.tl-opl .tl-kv td .small{word-break:keep-all}}
+@media (max-width:720px){.s-head .tl-go{position:absolute;top:36px;right:0;padding:4px 10px;font-size:13px}.s-head .s-px{padding-right:56px}}
