@@ -168,14 +168,14 @@ console.log(JSON.stringify([f({ b: '2100', ref: '2100' }, I), f({ b: '2100', s: 
         return
     a, full, over, rev, off, odd, lot, hi, g = o
     assert "<b class=\"tl-big\">2,110</b>" in a and "<th>需上漲</th><td class=\"num \">2 檔</td>" in a and "+837 元" in a and "2,109.16" in a
-    assert "參考價 2,100：漲停 2,310、跌停 1,890（漲跌幅 10%，試算）" in a and "11/20 除權息，參考價另計" in a
+    assert "漲停 2,310、跌停 1,890（參考價 2,100，±10%）" in a and "11/20 除權息，參考價另計" in a
     assert "<th>買方金額</th>" not in a                                          # 只填買價：只算兩平
     assert "<th>買方金額</th><td class=\"num \">2,100,000</td>" in full and "<th>淨損益</th><td class=\"num up\">+10,807 元</td>" in full
     assert "賣價超出漲跌停範圍" in over and "買價超出" not in over
-    assert "需下跌" in rev and "買價不高於此價" in rev and "先賣後買須在當日收盤前買回" in rev
-    assert "不是可成交價位（此價位升降單位 0.1 元）" in off and "損益兩平價" not in off
+    assert "需下跌" in rev and "兩平買價上限（可成交）" in rev and "先賣後買須當日收盤前買回" in rev
+    assert "不在升降單位上（每檔 0.1 元）" in off and "損益兩平價" not in off
     assert "現股當沖股數須為 1,000 的倍數（零股不能當沖）" in odd and "<table" not in odd
-    assert "現股當沖需符合券商資格；處置股、全額交割股可能不能當沖。" in a and "現股當沖需符合" not in lot   # 一般模式不寫當沖提醒
+    assert "當沖需符合券商資格；處置、全額交割股可能不能當沖。" in a and "當沖需符合" not in lot   # 一般模式不寫當沖提醒
     assert "<th>買方手續費</th>" not in lot and "股票 0.3%" in lot and "每筆最低 1 元" in lot
     assert "兩平價高於漲停，當日無法以此價成交" in hi
     assert "需上漲" in g and "需下跌" not in g                                   # 一般模式沒有先賣後買
@@ -211,10 +211,10 @@ console.log(JSON.stringify([f({}), f({ r: '6', n: '20' }), f({ P: '100000', M: '
     assert "2,310,204 元" in m20 and "1,200,000 元" in m20 and "+1,110,204 元" in m20 and m20.count('<tr class="tl-x">') == 16   # 手機只留 5、10、15、20 年
     assert "顯示每一年" in m20 and "顯示每一年" not in n3
     assert "<th>已領股利</th><td class=\"num \">50,000 元</td>" in out and "增加金額（含已領股利）" in out and "領出不再投入" in out
-    assert "請輸入殖利率" in noy and "價格年變動率（%）" in fy and "本站資料：最新殖利率 1.05%（可改）" in fy and 'value="1.05"' in fy
+    assert "請輸入殖利率" in noy and "價格年變動率（%）" in fy and "本站最新殖利率 1.05%" in fy and 'value="1.05"' in fy
     assert "年報酬率（%）" in fn and 'placeholder="自行假設，必填"' in fn and 'data-k="y"' not in fn and 'data-k="r" inputmode="decimal" autocomplete="off" value=""' in fn   # 不預填報酬率
     assert all("<table" not in x for x in (bad, zero, n51, neg)) and "年數請輸入 1～50 的整數" in n51
-    assert "未計稅負、二代健保、ETF 內扣費用、交易手續費，也未做通膨調整" in m20
+    assert "未計稅負、二代健保、內扣費用、手續費與通膨" in m20
     assert not any(BAD.search(x) for x in o)
 
 
@@ -235,12 +235,12 @@ def test_pledge_cases():
     if o is None:
         return
     t1 = o["T1"]
-    for s in ("1,260,000 元<br>", "<th>本次借款</th><td class=\"num \">1,260,000 元", "<th>利息</th><td class=\"num \">2,589 元", "1,262,589 元",
+    for s in ("上限</th><td class=\"num \">1,260,000 元</td>", "<th>本次借款</th><td class=\"num \">1,260,000 元", "<th>利息</th><td class=\"num \">2,589 元", "1,262,589 元",
               "166.67%", "高於追繳門檻 130%", "<b class=\"tl-big\">1,638.00</b>", "收盤價低於 1,638.00 時，維持率低於 130%；與試算價格差 -22.0%"):
         assert s in t1, s
     assert "回到" not in t1 and "目前已低於" not in t1 and "超過可借上限" not in t1 and "2.50%" in t1
     assert "超過可借上限，以上限 1,260,000 計算" in o["T2"] and "1,262,589 元" in o["T2"]
-    assert "840,000 元<br>" in o["T3"] and "250.00%" in o["T3"] and "1,092.00" in o["T3"] and "-48.0%" in o["T3"]
+    assert "上限</th><td class=\"num \">840,000 元</td>" in o["T3"] and "250.00%" in o["T3"] and "1,092.00" in o["T3"] and "-48.0%" in o["T3"]
     assert "<th>利息</th><td class=\"num \">493 元" in o["T4"]
     assert "14,795 元" in o["T5a"] and "÷365" in o["T5a"] and "<th>利息</th><td class=\"num \">15,000 元" in o["T5b"] and "÷360" in o["T5b"]
     t6 = o["T6"]
@@ -249,7 +249,7 @@ def test_pledge_cases():
     t7 = o["T7"]
     assert "130.00%" in t7 and "等於追繳門檻 130%（低於才追繳）" in t7 and "低於</b>" not in t7 and "回到" not in t7 and "差 0.0%" in t7 and "目前已低於" not in t7
     assert "低於</b>追繳門檻" in o["T7b"] and "回到 166%" in o["T7b"]
-    assert "42,210 元<br>" in o["T8"] and "18.30" in o["T8"]
+    assert "上限</th><td class=\"num \">42,210 元</td>" in o["T8"] and "18.30" in o["T8"]
     assert "15,534 元" in o["T9"] and "1,275,534 元" in o["T9"] and "每次最長" not in o["T9"]
     assert "17,260 元" in o["T10"] and "1,277,260 元" in o["T10"] and "每次最長 6 個月，超過需申請續借" in o["T10"]
     assert "每次最長" not in o["T10b"] and "每次最長 6 個月" in o["T10c"]
@@ -328,7 +328,8 @@ def test_pledge_texts():
     if o is None:
         return
     out, form = o
-    for s in ("以元計，實際核撥金額以券商為準", "四捨五入到元，實際以券商計算為準", "銀行、證券金融公司依各自契約",
+    assert "以元計" not in out
+    for s in ("÷365，四捨五入到元", "銀行、證券金融公司依各自契約",
               "借滿 60% 時追繳價約為現價 −22%，借 40% 時約 −48%", "2 個營業日內補繳至 166%", "自第 3 營業日起處分擔保品（俗稱斷頭）",
               "不含利息", "全額交割股不得為擔保品", "前一營業日收盤價 × 60%"):
         assert s in out, s
@@ -415,7 +416,7 @@ const loadStock = async (c, dir) => { loads.push([c, dir]); if (c === '2330') re
     assert 'data-k="b" inputmode="decimal" autocomplete="off" value="2100"' in o["dt"] and 'data-k="ref" inputmode="decimal" autocomplete="off" value="2100"' in o["dt"]
     assert o["n"] == 1                                                              # 同一檔只讀一次
     assert "× 6 折" in o["out"] and o["saved"] == [["fee", '{"d":6,"m":20}']]       # 壞值不存
-    assert o["y"] == "1.05" and "本站資料：最新殖利率" not in o["cp"]                 # 殖利率預填 fund.dy；欄位只在開啟股利時顯示
+    assert o["y"] == "1.05" and "本站最新殖利率" not in o["cp"]                       # 殖利率預填 fund.dy；欄位只在開啟股利時顯示
     assert o["urls"] == ["#/tools/pl?c=2330"]                                       # 切分頁保留 ?c=
     assert "找不到 9999 的資料，請自行輸入價格" in o["miss"] and "找不到 &lt;x&gt;" not in o["bad"] and "找不到 %3Cx%3E 的資料" in o["bad"] and "找不到 &lt;b&gt;x 的資料" in o["xss"] and "<b>x" not in o["xss"]
     assert ["9999", "stocks"] not in o["loads"] and ["0050", "etfp"] in o["loads"] and len(o["loads"]) == 2   # 不在 latest.json 的代號不發請求
@@ -551,12 +552,12 @@ console.log(JSON.stringify([f({ b: '2100', ref: '2100' }, I), f({ b: '2100', ref
     same, other, none, dtf, dtr, plf, pl = o
     # D59：標籤不寫「昨收」；參考價等於帶入的收盤時，寫出是哪天的收盤、用於下一交易日；自行改的參考價或沒有帶入時照舊
     assert "參考價（算漲跌停）" in dtf and "昨收" not in dtf
-    assert "參考價 2,100（11/19 收盤，用於下一交易日）：漲停 2,310、跌停 1,890（漲跌幅 10%，試算）" in same
-    assert "參考價 2,175：漲停 2,390、跌停 1,960" in other and "用於下一交易日" not in other
-    assert "參考價 2,100：漲停 2,310、跌停 1,890" in none
+    assert "下一交易日漲停 2,310、跌停 1,890（參考價 11/19 收盤 2,100，±10%）" in same
+    assert "漲停 2,390、跌停 1,960（參考價 2,175，±10%）" in other and "下一交易日" not in other
+    assert "漲停 2,310、跌停 1,890（參考價 2,100，±10%）" in none
     # D60：375 寬不截斷的短 placeholder；長說明移到質借說明
     assert 'placeholder="空白 = 只算兩平"' in dtf and 'placeholder="空白 = 只算兩平"' in dtr and "只算損益兩平" not in dtf + dtr
-    assert 'placeholder="空白 = 擔保價格"' in plf and "改低可看下跌時" not in plf and "試算價格可改低，看下跌時的維持率。" in pl
+    assert 'placeholder="空白 = 擔保價格"' in plf and "改低可看下跌時" not in plf and "可把試算價格改低看變化" in pl
     # 使用者 11/19：成數快捷鈕放在可借成數正下方；質借表單頂端對齊，不把同列「數量」往下推
     assert '<div class="tl-f"><label class="tl-f"><span>可借成數（%）</span>' in plf and '<div data-g="cap" class="tl-chips"><button class="chip" data-v="60">' in plf
     assert ".tl-form.tl-pl{align-items:start}" in CSS and '<div class="tl-form tl-${tab}" id="tlForm">' in TOOLS

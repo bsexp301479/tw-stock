@@ -1,0 +1,738 @@
+diff --git a/README.md b/README.md
+index 9ef9170..434b7ca 100644
+--- a/README.md
++++ b/README.md
+@@ -80,6 +80,7 @@ python3 tests/test_iter08.py                     # 第 8 輪測試
+ python3 tests/test_iter09.py                     # 第 9 輪測試
+ python3 tests/test_iter10.py                     # 第 10 輪測試
+ python3 tests/test_iter34.py                     # 第 34 輪測試（試算工具）
++python3 tests/test_iter38.py                     # 第 38 輪測試（工具頁文字、零股提示、複利成長圖）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -136,6 +137,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker
+ - 今日頁估值位置卡（第 9 輪，`latest.json` 的 `valuation`）：上市、上櫃股票的官方本益比、淨值比、殖利率**中位數**在近一年的位置。窗口 = 最近 242 個有官方本益比資料的交易日；中位數每天分市場計算，本益比、淨值比只計入大於 0 的股票，殖利率計入非空值（含 0）；位置 = 窗口內中位數小於或等於今天的天數 ÷ 天數；今天是窗口最低／最高時顯示「一年最低／最高」；附上市本益比中位數近 60 日迷你圖。**不是加權指數本益比**；本益比用近 4 季 EPS，財報公布期間 EPS 變化也會改變位置；殖利率用去年股利；只是位置，不是買賣訊號。第 10 輪：季報窗口內、當季已有資料時，卡片下方加一行「第 3 季財報已收：上市 N、上櫃 M 家（前一季 X、Y 家）；本益比中位數會隨 EPS 更新而變動」（`latest.json` 的 `fin_progress`：`{q, n: {市場: 家數}, p: {市場: 前一季家數}}`；窗口外或當季 0 家為 null，不顯示）。第 14 輪：`fin_progress.due` = [一般業, 金融業] 申報截止日（取自 `health.FIN_DUE`，年報兩者都是 3/31，只寫一次），括號內加「一般業 11/14、金融業 11/29 截止」，資料日已過的寫「已截止」；殖利率的一年位置加「越高 = 殖利率相對越高」（方向和本益比、淨值比相反；今日頁與個股頁）。第 15 輪：截止日後面加星期（「分別是週六、週日」），截止日是週六、週日時寫「遇假日可能順延到 下週一」，「已截止」也用順延到下週一的日期判斷（例如 2026 Q3 一般業 11/14 是週六，11/16 當天仍寫「截止」，11/17 起「已截止」）；`fin_progress.due` 仍是名目日期。只處理週末，平日的國定假日不處理（網站沒有休市表）；行政程序法第 48 條規定期間末日為週六時以下週一上午為末日、週日或國定假日以次日為末日，但本站沒有查到證交所、金管會對財報申報期限的個別公告，所以寫「可能」，以官方公告為準。第 12 輪：卡片加「加權本益比（市值加權）」一行（`valuation.TWSE|TPEx.wpe`：`v` 今天值、`p` 一年位置 %、`lo`／`hi` 一年最低／最高、`cov` 計入市值占比 %、`t` [市值最大的計入股票, 占計入市值 %]）。加權本益比 = Σ 市值 ÷ Σ（市值 ÷ 官方本益比），市值 = 收盤 × `stocks.shares`（**目前股數**，歷史日期也用目前股數），只計本益比 > 0 的股票（不含虧損公司、不含 ETF）；窗口與位置定義同中位數。大型股影響大（上市台積電約占 43%），中位數反映一般股票；是本站計算，**不是證交所公布的數字**。
+ - 個股頁估值位置（第 9 輪，`stocks/{代號}.json` 的 `val`：`{d, pe|pb|dy: [位置 %, 一年最低, 一年最高]}`）：本益比、淨值比、殖利率指標卡加「一年位置 N%（最低～最高）」，窗口同上，只計入大於 0 的官方值（殖利率 0 = 不配息，不算位置）。今天值為空或 ≤ 0（虧損、無股利）、窗口內有效天數少於 120 天（新上市），或 90 天內股本變動（官方值可能尚未調整）時不顯示。估值說明（第 10 輪改寫）：本益比 = 股價 ÷ 近 4 季 EPS；獲利下降時本益比會升高，獲利大增時本益比（淨值比也可能）會落到一年低點（例如景氣循環股在獲利高峰），不代表股價便宜；有季報卡時加「請對照下方季報卡的近 4 季 EPS 與一年前比較」。淨值比卡也標「資料 MM/DD」（股本變動註記照舊只在本益比、殖利率卡）。第 12 輪：個股頁指標卡加「市值」（≥ 1 萬億顯示兆）與「週轉率」（`stocks/{代號}.json` 的 `mt`：`{d, mc 億元, to %}`，目前股數計算；沒有股數的股票沒有 `mt`，兩張卡顯示 `--`）。
+ - 個股頁河流圖（第 37 輪，「基本面」分頁一年位置說明之下、月營收／季報之前；`stocks/{代號}.json` 的 `band` = `{d, pe|pb: {s: [[起日, 值|null], …], k: [5 個倍數], n}}`）：和 `val` 同一個窗口與查詢。`s` 是「原始收盤 ÷ 官方本益比（淨值比）」反推的近 4 季 EPS（每股淨值）階梯，4 位有效數字；官方值空或 ≤ 0 是 `null` 段（畫面斷線），無成交日沿用前一段，和這一段相差超過 max(0.5%, 0.012 ÷ 官方值) 才開新段，超過 24 段不輸出；`k` = 窗口內官方值的第 10／25／50／75／90 百分位（最近序位法）；有效天數 < 120 不輸出該指標，90 天內股本變動不輸出 `band`。畫面是原始收盤＋5 條倍數線（不塗色），可切換本益比／淨值比，今天沒有本益比時預設淨值比；只描述股價和獲利（淨值）的關係，倍數用近一年資料算，不是股價的評價。
++- 工具頁（第 38 輪）：三個工具的標籤縮短到 1024／375 寬一行放得下（折扣標籤「手續費折扣（折）」，「不打折 = 10」放在 placeholder），說明文字縮短、免責與規則出處用語保留；折扣驗證訊息改成和程式一致（大於 0、最多 10、小數最多 2 位）；非當沖、股數不是 1,000 的倍數且最低手續費 20 元時提示「零股多數券商每筆最低 1 元」，不自動改值；交易成本、複利結果表在 520px 以下整列換行。複利結果加逐年成長圖（純 SVG，第 0～n 年：期末金額實線、累計投入虛線，開股利時加另一種股利處理方式的點線對照；只畫線不塗色，顏色用 CSS 變數，數字都在圖下圖例，和摘要表同一格式）。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+diff --git a/site/app.css b/site/app.css
+index 8103bb9..17e2681 100644
+--- a/site/app.css
++++ b/site/app.css
+@@ -364,5 +364,7 @@ a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
+ .tl-all{display:none;margin-top:8px}
+ @media (max-width:520px){.tl-yr:not(.all) .tl-x{display:none}.tl-all{display:inline-block}}
+ @media (max-width:520px){.tl-opl .tl-kv,.tl-opl .tl-kv tbody{display:block}.tl-opl .tl-kv tr{display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:12px;border-bottom:1px solid var(--border)}.tl-opl .tl-kv th,.tl-opl .tl-kv td{border-bottom:0}.tl-opl .tl-kv td{flex:1 1 auto}.tl-opl .tl-kv td .small{word-break:keep-all}}
++@media (max-width:520px){:is(.tl-odt,.tl-ocp) .tl-kv,:is(.tl-odt,.tl-ocp) .tl-kv tbody{display:block}:is(.tl-odt,.tl-ocp) .tl-kv tr{display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:12px;border-bottom:1px solid var(--border)}:is(.tl-odt,.tl-ocp) .tl-kv th,:is(.tl-odt,.tl-ocp) .tl-kv td{border-bottom:0}:is(.tl-odt,.tl-ocp) .tl-kv td{flex:1 1 auto;white-space:nowrap}}   /* 第 38 輪 D74：交易成本、複利結果表窄螢幕整列換行，數值與單位不拆開 */
++.tl-gr{display:block;width:100%;height:160px;margin:12px 0 6px}.tl-lg i{height:0;border-radius:0;border-top:2px solid var(--blue)}.tl-lg i.d{border-top:2px dashed var(--text2)}.tl-lg i.v{border-top:2px dotted var(--violet)}   /* 第 38 輪 F38-3a：複利成長圖（只畫線、不塗色） */
+ @media (max-width:720px){.s-head .tl-go{position:absolute;top:36px;right:0;padding:4px 10px;font-size:13px}.s-head .s-px{padding-right:56px}}
+ .band-lg{margin:6px 0 4px}.band-lg i{background:var(--blue)}.band-lg i.mid{height:4px}.band-lg i.dash{background:none;height:0;border-top:2px dashed var(--blue);border-radius:0}.band-lg i.cl{background:var(--text)}   /* 第 37 輪 F37-2：河流圖圖例在圖下方 */
+diff --git a/site/index.html b/site/index.html
+index f04a307..0e1e223 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,12 +7,12 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=5922ab8d">
++<link rel="stylesheet" href="app.css?v=cbb3fec1">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+ <script src="app.js?v=d175c222" defer></script>
+ <script src="stock.js?v=94125fde" defer></script>
+-<script src="tools.js?v=9f5f495d" defer></script>
++<script src="tools.js?v=e587ec88" defer></script>
+ </head>
+ <body>
+ <header class="top">
+diff --git a/site/tools.js b/site/tools.js
+index 25951b6..28020cf 100644
+--- a/site/tools.js
++++ b/site/tools.js
+@@ -105,11 +105,12 @@ function tlDtOut(st, I, today) {
+   const p0 = rev ? s : b, ref = tlC(st.ref), msg = [];
+   if (!(p0 > 0)) msg.push(`請輸入${rev ? '賣價' : '買價'}`);
+   if (!(n > 0)) msg.push('請輸入股數'); else if (dt && n % 1000) msg.push('現股當沖股數須為 1,000 的倍數（零股不能當沖）');
+-  if (!(d > 0 && d <= 10)) msg.push('手續費折扣請輸入 0～10 折（不打折為 10）');
++  if (!(d > 0 && d <= 10)) msg.push('手續費折扣請填大於 0、最多 10 的折數，小數最多 2 位（不打折為 10）');
+   if (!(m >= 0)) msg.push('最低手續費請輸入 0 以上的整數');
+   const t = tlTax(st.k, dt, today), rules = tlNote([tlTaxTxt(st.k, dt, t),
+-    `手續費：成交金額 × 0.1425% × ${d > 0 && d <= 10 ? pfmt(d) : '--'} 折，元以下捨去，每筆最低 ${m >= 0 ? fmt(m) : '--'} 元（折扣與最低手續費依券商）`,
+-    dt ? '現股當沖需符合券商資格；處置股、全額交割股可能不能當沖。' + (rev ? '先賣後買須在當日收盤前買回。' : '') : '']);
++    `手續費：成交金額 × 0.1425% × ${d > 0 && d <= 10 ? pfmt(d) : '--'} 折${d > 0 && d < 10 ? '（以退還後計）' : ''}，元以下捨去，每筆最低 ${m >= 0 ? fmt(m) : '--'} 元`,
++    !dt && n > 0 && n % 1000 && m === TL_RULES.minFee ? '零股多數券商每筆最低 1 元，可在「最低手續費」改' : '',   // 第 38 輪 D72 = A：只提示、不改值
++    dt ? '當沖需符合券商資格；處置、全額交割股可能不能當沖。' + (rev ? '先賣後買須當日收盤前買回。' : '') : '']);
+   if (msg.length) return tlMsg(msg) + rules;
+   const o = { b, s, n, dz: Math.round(d * 100), min: m, k: st.k, dt, rev, today }, lim = ref > 0 ? tlLimit(ref, e) : null, out = [];
+   let rows = '';
+@@ -119,65 +120,82 @@ function tlDtOut(st, I, today) {
+       tlRow('證交稅', fmt(r.tax)) + tlRow('淨損益', tlS(r.net / 100, r.net % 100 ? 2 : 0) + ' 元', cls(r.net)) + tlRow('報酬率（÷ 買方金額）', tlS(r.net / r.ba * 100, 2) + '%', cls(r.net));
+   }
+   const tk = tlTick(p0, e), pn = rev ? '賣價' : '買價';
+-  if (p0 % tk) out.push(`${pn} ${pfmt(p0 / 100)} 不是可成交價位（此價位升降單位 ${pfmt(tk / 100)} 元），損益兩平只在可成交價位計算`);
++  if (p0 % tk) out.push(`${pn} ${pfmt(p0 / 100)} 不在升降單位上（每檔 ${pfmt(tk / 100)} 元），無法算兩平`);
+   else {
+     const be = tlBreak(o);
+     rows += tlRow(`損益兩平價（理論）`, fmt(be.th / 100, 2)) + (be.p == null ? tlRow('損益兩平價（可成交）', rev ? '無法打平' : '2,000 檔內仍未打平')
+-      : tlRow(`損益兩平價（可成交${rev ? '，買價不高於此價' : ''}）`, `<b class="tl-big">${tlPx(be.p, e)}</b>`) + tlRow(rev ? '需下跌' : '需上漲', `${be.n} 檔`) +
++      : tlRow(rev ? '兩平買價上限（可成交）' : '損益兩平價（可成交）', `<b class="tl-big">${tlPx(be.p, e)}</b>`) + tlRow(rev ? '需下跌' : '需上漲', `${be.n} 檔`) +
+         tlRow('以此價成交淨損益', tlS(be.net / 100, be.net % 100 ? 2 : 0) + ' 元', cls(be.net)));
+     if (be.p != null && dt && lim && (rev ? be.p < lim[1] : be.p > lim[0])) out.push(`兩平價${rev ? '低於跌停' : '高於漲停'}，當日無法以此價成交`);
+   }
+   if (lim) {
+-    const rd = I && I.d && I.c != null && ref === tlC(String(I.c)) ? `（${md(I.d)} 收盤，用於下一交易日）` : '';   // QA34-03：帶入的收盤是下一交易日的參考價
+-    out.push(`參考價 ${pfmt(ref / 100)}${rd}：漲停 ${tlPx(lim[0], e)}、跌停 ${tlPx(lim[1], e)}（漲跌幅 10%，試算）` + (e ? '；部分 ETF（國外成分、槓桿／反向）漲跌幅規定不同' : ''));
++    const rd = I && I.d && I.c != null && ref === tlC(String(I.c));   // QA34-03：帶入的收盤是下一交易日的參考價
++    out.push(`${rd ? '下一交易日' : ''}漲停 ${tlPx(lim[0], e)}、跌停 ${tlPx(lim[1], e)}（參考價 ${rd ? md(I.d) + ' 收盤 ' : ''}${pfmt(ref / 100)}，±${TL_RULES.limit}%）` + (e ? '；國外成分、槓反 ETF 漲跌幅規定不同' : ''));
+     [[b, '買價'], [s, '賣價']].forEach(([p, l]) => { if (p > 0 && (p > lim[0] || p < lim[1])) out.push(`${l}超出漲跌停範圍`); });
+   }
+   if (I && I.ex) out.push(`${md(I.ex)} 除權息，參考價另計`);
+-  out.push(`升降單位：${pn} ${pfmt(p0 / 100)} 元的價位每檔 ${pfmt(tk / 100)} 元（${e ? 'ETF' : '股票'}）`);
++  out.push(`升降單位：${pfmt(p0 / 100)} 元價位每檔 ${pfmt(tk / 100)} 元`);
+   return `<table class="tl-kv">${rows}</table>` + tlNote(out) + rules;
+ }
+ 
+ function tlCpOut(st) {
+   const P = tlNum(st.P), M = tlNum(st.M), r = tlNum(st.r), n = tlNum(st.n, 0), dv = st.dv !== '0', y = tlNum(st.y), msg = [];
+-  if (!(P >= 0 && M >= 0 && P + M > 0)) msg.push('請輸入初始金額或每月投入（0 以上，至少一項大於 0）');
++  if (!(P >= 0 && M >= 0 && P + M > 0)) msg.push('初始金額、每月投入請填 0 以上，至少一項大於 0');
+   if (!(r > -100 && r <= 100)) msg.push(`請輸入${dv ? '價格年變動率' : '年報酬率'}（自行假設，-99～100%）`);
+   if (!(n >= 1 && n <= 50)) msg.push('年數請輸入 1～50 的整數');
+   if (dv && !(y >= 0 && y <= 100)) msg.push('請輸入殖利率（0～100%）');
+-  const note = tlNote(['未計稅負、二代健保、ETF 內扣費用、交易手續費，也未做通膨調整；結果依你填的數字計算，不代表本站預期。',
++  const note = tlNote(['未計稅負、二代健保、內扣費用、手續費與通膨；結果依你填的假設計算，不代表本站預期。',
+     dv ? '股利以每年年底市值 × 殖利率計算' + (st.dv === 're' ? '，當年底再投入。' : '，領出不再投入。') : '']);
+   if (msg.length) return tlMsg(msg) + note;
+   const R = tlCompound({ P, M, r, n, begin: st.at === 'begin', y: dv ? y : 0, re: st.dv === 're' }), [, inv, v, paid] = R[R.length - 1], out = st.dv === 'out';
++  const A = dv ? tlCompound({ P, M, r, n, begin: st.at === 'begin', y, re: out }) : null;   // 第 38 輪 F38-3a：另一種股利處理方式（對照線）
++  const ln = (rows, o) => [P].concat(rows.map(x => o ? x[2] + x[3] : x[2])), fin = (x, o) => fmt(o ? Math.round(x[2]) + Math.round(x[3]) : x[2]);   // 第 0 年 = 初始金額；領出 = 期末金額＋已領股利（與表格兩格相加一致）
++  const G = [[out ? '期末金額＋已領股利' : '期末金額', ln(R, out), fin(R[n - 1], out), '', 'stroke="var(--blue)" stroke-width="2"'],
++    ['累計投入', [P].concat(R.map(x => x[1])), fmt(inv), 'd', 'stroke="var(--text2)" stroke-width="1.5" stroke-dasharray="5 3"']];
++  if (A) G.push([out ? '對照：股利再投入' : '對照：股利領出（期末金額＋已領股利）', ln(A, !out), fin(A[n - 1], !out), 'v', 'stroke="var(--violet)" stroke-width="1.5" stroke-dasharray="1 3" stroke-linecap="round"']);
+   return `<table class="tl-kv">${tlRow('期末金額', fmt(v) + ' 元') + (out ? tlRow('已領股利', fmt(paid) + ' 元') : '') + tlRow('投入本金合計', fmt(inv) + ' 元') +
+-    tlRow(out ? '增加金額（含已領股利）' : '增加金額', tlS(Math.round(v + paid - inv), 0) + ' 元')}</table>` + note +
++    tlRow(out ? '增加金額（含已領股利）' : '增加金額', tlS(Math.round(v + paid - inv), 0) + ' 元')}</table>` + tlCpGraph(G, n) + note +
+     `<div class="tbl-wrap"><table class="tbl tl-yr" id="tlYr"><thead><tr><th>第幾年</th><th>累計投入</th><th>期末金額</th>${out ? '<th>已領股利</th>' : ''}</tr></thead><tbody>` +
+     R.map(([k, a, b, c]) => `<tr${k % 5 && k !== n ? ' class="tl-x"' : ''}><td>${k}</td><td class="num">${fmt(a)}</td><td class="num">${fmt(b)}</td>${out ? `<td class="num">${fmt(c)}</td>` : ''}</tr>`).join('') +
+     `</tbody></table></div>${n > 5 ? '<button class="chip tl-all" id="tlAll">顯示每一年</button>' : ''}`;
+ }
+ 
++// 第 38 輪 F38-3a：複利逐年成長圖。G = [[名稱, 第 0～n 年的值, 第 n 年（與表格同格式）, 圖例樣式, 線的屬性]]；只畫線不塗色（D78-2 = A），
++// 數字都在圖下 HTML（SVG 會被拉伸）。縱軸 0 起，格線間距 = 不小於最大值 ÷ 4 的 1、2、5 × 10^k（至少 1 元），1～4 條
++function tlCpGraph(G, n) {
++  const mx = Math.max(...G.map(g => Math.max(...g[1]))), e = 10 ** Math.floor(Math.log10(mx / 4));
++  const step = Math.max(1, [1, 2, 5, 10].map(k => k * e).find(s => s >= mx / 4) || 10 * e), g = Math.ceil(mx / step), top = g * step;
++  const X = i => (i / n * 100).toFixed(2), Y = v => (2 + (1 - v / top) * 96).toFixed(2), hl = (y, c) => `<line x1="0" x2="100" y1="${y}" y2="${y}" stroke="var(--${c})" vector-effect="non-scaling-stroke"/>`;
++  let s = hl(Y(0), 'border2');
++  for (let k = 1; k <= g; k++) s += hl(Y(k * step), 'border');
++  [2, 0, 1].forEach(j => { if (G[j]) s += `<polyline points="${G[j][1].map((v, i) => X(i) + ',' + Y(v)).join(' ')}" fill="none" ${G[j][4]} vector-effect="non-scaling-stroke"/>`; });   // 虛線畫在最上面，重疊時仍看得到
++  return `<svg class="tl-gr" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${s}</svg><div class="kleg tl-lg">` +
++    G.map(g => `<span class="lg"><i class="${g[3]}"></i>${g[0]} <b>${g[2]}</b> 元</span>`).join('') + `</div><div class="muted small">第 0～${n} 年；縱軸 0～${fmt(top)} 元，每格 ${fmt(step)} 元</div>`;
++}
++
+ function tlPlOut(st, I) {
+   const p1 = tlC(st.p1), p2 = String(st.p2).trim() === '' ? p1 : tlC(st.p2), q = tlNum(st.q, 0), n = st.u === 'lot' ? q * 1000 : q;
+   const cap = tlNum(st.cap, 0), loan = String(st.loan).trim() === '' ? null : tlNum(st.loan, 0), rate = tlNum(st.rate, 3), days = tlNum(st.days, 0), fee = tlNum(st.fee, 0), call = tlNum(st.call, 0), msg = [];
+   if (!(p1 > 0)) msg.push('請輸入擔保價格');
+   if (!(n > 0)) msg.push('請輸入數量');
+   if (!(cap >= 0 && cap <= 100)) msg.push('可借成數請輸入 0～100 的整數');
+-  if (loan !== null && !(loan >= 0)) msg.push('借款金額請輸入 0 以上的整數（空白 = 以上限計算）');
++  if (loan !== null && !(loan >= 0)) msg.push('借款金額請輸入 0 以上的整數，或留空');
+   if (!(rate >= 0 && rate <= 100)) msg.push('請輸入年利率（各券商不同，本站不預填）');
+   if (!(days >= 1 && days <= TL_RULES.pl.max)) msg.push(`借款天數請輸入 1～${TL_RULES.pl.max} 的整數`);
+   if (!(fee >= 0)) msg.push('手續費請輸入 0 以上的整數');
+   if (!(call >= 100 && call <= 999)) msg.push('追繳門檻請輸入 100～999 的整數');
+   const D = TL_RULES.pl, note = tlNote([I && I.al && I.al.some(a => a.t === 'disposal') ? '<b class="tl-warn">處置股可能不適用為擔保品，請洽券商</b>' : '',
+-    `證券商不限用途款項借貸：維持率低於 ${D.call}% 時須於 2 個營業日內補繳至 ${D.back}%，未補繳且仍低於 ${D.call}% 時，自第 3 營業日起處分擔保品（俗稱斷頭）；銀行、證券金融公司依各自契約。`,
+-    `借滿 60% 時追繳價約為現價 −22%，借 40% 時約 −48%：借得越多，離追繳價越近。`,
+-    '試算價格可改低，看下跌時的維持率。',
+-    '維持率 = 擔保品市值 ÷ 借款本金（不含利息），每日以收盤價整戶計算，本頁只算單檔；除權息後擔保品市值下降，維持率也會下降。',
+-    '可借成數：得為融資融券的上市櫃股票最高為前一營業日收盤價 × 60%，其餘 40%，各券商可再調低；全額交割股不得為擔保品，處置股、槓桿／反向 ETF 是否適用請洽券商。']);
++    `證券商不限用途借貸：維持率低於 ${D.call}% 須於 2 個營業日內補繳至 ${D.back}%；未補繳且仍低於 ${D.call}%，自第 3 營業日起處分擔保品（俗稱斷頭）。銀行、證券金融公司依各自契約。`,
++    `借滿 60% 時追繳價約為現價 −22%，借 40% 時約 −48%。`,
++    '維持率 = 擔保品市值 ÷ 借款本金（不含利息），實際每日以收盤價整戶計算；本頁只算單檔，可把試算價格改低看變化；除權息後維持率也會下降。',
++    '可借成數上限：得為融資融券的股票為前一營業日收盤價 × 60%，其餘 40%，券商可再調低；全額交割股不得為擔保品，處置股、槓反 ETF 請洽券商。']);
+   if (msg.length) return tlMsg(msg) + note;
+   const R = tlPledge({ p1, p2: p2 > 0 ? p2 : 0, n, cap, loan, rate: Math.round(rate * 1000), days, base: +st.base, call }), warn = [];
+   if (cap > D.cap) warn.push(`成數超過證券商不限用途借貸官方上限 ${D.cap}%（其他管道依各自契約）`);
+   if (R.over) warn.push(`超過可借上限，以上限 ${fmt(R.max)} 計算`);
+   if (days > D.term) warn.push('每次最長 6 個月，超過需申請續借');
+-  let rows = tlRow('可借金額上限', fmt(R.max) + ' 元<br><span class="muted small">以元計，實際核撥金額以券商為準</span>') + tlRow('本次借款', fmt(R.L) + ' 元') +
+-    tlRow('利息', fmt(R.I) + ` 元<br><span class="muted small">÷${st.base}，四捨五入到元，實際以券商計算為準</span>`) + tlRow('手續費', fmt(fee) + ' 元') +
++  let rows = tlRow('可借金額上限', fmt(R.max) + ' 元') + tlRow('本次借款', fmt(R.L) + ' 元') +
++    tlRow('利息', fmt(R.I) + ` 元<br><span class="muted small">÷${st.base}，四捨五入到元</span>`) + tlRow('手續費', fmt(fee) + ' 元') +
+     tlRow('到期應還（本金＋利息）', fmt(R.L + R.I) + ' 元') + tlRow('總成本（利息＋手續費）', fmt(R.I + fee) + ' 元') +
+     tlRow('換算年化成本', R.L ? fmt((R.I + fee) / R.L * 365 / days * 100, 2) + '%' : '--');
+   if (R.ratio != null) {
+@@ -191,16 +209,16 @@ function tlPlOut(st, I) {
+ 
+ function tlDtForm(st) {
+   const dt = st.mode === 'dt', rev = dt && st.dir === 's', bs = [tlIn('b', '買價（元）', st.b, rev ? '空白 = 只算兩平' : ''), tlIn('s', '賣價（元）', st.s, rev ? '' : '空白 = 只算兩平')];
+-  return `<div class="tl-segs">${tlSeg('mode', [['dt', '現股當沖'], ['g', '一般（非當沖）']], st.mode)}${dt ? tlSeg('dir', [['b', '先買後賣'], ['s', '先賣後買']], st.dir) : ''}` +
++  return `<div class="tl-segs">${tlSeg('mode', [['dt', '現股當沖'], ['g', '非當沖']], st.mode)}${dt ? tlSeg('dir', [['b', '先買後賣'], ['s', '先賣後買']], st.dir) : ''}` +
+     `${tlSeg('k', [['s', '股票'], ['e', 'ETF'], ['b', '債券 ETF']], st.k)}</div>` + (rev ? bs.reverse() : bs).join('') +
+     tlIn('n', '股數', st.n, dt ? '1,000 的倍數' : '零股可填') + tlIn('ref', '參考價（算漲跌停）', st.ref, '可空白') +
+-    tlIn('d', '手續費折扣（折，不打折為 10）', st.d) + tlIn('m', '最低手續費（元）', st.m);
++    tlIn('d', '手續費折扣（折）', st.d, '不打折 = 10') + tlIn('m', '最低手續費（元）', st.m);
+ }
+ function tlCpForm(st, I) {
+   const dv = st.dv !== '0';
+-  return `<div class="tl-segs">${tlSeg('at', [['end', '每月期末投入'], ['begin', '每月期初投入']], st.at)}${tlSeg('dv', [['0', '不計股利'], ['re', '股利再投入'], ['out', '股利領出']], st.dv)}</div>` +
++  return `<div class="tl-segs">${tlSeg('at', [['end', '期末投入'], ['begin', '期初投入']], st.at)}${tlSeg('dv', [['0', '不計股利'], ['re', '股利再投入'], ['out', '股利領出']], st.dv)}</div>` +
+     tlIn('P', '初始金額（元）', st.P) + tlIn('M', '每月投入（元）', st.M) + tlIn('r', dv ? '價格年變動率（%）' : '年報酬率（%）', st.r, '自行假設，必填') + tlIn('n', '年數（1～50）', st.n) +
+-    (dv ? tlIn('y', '殖利率（%）', st.y, '必填') + (I && I.dy != null ? `<div class="muted small tl-f">本站資料：最新殖利率 ${fmt(I.dy, 2)}%（可改）</div>` : '') : '');
++    (dv ? tlIn('y', '殖利率（%）', st.y, '必填') + (I && I.dy != null ? `<div class="muted small tl-f">本站最新殖利率 ${fmt(I.dy, 2)}%</div>` : '') : '');
+ }
+ function tlPlForm(st) {
+   return `<div class="tl-segs">${tlSeg('u', [['lot', '張'], ['sh', '股']], st.u)}${tlSeg('base', [['365', '計息 ÷365'], ['360', '計息 ÷360']], st.base)}</div>` +
+@@ -211,7 +229,7 @@ function tlPlForm(st) {
+     tlIn('days', `借款天數（1～${TL_RULES.pl.max}）`, st.days) + tlIn('fee', '手續費（一次，元）', st.fee) + tlIn('call', '追繳門檻（%）', st.call);
+ }
+ const TL_VIEW = { dt: ['交易成本與損益兩平', tlDtForm, tlDtOut], cp: ['複利', tlCpForm, tlCpOut], pl: ['股票質借（單檔擔保品）', tlPlForm, tlPlOut] };
+-const TL_FOOT = '本頁為試算，結果僅供參考，不代表實際成交、扣款或核貸金額；費率、稅率與規則以券商與主管機關公告為準。';
++const TL_FOOT = '試算僅供參考，不代表實際成交、扣款或核貸金額；費率、稅率、折扣與規則以券商與主管機關公告為準。';
+ 
+ // 網址帶代號時讀最新收盤（股票 data/stocks、ETF data/etfp）；不在 latest.json 的代號不發請求
+ async function tlLoad(code) {
+@@ -238,7 +256,7 @@ function tlDraw(tab) {
+   const [title, form, out] = TL_VIEW[tab], st = TL[tab], I = TL.info, draw = () => out(st, I, tlToday());
+   $('#view').innerHTML = pageTabsHTML('toolTabSeg', TL_TABS, tab) +
+     `<section class="sec card"><div class="sec-h"><h2>${title}</h2>${tlInfo(I)}</div><div class="tl-form tl-${tab}" id="tlForm">${form(st, I)}</div></section>` +
+-    `<section class="sec card tl-out tl-o${tab}" id="tlOut">${draw()}</section><div class="muted small tl-foot">${TL_FOOT}${tab === 'pl' ? '可借成數、利率、手續費、計息方式與追繳門檻依各機構契約為準。本站不提供投資或借貸建議。' : '本站不提供投資建議。'}</div>`;
++    `<section class="sec card tl-out tl-o${tab}" id="tlOut">${draw()}</section><div class="muted small tl-foot">${TL_FOOT}${tab === 'pl' ? '成數、利率、計息與追繳門檻依各機構契約為準。本站不提供投資或借貸建議。' : '本站不提供投資建議。'}</div>`;
+   onSeg('toolTabSeg', t => { history.replaceState(null, '', '#/tools/' + t + (TL.code ? '?c=' + TL.code : '')); tlDraw(t); });
+   $('#tlForm').addEventListener('input', e => {
+     const k = e.target.dataset.k;
+diff --git a/tests/test_iter34.py b/tests/test_iter34.py
+index fa1a291..8d9cd3a 100644
+--- a/tests/test_iter34.py
++++ b/tests/test_iter34.py
+@@ -168,14 +168,14 @@ console.log(JSON.stringify([f({ b: '2100', ref: '2100' }, I), f({ b: '2100', s:
+         return
+     a, full, over, rev, off, odd, lot, hi, g = o
+     assert "<b class=\"tl-big\">2,110</b>" in a and "<th>需上漲</th><td class=\"num \">2 檔</td>" in a and "+837 元" in a and "2,109.16" in a
+-    assert "參考價 2,100：漲停 2,310、跌停 1,890（漲跌幅 10%，試算）" in a and "11/20 除權息，參考價另計" in a
++    assert "漲停 2,310、跌停 1,890（參考價 2,100，±10%）" in a and "11/20 除權息，參考價另計" in a
+     assert "<th>買方金額</th>" not in a                                          # 只填買價：只算兩平
+     assert "<th>買方金額</th><td class=\"num \">2,100,000</td>" in full and "<th>淨損益</th><td class=\"num up\">+10,807 元</td>" in full
+     assert "賣價超出漲跌停範圍" in over and "買價超出" not in over
+-    assert "需下跌" in rev and "買價不高於此價" in rev and "先賣後買須在當日收盤前買回" in rev
+-    assert "不是可成交價位（此價位升降單位 0.1 元）" in off and "損益兩平價" not in off
++    assert "需下跌" in rev and "兩平買價上限（可成交）" in rev and "先賣後買須當日收盤前買回" in rev
++    assert "不在升降單位上（每檔 0.1 元）" in off and "損益兩平價" not in off
+     assert "現股當沖股數須為 1,000 的倍數（零股不能當沖）" in odd and "<table" not in odd
+-    assert "現股當沖需符合券商資格；處置股、全額交割股可能不能當沖。" in a and "現股當沖需符合" not in lot   # 一般模式不寫當沖提醒
++    assert "當沖需符合券商資格；處置、全額交割股可能不能當沖。" in a and "當沖需符合" not in lot   # 一般模式不寫當沖提醒
+     assert "<th>買方手續費</th>" not in lot and "股票 0.3%" in lot and "每筆最低 1 元" in lot
+     assert "兩平價高於漲停，當日無法以此價成交" in hi
+     assert "需上漲" in g and "需下跌" not in g                                   # 一般模式沒有先賣後買
+@@ -211,10 +211,10 @@ console.log(JSON.stringify([f({}), f({ r: '6', n: '20' }), f({ P: '100000', M: '
+     assert "2,310,204 元" in m20 and "1,200,000 元" in m20 and "+1,110,204 元" in m20 and m20.count('<tr class="tl-x">') == 16   # 手機只留 5、10、15、20 年
+     assert "顯示每一年" in m20 and "顯示每一年" not in n3
+     assert "<th>已領股利</th><td class=\"num \">50,000 元</td>" in out and "增加金額（含已領股利）" in out and "領出不再投入" in out
+-    assert "請輸入殖利率" in noy and "價格年變動率（%）" in fy and "本站資料：最新殖利率 1.05%（可改）" in fy and 'value="1.05"' in fy
++    assert "請輸入殖利率" in noy and "價格年變動率（%）" in fy and "本站最新殖利率 1.05%" in fy and 'value="1.05"' in fy
+     assert "年報酬率（%）" in fn and 'placeholder="自行假設，必填"' in fn and 'data-k="y"' not in fn and 'data-k="r" inputmode="decimal" autocomplete="off" value=""' in fn   # 不預填報酬率
+     assert all("<table" not in x for x in (bad, zero, n51, neg)) and "年數請輸入 1～50 的整數" in n51
+-    assert "未計稅負、二代健保、ETF 內扣費用、交易手續費，也未做通膨調整" in m20
++    assert "未計稅負、二代健保、內扣費用、手續費與通膨" in m20
+     assert not any(BAD.search(x) for x in o)
+ 
+ 
+@@ -235,12 +235,12 @@ def test_pledge_cases():
+     if o is None:
+         return
+     t1 = o["T1"]
+-    for s in ("1,260,000 元<br>", "<th>本次借款</th><td class=\"num \">1,260,000 元", "<th>利息</th><td class=\"num \">2,589 元", "1,262,589 元",
++    for s in ("上限</th><td class=\"num \">1,260,000 元</td>", "<th>本次借款</th><td class=\"num \">1,260,000 元", "<th>利息</th><td class=\"num \">2,589 元", "1,262,589 元",
+               "166.67%", "高於追繳門檻 130%", "<b class=\"tl-big\">1,638.00</b>", "收盤價低於 1,638.00 時，維持率低於 130%；與試算價格差 -22.0%"):
+         assert s in t1, s
+     assert "回到" not in t1 and "目前已低於" not in t1 and "超過可借上限" not in t1 and "2.50%" in t1
+     assert "超過可借上限，以上限 1,260,000 計算" in o["T2"] and "1,262,589 元" in o["T2"]
+-    assert "840,000 元<br>" in o["T3"] and "250.00%" in o["T3"] and "1,092.00" in o["T3"] and "-48.0%" in o["T3"]
++    assert "上限</th><td class=\"num \">840,000 元</td>" in o["T3"] and "250.00%" in o["T3"] and "1,092.00" in o["T3"] and "-48.0%" in o["T3"]
+     assert "<th>利息</th><td class=\"num \">493 元" in o["T4"]
+     assert "14,795 元" in o["T5a"] and "÷365" in o["T5a"] and "<th>利息</th><td class=\"num \">15,000 元" in o["T5b"] and "÷360" in o["T5b"]
+     t6 = o["T6"]
+@@ -249,7 +249,7 @@ def test_pledge_cases():
+     t7 = o["T7"]
+     assert "130.00%" in t7 and "等於追繳門檻 130%（低於才追繳）" in t7 and "低於</b>" not in t7 and "回到" not in t7 and "差 0.0%" in t7 and "目前已低於" not in t7
+     assert "低於</b>追繳門檻" in o["T7b"] and "回到 166%" in o["T7b"]
+-    assert "42,210 元<br>" in o["T8"] and "18.30" in o["T8"]
++    assert "上限</th><td class=\"num \">42,210 元</td>" in o["T8"] and "18.30" in o["T8"]
+     assert "15,534 元" in o["T9"] and "1,275,534 元" in o["T9"] and "每次最長" not in o["T9"]
+     assert "17,260 元" in o["T10"] and "1,277,260 元" in o["T10"] and "每次最長 6 個月，超過需申請續借" in o["T10"]
+     assert "每次最長" not in o["T10b"] and "每次最長 6 個月" in o["T10c"]
+@@ -328,7 +328,8 @@ def test_pledge_texts():
+     if o is None:
+         return
+     out, form = o
+-    for s in ("以元計，實際核撥金額以券商為準", "四捨五入到元，實際以券商計算為準", "銀行、證券金融公司依各自契約",
++    assert "以元計" not in out
++    for s in ("÷365，四捨五入到元", "銀行、證券金融公司依各自契約",
+               "借滿 60% 時追繳價約為現價 −22%，借 40% 時約 −48%", "2 個營業日內補繳至 166%", "自第 3 營業日起處分擔保品（俗稱斷頭）",
+               "不含利息", "全額交割股不得為擔保品", "前一營業日收盤價 × 60%"):
+         assert s in out, s
+@@ -415,7 +416,7 @@ const loadStock = async (c, dir) => { loads.push([c, dir]); if (c === '2330') re
+     assert 'data-k="b" inputmode="decimal" autocomplete="off" value="2100"' in o["dt"] and 'data-k="ref" inputmode="decimal" autocomplete="off" value="2100"' in o["dt"]
+     assert o["n"] == 1                                                              # 同一檔只讀一次
+     assert "× 6 折" in o["out"] and o["saved"] == [["fee", '{"d":6,"m":20}']]       # 壞值不存
+-    assert o["y"] == "1.05" and "本站資料：最新殖利率" not in o["cp"]                 # 殖利率預填 fund.dy；欄位只在開啟股利時顯示
++    assert o["y"] == "1.05" and "本站最新殖利率" not in o["cp"]                       # 殖利率預填 fund.dy；欄位只在開啟股利時顯示
+     assert o["urls"] == ["#/tools/pl?c=2330"]                                       # 切分頁保留 ?c=
+     assert "找不到 9999 的資料，請自行輸入價格" in o["miss"] and "找不到 &lt;x&gt;" not in o["bad"] and "找不到 %3Cx%3E 的資料" in o["bad"] and "找不到 &lt;b&gt;x 的資料" in o["xss"] and "<b>x" not in o["xss"]
+     assert ["9999", "stocks"] not in o["loads"] and ["0050", "etfp"] in o["loads"] and len(o["loads"]) == 2   # 不在 latest.json 的代號不發請求
+@@ -551,12 +552,12 @@ console.log(JSON.stringify([f({ b: '2100', ref: '2100' }, I), f({ b: '2100', ref
+     same, other, none, dtf, dtr, plf, pl = o
+     # D59：標籤不寫「昨收」；參考價等於帶入的收盤時，寫出是哪天的收盤、用於下一交易日；自行改的參考價或沒有帶入時照舊
+     assert "參考價（算漲跌停）" in dtf and "昨收" not in dtf
+-    assert "參考價 2,100（11/19 收盤，用於下一交易日）：漲停 2,310、跌停 1,890（漲跌幅 10%，試算）" in same
+-    assert "參考價 2,175：漲停 2,390、跌停 1,960" in other and "用於下一交易日" not in other
+-    assert "參考價 2,100：漲停 2,310、跌停 1,890" in none
++    assert "下一交易日漲停 2,310、跌停 1,890（參考價 11/19 收盤 2,100，±10%）" in same
++    assert "漲停 2,390、跌停 1,960（參考價 2,175，±10%）" in other and "下一交易日" not in other
++    assert "漲停 2,310、跌停 1,890（參考價 2,100，±10%）" in none
+     # D60：375 寬不截斷的短 placeholder；長說明移到質借說明
+     assert 'placeholder="空白 = 只算兩平"' in dtf and 'placeholder="空白 = 只算兩平"' in dtr and "只算損益兩平" not in dtf + dtr
+-    assert 'placeholder="空白 = 擔保價格"' in plf and "改低可看下跌時" not in plf and "試算價格可改低，看下跌時的維持率。" in pl
++    assert 'placeholder="空白 = 擔保價格"' in plf and "改低可看下跌時" not in plf and "可把試算價格改低看變化" in pl
+     # 使用者 11/19：成數快捷鈕放在可借成數正下方；質借表單頂端對齊，不把同列「數量」往下推
+     assert '<div class="tl-f"><label class="tl-f"><span>可借成數（%）</span>' in plf and '<div data-g="cap" class="tl-chips"><button class="chip" data-v="60">' in plf
+     assert ".tl-form.tl-pl{align-items:start}" in CSS and '<div class="tl-form tl-${tab}" id="tlForm">' in TOOLS
+diff --git a/tests/test_iter38.py b/tests/test_iter38.py
+new file mode 100644
+index 0000000..45134ba
+--- /dev/null
++++ b/tests/test_iter38.py
+@@ -0,0 +1,427 @@
++"""第 38 輪（不連網、不連資料庫）：工具頁文字簡化（F38-2）、零股提示（D72）、複利逐年成長圖（F38-3a）。
++有 node 時取出 app.js 的共用函式＋整個 tools.js 執行（node 14 可跑）；共用 test_iter34 的取函式與執行工具。
++檢查函式都接受 src（tools.js 內容），test_contrast 把 tools.js 改壞後重跑，確認會失敗。"""
++import hashlib
++import json
++import re
++import sys
++from fractions import Fraction
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++import test_iter34 as T  # noqa: E402
++
++SITE, CSS, HTML, TOOLS, TODAY = T.SITE, T.CSS, T.HTML, T.TOOLS, "2026-11-21"
++BAD = re.compile(r"NaN|Infinity|∞|undefined|(?<![\d.,])-0(?:\.0+)?(?![.,\d])")
++ADVICE = ("買進", "賣出", "反彈", "見底", "買點", "超賣", "超買", "推薦", "強勢", "飆股", "勝率", "亮點", "建議", "低估", "高估", "超跌", "便宜",
++          "保證", "穩賺", "斷頭價", "安全", "危險", "划算", "賣出擔保品", "連帶保證人", "融資買進", "獲利區", "預期報酬")   # test_iter34 詞表＋成長圖
++DMSG = "手續費折扣請填大於 0、最多 10 的折數，小數最多 2 位（不打折為 10）"
++ODD = "零股多數券商每筆最低 1 元，可在「最低手續費」改"
++
++
++def _js(body, src=TOOLS):
++    return (T.HELPERS + "\nconst window = {};\nconst App = { latest: %s, stockCache: {} };\n" % json.dumps(T.LATEST, ensure_ascii=False)
++            + src + "\n" + body)
++
++
++def _run(expr, src=TOOLS):
++    return T._node(_js("console.log(JSON.stringify(%s));" % expr, src))
++
++
++def _dt(I=None, **kw):
++    st = {"mode": "dt", "dir": "b", "k": "s", "b": "", "s": "", "n": "1000", "ref": "", "d": "10", "m": "20"}
++    st.update({k: str(v) for k, v in kw.items()})
++    return "tlDtOut(%s, %s, '%s')" % (json.dumps(st, ensure_ascii=False), json.dumps(I), TODAY)
++
++
++def _cp(**kw):
++    st = {"P": "0", "M": "5000", "at": "end", "r": "6", "n": "10", "dv": "0", "y": ""}
++    st.update({k: str(v) for k, v in kw.items()})
++    return "tlCpOut(%s)" % json.dumps(st)
++
++
++def _w(s):
++    """顯示寬度（全形字 = 1，半形約 0.55）；標籤 ≤ 11 才能在 1024／375 一行放下（38/01 Q38-1）。"""
++    return sum(1 if ord(c) > 0x2E7F else 0.55 for c in s)
++
++
++def _num(s):
++    return int(s.replace(",", "")) if re.fullmatch(r"\d{1,3}(,\d{3})*", s or "") else None
++
++
++def _ok(fails):
++    assert not fails, fails
++
++
++# ─── F38-2：文字（驗收 1、5、6、10）─────────────────────────────
++def check_dt_texts(src=TOOLS):
++    I = {"code": "2330", "c": 2000, "d": "2026-11-20"}
++    o = _run("[%s]" % ", ".join([
++        "tlDtForm(Object.assign({}, TL.dt, { d: '10', m: '20', mode: 'dt', dir: 's' }))", "tlDtForm(Object.assign({}, TL.dt, { d: '', m: '20', mode: 'g' }))",
++        _dt(I, b=2000, ref=2000),
++        _dt(b=2000, ref=2100), _dt(dir="s", s=2000, b=1990, ref=2000), _dt(b="2000.5"), _dt(k="e", b=50, ref=50), _dt(mode="g", b=2000, d=6)]), src)
++    if o is None:
++        return []
++    fr, fg, same, other, rev, off, etf, g6 = o
++    f = []
++    want = [(fr, "['g', '非當沖']" in src and "一般（非當沖）" not in fr, "T1"), (fr, "<span>手續費折扣（折）</span>" in fr, "T2"),
++            (fg, 'data-k="d" inputmode="decimal" autocomplete="off" value="" placeholder="不打折 = 10"' in fg, "T2 placeholder"),
++            (fr, "<span>最低手續費（元）</span>" in fr and "不打折為 10）</span>" not in fr, "T3"),
++            (same, "下一交易日漲停 2,200、跌停 1,800（參考價 11/20 收盤 2,000，±10%）" in same, "T8 帶入"),
++            (other, "漲停 2,310、跌停 1,890（參考價 2,100，±10%）" in other and "下一交易日" not in other and "試算）" not in other, "T8 自填"),
++            (etf, "；國外成分、槓反 ETF 漲跌幅規定不同" in etf and "部分 ETF" not in etf, "T9"),
++            (same, "升降單位：2,000 元價位每檔 5 元</div>" in same and "（股票）" not in same, "T10"),
++            (off, "買價 2,000.5 不在升降單位上（每檔 5 元），無法算兩平" in off, "T11"),
++            (rev, "<th>兩平買價上限（可成交）</th>" in rev and "買價不高於此價" not in rev and "先賣後買須當日收盤前買回。" in rev, "T12、T7"),
++            (same, "當沖需符合券商資格；處置、全額交割股可能不能當沖。" in same and "現股當沖需符合" not in same, "T7"),
++            (g6, "手續費：成交金額 × 0.1425% × 6 折（以退還後計），元以下捨去，每筆最低 20 元</div>" in g6 and "依券商）" not in g6, "T6"),
++            (same, "× 10 折，元以下捨去" in same and "以退還後計" not in same, "T6 不打折不寫退還"),
++            (g6, "<th>報酬率（÷ 買方金額）</th>" in _run(_dt(mode="g", b=2000, s=2100), src) and "<th>損益兩平價（可成交）</th>" in g6, "T13 不改")]
++    f += [n for _, ok, n in want if not ok]
++    if "2,000 檔內仍未打平" not in src or "現股當沖股數須為 1,000 的倍數（零股不能當沖）" not in src:
++        f.append("T5、T14 不改")
++    for x in re.findall(r"<span>([^<]+)</span><input", fr + fg):
++        if _w(x) > 11:
++            f.append("標籤過長 " + x)
++    for x in re.findall(r"<th>([^<]+)</th>", "".join(o[2:])):
++        if _w(x) > 11:
++            f.append("結果表標題過長 " + x)
++    return f
++
++
++def test_dt_texts():
++    _ok(check_dt_texts())
++
++
++def check_discount(src=TOOLS):
++    bad = ["0", "-1", "10.01", "1.685", "abc", "", "-0"]
++    good = ["10", "0.01", "1.68", "2.8"]
++    o = _run("[%s]" % ", ".join([_dt(b=2000, d=x) for x in bad + good] + [_dt(b=2000, m=x) for x in ("-1", "1.5", "0")]), src)
++    if o is None:
++        return []
++    f = []
++    for x, h in zip(bad, o):
++        if DMSG not in h or "<table" in h or h.count("tl-msg") != 1:
++            f.append("折扣 %r 應顯示訊息" % x)
++    for x, h in zip(good, o[len(bad):]):
++        if "<table" not in h or "手續費折扣請" in h:
++            f.append("折扣 %r 應正常計算" % x)
++    if "0～10 折" in src or "0～10 折" in "".join(o):
++        f.append("訊息仍寫 0～10 折")
++    full = _run(_dt(mode="g", b=2000, s=2000, d="2.8"), src)
++    if full is not None and "<th>買方手續費</th><td class=\"num \">798</td>" not in full:
++        f.append("2.8 折手續費應為 798")
++    mm = o[len(bad) + len(good):]
++    if not all("最低手續費請輸入 0 以上的整數" in h and "<table" not in h for h in mm[:2]) or "<table" not in mm[2]:
++        f.append("最低手續費驗證")
++    return f
++
++
++def test_discount_validation():
++    _ok(check_discount())
++    form = _run("tlDtForm(TL.dt)")
++    if form is None:
++        return
++    assert '<input data-k="d"' in form and '<input data-k="m"' in form and "<select" not in TOOLS            # 驗收 2：維持輸入框
++    assert hashlib.sha1(T._grab(TOOLS, "tlFeePref").encode()).hexdigest()[:12] == "c48656094555"          # tlFeePref 一字不改
++    assert "if (!(d > 0 && d <= 10)) msg.push(" in TOOLS                                                    # D76 = A：判斷式不變
++
++
++def check_odd(src=TOOLS):
++    cases = [(dict(mode="g", b=2000, n=500), True), (dict(mode="g", b=2000, n="1,500"), True), (dict(mode="g", b=2000, n=1000), False),
++             (dict(mode="g", b=2000, n=2000), False), (dict(mode="g", b=2000, n=500, m=1), False), (dict(mode="g", b=2000, n=500, m=0), False),
++             (dict(b=2000, n=500), False), (dict(b=2000, n=1000), False), (dict(mode="g", b=2000, n=0), False), (dict(mode="g", b=2000, n="abc"), False),
++             (dict(mode="g", b=2000, n=500, d=0), True)]
++    o = _run("[%s]" % ", ".join(_dt(**c) for c, _ in cases), src)
++    if o is None:
++        return []
++    f = ["零股提示 %s" % c for (c, want), h in zip(cases, o) if (ODD in h) != want]
++    if "每筆最低 20 元" not in o[0]:
++        f.append("提示時最低手續費不應被改")
++    return f
++
++
++def test_odd_lot_hint():
++    _ok(check_odd())
++    assert TOOLS.count(ODD) == 1
++
++
++def test_cp_pl_texts():
++    I = {"dy": 1.1}
++    o = _run("[%s]" % ", ".join([
++        "tlCpForm(Object.assign({}, TL.cp, { dv: 're', y: '1.1' }), %s)" % json.dumps(I), _cp(), _cp(P="", M=""), _cp(P="-1"), _cp(r="abc"),
++        T._plj({}), T._plj({"loan": "-5"}), T._plj({"p1": "", "x": ""})]))
++    if o is None:
++        return
++    form, cp, empty, neg, rbad, pl, loan, plbad = o
++    assert "['end', '期末投入'], ['begin', '期初投入']" in TOOLS and "每月期末投入" not in TOOLS and "每月期初投入" not in TOOLS   # C1
++    assert "本站最新殖利率 1.10%</div>" in form and "（可改）" not in form                                         # C2
++    assert all("初始金額、每月投入請填 0 以上，至少一項大於 0" in x and "<table" not in x for x in (empty, neg))   # C3
++    assert "未計稅負、二代健保、內扣費用、手續費與通膨；結果依你填的假設計算，不代表本站預期。" in cp                 # C4
++    assert "請輸入年報酬率（自行假設，-99～100%）" in rbad and "股利以每年年底市值 × 殖利率計算" in TOOLS            # 不改
++    for s in ("證券商不限用途借貸：維持率低於 130% 須於 2 個營業日內補繳至 166%；未補繳且仍低於 130%，自第 3 營業日起處分擔保品（俗稱斷頭）。銀行、證券金融公司依各自契約。",
++              "借滿 60% 時追繳價約為現價 −22%，借 40% 時約 −48%。</div>",
++              "維持率 = 擔保品市值 ÷ 借款本金（不含利息），實際每日以收盤價整戶計算；本頁只算單檔，可把試算價格改低看變化；除權息後維持率也會下降。",
++              "可借成數上限：得為融資融券的股票為前一營業日收盤價 × 60%，其餘 40%，券商可再調低；全額交割股不得為擔保品，處置股、槓反 ETF 請洽券商。",
++              "<th>可借金額上限</th><td class=\"num \">1,260,000 元</td>", "÷365，四捨五入到元</span>"):
++        assert s in pl, s                                                                                     # P1～P6
++    assert "借得越多" not in pl and "試算價格可改低" not in pl and "以券商計算為準" not in pl and "核撥" not in pl
++    assert "借款金額請輸入 0 以上的整數，或留空" in loan and "請輸入擔保價格" in plbad                              # P7（保留 test_iter34:270 的字串）
++    assert "到期應還（本金＋利息）" in pl and "總成本（利息＋手續費）" in pl                                          # P8 不改
++    assert not any(BAD.search(x) for x in o)
++
++
++def test_disclaimers_kept():
++    """驗收 5：免責、規則出處用語都還在畫面上。"""
++    stock = {"name": "台積電", "prices": {"d": ["2026-11-20"], "c": [2000.0]}, "fund": {"dy": 1.1}}
++    js = """
++const view = { innerHTML: '' }, els = {};
++const $ = s => s === '#view' ? view : (els[s] = els[s] || { innerHTML: '', classList: { add() {} }, addEventListener(t, f) { this[t] = f; } });
++const history = { replaceState() {} }, localStore = (k, f) => f, loadStock = async () => (%s);
++(async () => {
++  const r = {};
++  await window.renderTools('dt?c=2330'); r.dt = view.innerHTML;
++  TL.dt.k = 'b'; TL.dt.mode = 'g'; await window.renderTools('dt?c=2330'); r.b = view.innerHTML;
++  TL.cp.r = '6'; TL.cp.dv = 're'; await window.renderTools('cp?c=2330'); r.cp = view.innerHTML;
++  await window.renderTools('pl?c=2330'); r.pl = view.innerHTML;
++  console.log(JSON.stringify(r));
++})();""" % json.dumps(stock, ensure_ascii=False)
++    o = T._node(_js(js))
++    if o is None:
++        return
++    foot = "試算僅供參考，不代表實際成交、扣款或核貸金額；費率、稅率、折扣與規則以券商與主管機關公告為準。"
++    for k in ("dt", "b", "cp"):
++        assert foot + "本站不提供投資建議。" in o[k], k
++    assert foot + "成數、利率、計息與追繳門檻依各機構契約為準。本站不提供投資或借貸建議。" in o["pl"]
++    assert "不代表本站預期" in o["cp"] and "僅供參考" in o["pl"]
++    for s in ("130%", "166%", "2 個營業日", "第 3 營業日", "（俗稱斷頭）", "不含利息", "整戶", "本頁只算單檔", "前一營業日收盤價 × 60%", "40%", "全額交割股不得為擔保品"):
++        assert s in o["pl"], s
++    assert o["pl"].count("斷頭") == 1
++    for s in ("0.1425%", "元以下捨去", "現股當沖 0.15%（至 2027/12/31）", "下一交易日", "升降單位"):
++        assert s in o["dt"], s
++    assert "債券 ETF 停徵（至 2026/12/31）" in o["b"]
++    assert not any(BAD.search(x) for x in o.values())
++
++
++def test_no_advice_words38():
++    """驗收 10：新文字（含零股提示、圖例、CSS 註解）不含禁用詞；整個 tools.js 由 test_iter34 掃。"""
++    seg = TOOLS.replace("投資或借貸建議", "").replace("投資建議", "") + "".join(l for l in CSS.splitlines() if "第 38 輪" in l)
++    for w in ADVICE:
++        assert w not in seg, w
++
++
++# ─── D74：手機結果表換行（驗收 8）────────────────────────────────
++NEW_CSS = ("@media (max-width:520px){:is(.tl-odt,.tl-ocp) .tl-kv,:is(.tl-odt,.tl-ocp) .tl-kv tbody{display:block}:is(.tl-odt,.tl-ocp) .tl-kv tr{display:flex;"
++           "flex-wrap:wrap;justify-content:space-between;column-gap:12px;border-bottom:1px solid var(--border)}:is(.tl-odt,.tl-ocp) .tl-kv th,"
++           ":is(.tl-odt,.tl-ocp) .tl-kv td{border-bottom:0}:is(.tl-odt,.tl-ocp) .tl-kv td{flex:1 1 auto;white-space:nowrap}}")
++GR_CSS = (".tl-gr{display:block;width:100%;height:160px;margin:12px 0 6px}.tl-lg i{height:0;border-radius:0;border-top:2px solid var(--blue)}"
++          ".tl-lg i.d{border-top:2px dashed var(--text2)}.tl-lg i.v{border-top:2px dotted var(--violet)}")
++
++
++def test_css():
++    assert NEW_CSS in CSS and GR_CSS in CSS
++    assert "@media (max-width:520px){.tl-opl .tl-kv,.tl-opl .tl-kv tbody{display:block}" in CSS                        # .tl-opl 那行不動
++    new = "".join(l for l in CSS.splitlines() if "第 38 輪" in l)
++    assert new.count("第 38 輪") == 2 and "background" not in new and not re.search(r"fill:(?!none)", new)        # 驗收 13
++    assert "--up" not in new and "--dn" not in new
++
++
++# ─── F38-3a：複利成長圖（驗收 11～17）────────────────────────────
++def _ref(P, M, r, n, y, re_, begin=False):
++    """與 tlCompound 同規則的 Fraction 獨立實作（test_iter34 test_qa_compound_monthly_dividend）。回傳第 1～n 年 [累計投入, 期末, 已領]。"""
++    a, m, paid, out = Fraction(P), Fraction(0), Fraction(0), []
++    for k in range(1, n + 1):
++        a *= 1 + Fraction(r) / 100
++        for _ in range(12):
++            m = (m + M) * (1 + Fraction(r) / 1200) if begin else m * (1 + Fraction(r) / 1200) + M
++        dv = (a + m) * Fraction(y) / 100
++        if re_:
++            a += dv
++        else:
++            paid += dv
++        out.append((Fraction(P) + Fraction(M) * 12 * k, a + m, paid))
++    return out
++
++
++def _parse(h):
++    svg = h[h.index("<svg"):h.index("</svg>")]
++    lines = [[tuple(map(float, p.split(","))) for p in pts.split()] for pts in re.findall(r'<polyline points="([^"]*)"', svg)]
++    styles = re.findall(r'<polyline [^>]*stroke="var\(--(\w+)\)"', svg)
++    lg = re.findall(r'<span class="lg"><i class="(\w*)"></i>([^<]+) <b>([^<]+)</b> 元</span>', h)
++    ax = re.search(r"第 0～(\d+) 年；縱軸 0～([\d,]+) 元，每格 ([\d,]+) 元", h)
++    cells = dict(re.findall(r"<tr><th>([^<]+)</th><td class=\"num [^\"]*\">([^<]+) 元</td></tr>", h[:h.index("<svg")]))
++    return svg, dict(zip(styles, lines)), lg, ax, cells
++
++
++GRAPH = [dict(), dict(r=6, n=20), dict(P=100000, M=0, r=0, dv="out", y=5), dict(P=100000, M=5000, r=6, dv="re", y=3),
++         dict(P=100000, M=5000, r=6, dv="out", y=3), dict(M=5000, r=6, n=20, at="begin", dv="re", y=4), dict(P=1, M=0, r=-99, n=50),
++         dict(P=0, M=1, r=100, n=50, dv="re", y=100), dict(P=1000000, M=0, r=0, n=1), dict(P=0, M=5000, r=0, n=5, dv="out", y=0),
++         dict(P="0.5", M="49.95", r="-1", n=3)]
++
++
++def check_graph(src=TOOLS):
++    o = _run("[%s]" % ", ".join(_cp(**c) for c in GRAPH), src)
++    if o is None:
++        return []
++    f = []
++    for c, h in zip(GRAPH, o):
++        st = dict(P="0", M="5000", r="6", n="10", dv="0", y="", at="end")
++        st.update({k: str(v) for k, v in c.items()})
++        P, M, r, n, dv, y = Fraction(st["P"]), Fraction(st["M"]), Fraction(st["r"]), int(st["n"]), st["dv"], Fraction(st["y"] or 0)
++        R = _ref(P, M, r, n, y if dv != "0" else 0, dv == "re", st["at"] == "begin")
++        A = _ref(P, M, r, n, y, dv != "re", st["at"] == "begin") if dv != "0" else None
++        svg, L, lg, ax, cells = _parse(h)
++        if BAD.search(h) or "nan" in svg.lower():
++            f.append(("NaN／Infinity", c)); continue
++        if not ax or int(ax.group(1)) != n:
++            f.append(("座標說明", c)); continue
++        top, step = int(ax.group(2).replace(",", "")), int(ax.group(3).replace(",", ""))
++        main = [P] + [x[1] + (x[2] if dv == "out" else 0) for x in R]
++        inv = [P] + [x[0] for x in R]
++        want = {"blue": main, "text2": inv}
++        if A:
++            want["violet"] = [P] + [x[1] + (x[2] if dv == "re" else 0) for x in A]
++        if set(L) != set(want):
++            f.append(("線數", c, sorted(L))); continue
++        if not (top >= max(max(v) for v in want.values()) and top % step == 0 and 1 <= top // step <= 4):
++            f.append(("縱軸", c, top, step))
++        if not re.fullmatch(r"[125]0*", str(step)):
++            f.append(("格線間距", c, step))
++        for k, v in want.items():                                                                         # 每一點反推回金額，誤差 ≤ 座標 0.01
++            pts = L[k]
++            if len(pts) != n + 1 or any(abs(px - i / n * 100) > 0.006 for i, (px, _) in enumerate(pts)):
++                f.append(("橫座標", k, c)); continue
++            if any(abs(Fraction(py) - (2 + (1 - Fraction(val) / top) * 96)) > Fraction(6, 1000) for (_, py), val in zip(pts, v)):
++                f.append(("縱座標", k, c))
++            if any(not 0 <= q <= 100 for p in pts for q in p):
++                f.append(("超出範圍", k, c))
++        fin = {i: b for i, _, b in lg}
++        if dv == "out":                                                                                   # 期末金額＋已領股利 = 表格兩格相加
++            okm = _num(fin.get("")) == _num(cells["期末金額"]) + _num(cells["已領股利"])
++        else:
++            okm = fin.get("") == cells["期末金額"]
++        if not okm or fin.get("d") != cells["投入本金合計"]:
++            f.append(("圖例與摘要表", c, fin, cells))
++        if A:
++            av = A[-1][1] if dv == "out" else round(A[-1][1]) + round(A[-1][2])
++            if _num(fin.get("v")) is None or abs(_num(fin["v"]) - av) > max(1, av / 10 ** 12):   # 浮點：相對誤差 1e-12
++                f.append(("對照線第 n 年", c, fin["v"], float(av)))
++        names = [x[1] for x in lg]
++        wantn = {"0": ["期末金額", "累計投入"], "re": ["期末金額", "累計投入", "對照：股利領出（期末金額＋已領股利）"],
++                 "out": ["期末金額＋已領股利", "累計投入", "對照：股利再投入"]}[dv]
++        if names != wantn:
++            f.append(("圖例名稱", c, names))
++        if h.index("</svg>") > h.index("不代表本站預期") or h.index("</svg>") > h.index('id="tlYr"'):
++            f.append(("位置：摘要表之下、說明與逐年表之上", c))
++    return f
++
++
++def test_graph_numbers():
++    _ok(check_graph())
++
++
++def test_graph_invalid_and_extremes():
++    """驗收 16：驗證不通過時沒有圖；極端值沒有 NaN／Infinity（座標都在 0～100）。"""
++    bad = [dict(n=51), dict(n=0), dict(r=-100), dict(r=101), dict(P=0, M=0), dict(r=""), dict(dv="re", y=""), dict(dv="re", y=101)]
++    o = _run("[%s]" % ", ".join(_cp(**c) for c in bad))
++    if o is None:
++        return
++    assert all("<svg" not in h and "<table" not in h for h in o)
++    ext = [dict(r=-99, n=50, P=1e11, M=0), dict(r=100, n=50, P="999999999999", M="999999999999", dv="re", y=100), dict(r=0, P=0, M="0.000000001", n=1),
++           dict(r=100, n=50, dv="out", y=100), dict(r=-99, n=1, M=1), dict(r=0, n=50, dv="re", y=0)]
++    o = _run("[%s]" % ", ".join(_cp(**c) for c in ext))
++    for c, h in zip(ext, o):
++        assert "<svg" in h and not BAD.search(h), c
++        nums = [float(x) for x in re.findall(r'(?:points|y1|y2)="([^"]+)"', h) for x in re.split(r"[ ,]", x)]
++        assert nums and all(0 <= x <= 100 for x in nums), c
++
++
++def check_no_fill(src=TOOLS):
++    f = []
++    g = T._grab(src, "tlCpGraph")
++    if re.search(r"<polygon|<path|<rect|gradient|fill-opacity|style=", g + "".join(T._grab(src, "tlCpOut").split("tlCompound"))):
++        f.append("圖有面積元素或行內樣式")
++    if any(x != "none" for x in re.findall(r'fill="([^"]*)"', src)):
++        f.append("fill 不是 none")
++    if "<polyline" in g and g.count("fill=\"none\"") != g.count("<polyline"):
++        f.append("polyline 缺 fill=none")
++    if "--up" in src or "--dn" in src or 'aria-hidden="true"' not in g or 'preserveAspectRatio="none"' not in g:
++        f.append("顏色或屬性")
++    if re.search(r"<text|<tspan", src):
++        f.append("SVG 內有文字")
++    return f
++
++
++def test_graph_no_fill():
++    _ok(check_no_fill())
++    o = _run(_cp(dv="re", y=3))
++    if o is None:
++        return
++    svg = o[o.index("<svg"):o.index("</svg>")]
++    assert set(re.findall(r'stroke="var\(--([\w-]+)\)"', svg)) == {"border", "border2", "blue", "text2", "violet"}   # 顏色都用 CSS 變數（深淺色不用重畫）
++    assert not re.search(r"#[0-9a-fA-F]{3,6}|rgb", svg)
++
++
++def _lum(h):
++    c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
++    c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
++    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
++
++
++def test_graph_contrast():
++    """驗收 14：淺色、深色的線與卡片底 ≥ 3:1，圖例文字（--text2）≥ 4.5:1。"""
++    light = dict(re.findall(r"--([\w-]+):(#[0-9a-f]{6})", CSS[CSS.index(":root{"):CSS.index("}", CSS.index(":root{"))]))
++    d0 = CSS.index(':root[data-theme="dark"]{')
++    dark = dict(re.findall(r"--([\w-]+):(#[0-9a-f]{6})", CSS[d0:CSS.index("}", d0)]))
++    for t in (light, dark):
++        ratio = lambda a, b: (max(_lum(t[a]), _lum(t[b])) + 0.05) / (min(_lum(t[a]), _lum(t[b])) + 0.05)
++        assert all(ratio(k, "card") >= 3 for k in ("blue", "text2", "violet")), t
++        assert ratio("text2", "card") >= 4.5 and ratio("text", "card") >= 4.5
++
++
++# ─── 共通（驗收 17～21）─────────────────────────────────────────
++def test_unchanged_and_wiring():
++    assert hashlib.sha1(T._grab(TOOLS, "tlCompound").encode()).hexdigest()[:12] == "ab8bc2344348"         # 驗收 17：tlCompound 不改
++    assert TOOLS.count("tlCompound(") == 3                                                                 # 定義＋摘要＋對照線
++    assert '<button class="chip tl-all" id="tlAll">顯示每一年</button>' in TOOLS
++    for f, n in (("tools.js", "tools"), ("app.css", "app")):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
++    assert HTML.count("https://") == 2 and "http" not in TOOLS and "fetch(" not in TOOLS
++    for w in (".at(", "??", "?.", "||=", "&&=", "replaceAll", "structuredClone", "Object.hasOwn", "findLast"):
++        assert w not in T._grab(TOOLS, "tlCpGraph") + T._grab(TOOLS, "tlCpOut") + T._grab(TOOLS, "tlDtOut"), w   # node 14
++
++
++# ─── 反證（驗收 20）：改壞 tools.js 後，上面的檢查要失敗 ─────────────
++MUTANTS = [
++    ("折扣訊息改回 0～10 折", DMSG, "手續費折扣請輸入 0～10 折（不打折為 10）", check_discount),
++    ("T12 改回 18 字", "tlRow(rev ? '兩平買價上限（可成交）' : '損益兩平價（可成交）',", "tlRow(`損益兩平價（可成交${rev ? '，買價不高於此價' : ''}）`,", check_dt_texts),
++    ("圖加 fill", '" fill="none" ${G[j][4]}', '" fill="var(--blue)" fill-opacity=".1" ${G[j][4]}', check_no_fill),
++    ("圖改用 polygon", "s += `<polyline points=", "s += `<polygon points=", check_no_fill),
++    ("圖例最終值格式不同", "fmt(o ? Math.round(x[2]) + Math.round(x[3]) : x[2])", "fmt(o ? x[2] + x[3] : x[2], 2)", check_graph),
++    ("領出模式圖例改用期末金額", "fin = (x, o) => fmt(o ? Math.round(x[2]) + Math.round(x[3]) : x[2])", "fin = (x, o) => fmt(x[2])", check_graph),
++    ("對照線少畫", "  if (A) G.push(", "  if (0) G.push(", check_graph),
++    ("第 0 年不從初始金額起", "[P].concat(R.map(x => x[1]))", "R.map(x => x[1])", check_graph),
++    ("零股提示在整股出現", "!dt && n > 0 && n % 1000 && m === TL_RULES.minFee", "!dt && n > 0 && m === TL_RULES.minFee", check_odd),
++    ("零股提示在當沖出現", "!dt && n > 0 && n % 1000 && m === TL_RULES.minFee", "n > 0 && n % 1000 && m === TL_RULES.minFee", check_odd),
++    ("T8 改回舊句", "out.push(`${rd ? '下一交易日' : ''}漲停", "out.push(`參考價 ${pfmt(ref / 100)}：漲停", check_dt_texts),
++]
++
++
++def test_contrast():
++    if T._node("console.log('1')") is None:
++        return
++    for name, a, b, check in MUTANTS:
++        assert TOOLS.count(a) == 1, name
++        try:
++            fails = check(TOOLS.replace(a, b))
++        except Exception as e:                                                                             # 改壞到執行失敗也算擋下
++            fails = [repr(e)]
++        assert fails, "反證沒有擋下：" + name
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")
