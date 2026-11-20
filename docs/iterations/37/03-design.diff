@@ -1,0 +1,545 @@
+--- a/README.md
++++ b/README.md
+@@ -135,6 +135,7 @@
+ - 今日頁三大法人卡：上市為證交所 BFI82U 官方買賣金額（含 ETF；外資 = 外資及陸資，不含外資自營商，外資自營商已計入自營商），附近 20 日外資買賣超與連買／連賣天數；上櫃為櫃買 `insti/summary` 官方買賣金額（第 9 輪，2026-07-31 起；`latest.json` 的 `insti_official_tpex`，結構同 `insti_official`），另列一行（合計、外資、投信、自營）與上櫃外資 20 日迷你圖，日期早於網站資料日時標示「尚未更新」；上櫃官方尚無任何資料時才退回張數 × 收盤估算（不含 ETF）。上市、上櫃同一天時可相加，卡片不另列合計。資料表 `insti_amount` 以 `market`（`TWSE`／`TPEx`）區分市場。
+ - 今日頁估值位置卡（第 9 輪，`latest.json` 的 `valuation`）：上市、上櫃股票的官方本益比、淨值比、殖利率**中位數**在近一年的位置。窗口 = 最近 242 個有官方本益比資料的交易日；中位數每天分市場計算，本益比、淨值比只計入大於 0 的股票，殖利率計入非空值（含 0）；位置 = 窗口內中位數小於或等於今天的天數 ÷ 天數；今天是窗口最低／最高時顯示「一年最低／最高」；附上市本益比中位數近 60 日迷你圖。**不是加權指數本益比**；本益比用近 4 季 EPS，財報公布期間 EPS 變化也會改變位置；殖利率用去年股利；只是位置，不是買賣訊號。第 10 輪：季報窗口內、當季已有資料時，卡片下方加一行「第 3 季財報已收：上市 N、上櫃 M 家（前一季 X、Y 家）；本益比中位數會隨 EPS 更新而變動」（`latest.json` 的 `fin_progress`：`{q, n: {市場: 家數}, p: {市場: 前一季家數}}`；窗口外或當季 0 家為 null，不顯示）。第 14 輪：`fin_progress.due` = [一般業, 金融業] 申報截止日（取自 `health.FIN_DUE`，年報兩者都是 3/31，只寫一次），括號內加「一般業 11/14、金融業 11/29 截止」，資料日已過的寫「已截止」；殖利率的一年位置加「越高 = 殖利率相對越高」（方向和本益比、淨值比相反；今日頁與個股頁）。第 15 輪：截止日後面加星期（「分別是週六、週日」），截止日是週六、週日時寫「遇假日可能順延到 下週一」，「已截止」也用順延到下週一的日期判斷（例如 2026 Q3 一般業 11/14 是週六，11/16 當天仍寫「截止」，11/17 起「已截止」）；`fin_progress.due` 仍是名目日期。只處理週末，平日的國定假日不處理（網站沒有休市表）；行政程序法第 48 條規定期間末日為週六時以下週一上午為末日、週日或國定假日以次日為末日，但本站沒有查到證交所、金管會對財報申報期限的個別公告，所以寫「可能」，以官方公告為準。第 12 輪：卡片加「加權本益比（市值加權）」一行（`valuation.TWSE|TPEx.wpe`：`v` 今天值、`p` 一年位置 %、`lo`／`hi` 一年最低／最高、`cov` 計入市值占比 %、`t` [市值最大的計入股票, 占計入市值 %]）。加權本益比 = Σ 市值 ÷ Σ（市值 ÷ 官方本益比），市值 = 收盤 × `stocks.shares`（**目前股數**，歷史日期也用目前股數），只計本益比 > 0 的股票（不含虧損公司、不含 ETF）；窗口與位置定義同中位數。大型股影響大（上市台積電約占 43%），中位數反映一般股票；是本站計算，**不是證交所公布的數字**。
+ - 個股頁估值位置（第 9 輪，`stocks/{代號}.json` 的 `val`：`{d, pe|pb|dy: [位置 %, 一年最低, 一年最高]}`）：本益比、淨值比、殖利率指標卡加「一年位置 N%（最低～最高）」，窗口同上，只計入大於 0 的官方值（殖利率 0 = 不配息，不算位置）。今天值為空或 ≤ 0（虧損、無股利）、窗口內有效天數少於 120 天（新上市），或 90 天內股本變動（官方值可能尚未調整）時不顯示。估值說明（第 10 輪改寫）：本益比 = 股價 ÷ 近 4 季 EPS；獲利下降時本益比會升高，獲利大增時本益比（淨值比也可能）會落到一年低點（例如景氣循環股在獲利高峰），不代表股價便宜；有季報卡時加「請對照下方季報卡的近 4 季 EPS 與一年前比較」。淨值比卡也標「資料 MM/DD」（股本變動註記照舊只在本益比、殖利率卡）。第 12 輪：個股頁指標卡加「市值」（≥ 1 萬億顯示兆）與「週轉率」（`stocks/{代號}.json` 的 `mt`：`{d, mc 億元, to %}`，目前股數計算；沒有股數的股票沒有 `mt`，兩張卡顯示 `--`）。
++- 個股頁河流圖（第 37 輪，「基本面」分頁一年位置說明之下、月營收／季報之前；`stocks/{代號}.json` 的 `band` = `{d, pe|pb: {s: [[起日, 值|null], …], k: [5 個倍數], n}}`）：和 `val` 同一個窗口與查詢。`s` 是「原始收盤 ÷ 官方本益比（淨值比）」反推的近 4 季 EPS（每股淨值）階梯，4 位有效數字；官方值空或 ≤ 0 是 `null` 段（畫面斷線），無成交日沿用前一段，和這一段相差超過 max(0.5%, 0.012 ÷ 官方值) 才開新段，超過 24 段不輸出；`k` = 窗口內官方值的第 10／25／50／75／90 百分位（最近序位法）；有效天數 < 120 不輸出該指標，90 天內股本變動不輸出 `band`。畫面是原始收盤＋5 條倍數線（不塗色），可切換本益比／淨值比，今天沒有本益比時預設淨值比；只描述股價和獲利（淨值）的關係，倍數用近一年資料算，不是股價的評價。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+--- a/site/app.css
++++ b/site/app.css
+@@ -365,3 +365,4 @@
+ @media (max-width:520px){.tl-yr:not(.all) .tl-x{display:none}.tl-all{display:inline-block}}
+ @media (max-width:520px){.tl-opl .tl-kv,.tl-opl .tl-kv tbody{display:block}.tl-opl .tl-kv tr{display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:12px;border-bottom:1px solid var(--border)}.tl-opl .tl-kv th,.tl-opl .tl-kv td{border-bottom:0}.tl-opl .tl-kv td{flex:1 1 auto}.tl-opl .tl-kv td .small{word-break:keep-all}}
+ @media (max-width:720px){.s-head .tl-go{position:absolute;top:36px;right:0;padding:4px 10px;font-size:13px}.s-head .s-px{padding-right:56px}}
++.band-lg{margin:6px 0 4px}.band-lg i{background:var(--blue)}.band-lg i.mid{height:4px}.band-lg i.dash{background:none;height:0;border-top:2px dashed var(--blue);border-radius:0}.band-lg i.cl{background:var(--text)}   /* 第 37 輪 F37-2：河流圖圖例在圖下方 */
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,11 +7,11 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=0a9e90f1">
++<link rel="stylesheet" href="app.css?v=5922ab8d">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+ <script src="app.js?v=d175c222" defer></script>
+-<script src="stock.js?v=55bdf502" defer></script>
++<script src="stock.js?v=94125fde" defer></script>
+ <script src="tools.js?v=9f5f495d" defer></script>
+ </head>
+ <body>
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -75,6 +75,70 @@
+   '除息日、配息與除息前收盤來自證交所、櫃買中心的除息表。上市 ETF 還沒填息就遇到推測的其他價格調整（多為分割）時，寫「不再比較」；上櫃 ETF 無法辨識分割，照常比較。' +
+   '還差 = 除息前收盤 − 最新收盤，% 以最新收盤計算。ETF 的配息來源可能含收益平準金、資本利得，不等於獲利。';
+ 
++// 第 37 輪 F37-2～4：本益比／淨值比河流圖（原始收盤＋5 條倍數線，不塗色）。倍數線 = 當天反推的 EPS（每股淨值）× 近一年官方值的百分位
++const BAND_PCT = [10, 25, 50, 75, 90], BAND_STY = [[2, 1], [0, 1], [0, 2], [0, 1], [2, 1]];   // [lineStyle, 線寬]：10／90 虛線、中位數粗線
++const BAND_NM = { pe: ['本益比', '近 4 季 EPS'], pb: ['淨值比', '每股淨值'] };
++function bandView(data) {                                                              // 選的那個畫不出來、另一個可以 → 改顯示另一個（今天虧損 → 淨值比）
++  const B = data.band || {}, f = data.fund || {}, ok = k => !!(B[k] && f[k] != null);
++  const v = localStore('bandV', 'pe') === 'pb' ? 'pb' : 'pe', o = v === 'pe' ? 'pb' : 'pe';
++  return ok(v) || !ok(o) ? v : o;
++}
++const BAND_NOTE = (k, n) => (k === 'pe' ? '倍數線 = 當天的近 4 季 EPS × 近一年官方本益比的百分位。EPS 由證交所、櫃買中心公布的本益比反推（原始收盤 ÷ 本益比），官方換用新財報時倍數線才會跳動。'
++  : '倍數線 = 當天的每股淨值 × 近一年官方淨值比的百分位。每股淨值由證交所、櫃買中心公布的淨值比反推（原始收盤 ÷ 淨值比），通常一季更新一次。') +
++  `第 P 百分位 = 近 ${n} 個有官方值的交易日由小到大排列，第 P% 的位置（最近序位）；這一年有 P% 的天數小於或等於這個倍數。收盤是原始價，和 K 線預設的還原價不同。` +
++  '倍數是用這一年的資料算的，舊日期的線也用到之後的資料；股價約有一半時間在中間兩條線之間是計算方式造成的，不代表股價會回到某條線。只有一年資料，不是長期區間，也不能用來回測。' +
++  `河流圖只描述股價和${k === 'pe' ? '近 4 季獲利' : '每股淨值'}的關係，不是股價的評價，也不是投資建議${k === 'pe' ? '；獲利大增時股價會落到低倍數線附近，例如景氣循環股在獲利高峰' : ''}。`;
++function bandHTML(data, capSub) {
++  const h = '<section class="sec card"><div class="sec-h"><h2 id="bandT">本益比河流圖（近一年）</h2>';
++  if (!data.band) return `${h}</div><div class="muted small">${capSub ? capSub + '；股本變動後 90 天內不畫河流圖' : '近一年有官方本益比、淨值比的天數都不足 120 天，不畫河流圖'}</div></section>`;
++  return `${h}<span class="sp"></span>${segHTML('bandSeg', [['pe', '本益比'], ['pb', '淨值比']], bandView(data))}</div><div id="bandBox"></div></section>`;
++}
++function renderBand(data, k) {
++  disposeKCharts();                                                                    // 河流圖放在 charts，disposeStockCharts 一併釋放
++  const B = data.band[k], f = data.fund || {}, P = data.prices, [nm, base] = BAND_NM[k], box = $('#bandBox'), LC = window.LightweightCharts;
++  $('#bandT').textContent = nm + '河流圖（近一年）';
++  if (f[k] == null || !B) {
++    box.innerHTML = `<div class="muted small">${f[k] != null ? `近一年有官方${nm}的天數不足 120 天，或反推值變動過於頻繁，不畫河流圖`
++      : k === 'pe' ? '近 4 季 EPS ≤ 0，官方不計算本益比' : '官方沒有提供今天的淨值比'}</div>`;
++    return;
++  }
++  const T = [], C = [], E = [];
++  let j = 0;
++  P.d.forEach((d, i) => { if (d < B.s[0][0] || d > data.band.d) return;
++    while (j + 1 < B.s.length && B.s[j + 1][0] <= d) j++;
++    T.push(d); C.push(P.c[i]); E.push(B.s[j][1]); });
++  const lc = P.c.filter(x => x != null), close = lc[lc.length - 1], V = (data.val || {})[k];
++  const pos = !V ? '' : f[k] <= V[1] ? '（近一年最低）' : f[k] >= V[2] ? '（近一年最高）' : `（近一年第 ${V[0]} 百分位）`;   // 和頁首一年位置同一個數字
++  const ex = [B.s.some(x => x[1] == null) ? `線斷開 = 當時${k === 'pe' ? '近 4 季 EPS ≤ 0，官方不計算本益比' : '官方沒有淨值比'}` : '',
++    data.industry === '金融保險' ? '金融業獲利受利率、匯率影響較大，常搭配淨值比觀察' : '', k === 'pe' && f.pe > 100 ? 'EPS 很小時本益比會很大，倍數線間距很寬' : ''];
++  const lg = B.k.map((x, i) => `<span class="lg"><i class="${BAND_STY[i][0] ? 'dash' : BAND_STY[i][1] > 1 ? 'mid' : ''}"></i>第 ${BAND_PCT[i]} 百分位 ${fmt(x, 2)} 倍</span>`).reverse().join('');
++  const short = '倍數是用近一年的資料算的，不代表股價會回到某條線';                      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
++  box.innerHTML = `<div class="kleg" id="bandL"></div><div id="bandC" class="chart-box" style="height:220px"></div>
++    <div class="kleg band-lg">${lg}<span class="lg"><i class="cl"></i>收盤（原始價）</span></div>
++    <div class="small">${md(f.date)} 收盤 ${pfmt(close)} 元 = ${base} ${fmt(close / f[k], 2)} 元 × ${fmt(f[k], 2)} 倍${pos}</div>
++    ${ex.filter(Boolean).map(t => `<div class="muted small">${t}</div>`).join('')}<div class="muted small" style="margin-top:6px">${noteHTML(short, BAND_NOTE(k, B.n))}</div>`;
++  if (!LC || !T.length) return;
++  const dt = t => typeof t === 'string' ? t : [t.year, t.month, t.day].map(x => String(x).padStart(2, '0')).join('-');
++  const c = LC.createChart($('#bandC'), { autoSize: true, handleScroll: false, handleScale: false,
++    layout: { background: { type: 'solid', color: 'transparent' }, textColor: css('--text2'), fontSize: 11, attributionLogo: false },
++    grid: { vertLines: { visible: false }, horzLines: { color: css('--border') } },
++    rightPriceScale: { borderVisible: false, minimumWidth: 76, entireTextOnly: true },
++    timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true,
++      tickMarkFormatter: (t, type) => { const [y, m, d] = dt(t).split('-').map(Number); return type === 0 ? String(y) : type === 1 ? `${m}月` : `${m}/${d}`; } },
++    localization: { locale: 'zh-TW', timeFormatter: t => dt(t).split('-').join('/') } });
++  const px = { type: 'custom', minMove: 0.01, formatter: pfmt };
++  const add = (vals, color, st, w) => c.addLineSeries({ color, lineStyle: st, lineWidth: w, priceFormat: px, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
++    .setData(vals.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
++  B.k.forEach((x, i) => add(E.map(e => e == null ? null : e * x), css('--blue'), ...BAND_STY[i]));   // 虧損期間 null：線斷開，不補值
++  add(C, css('--text'), 0, 2);
++  charts = [c];
++  c.timeScale().fitContent();
++  const show = i => { $('#bandL').innerHTML = `<span><b>${md(T[i])}</b></span><span>收 <b>${pfmt(C[i])}</b></span><span>${base} <b>${E[i] == null ? '--' : fmt(E[i], 2) + ' 元'}</b></span>` +
++    `<span>${nm}約 <b>${C[i] == null || E[i] == null ? '--' : fmt(C[i] / E[i], 2) + ' 倍'}</b></span>`; };
++  c.subscribeCrosshairMove(p => { const i = p.logical == null ? -1 : Math.round(p.logical); show(p.time !== undefined && i >= 0 && i < T.length ? i : T.length - 1); });
++  show(T.length - 1);
++}
++
+ const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];
+ const ETF_TABS = STOCK_TABS.slice(0, 2);       // 第 15 輪 F15-2：ETF 個股頁沒有基本面
+ // 第 15 輪 F15-2：ETF 個股頁的價格說明（原始價）。短句一定可見，完整說明收合（短句用變數：test_iter13 數 noteHTML 字面呼叫）
+@@ -239,6 +303,7 @@
+       `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。${E ? '' : '占股本以目前發行股數計算。'}</div>`)}
+     ${acHTML}` : tab === 'fund' ? `${VAL ? `<div class="muted small val-note">${noteHTML('獲利大增時本益比會落到一年低點，位置低不代表股價便宜', `一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}`)}</div>` : ''}
+     ${finUp ? `<div class="small val-note fin-note">近 4 季 EPS 一年前 ${fmt(F.e4p, 2)} 元 → 現在 ${fmt(F.e4, 2)} 元（${F.e4p <= 0 ? '轉盈' : fmt(F.e4 / F.e4p, 1) + ' 倍'}）：本益比會因獲利增加而下降，位置低不代表股價便宜；請看下方季報卡的單季 EPS 是否已經轉弱。</div>` : ''}
++    ${bandHTML(data, capSub)}
+     <section class="sec grid ${F ? 'g2' : 'g-one'}">
+       <div class="card"><div class="sec-h"><h2>月營收</h2><span class="sp"></span><span id="revSegBox"></span></div><div id="revBox"></div></div>
+       ${F ? `<div class="card"><div class="sec-h"><h2>季報</h2><span class="muted small">${qName(F.q.at(-1)[0])}${F.c.fs ? `｜本站收錄 ${md(F.c.fs)}` : ''}｜${FIN_TBL[F.t] || ''}</span></div><div id="finBox"></div></div>` : ''}
+@@ -284,6 +349,8 @@
+     $('#starBtn').textContent = on ? '★ 已加入自選' : '☆ 加入自選';
+   });
+   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
++  if (tab === 'fund' && data.band) { renderBand(data, bandView(data));                // 第 37 輪 F37-3：本益比／淨值比切換
++    onSeg('bandSeg', v => { localStore('bandV', null, v); document.querySelectorAll('#bandSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); renderBand(data, v); }); }
+   if (tab === 'chip') onSeg('chipSeg', v => { chipN = v; document.querySelectorAll('#chipSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
+   if (tab === 'chip' && $('#chipInv')) onSeg('chipInv', v => { chipI = v; document.querySelectorAll('#chipInv button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
+   if (tab === 'chip') buildChip(data, E);
+--- a/twstock/export.py
++++ b/twstock/export.py
+@@ -57,6 +57,9 @@
+ VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
+ VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
+ VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
++BAND_PCT = (10, 25, 50, 75, 90)  # 第 37 輪 F37-1：河流圖倍數 = 窗口內官方值的這幾個百分位（最近序位法）
++BAND_TOL = (0.005, 0.012)       # 反推值和這一段的值相差超過 max(0.5%, 0.012 ÷ 當天官方值) 才開新段（官方值只有 2 位小數）
++BAND_SEG_MAX = 24               # 段數超過此值（反推雜訊）→ 不輸出該指標
+ FIN_QUARTERS = 8                # 第 10 輪 B5：個股季報卡的季數
+ _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
+           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
+@@ -443,16 +446,41 @@
+     return out or None
+ 
+ 
+-def _load_valuation(cur, shares=None):
++def band_series(rows):
+     """
+-    讀窗口內的 stock_fundamentals（約 47 萬列）→ (市場估值, {代號: 個股估值}, 窗口最後一天)。
++    第 37 輪 F37-1：河流圖。rows = [(日期, 原始收盤, 本益比, 淨值比)]（float 或 None，不必排序），窗口內一檔股票。
++    每個指標：s = 階梯 [[起日, 收盤 ÷ 官方值（4 位有效數字）| None]]，官方值空或 ≤ 0 → None 段（虧損）；
++    收盤空（無成交）沿用前一段；和這一段的值相差超過 max(BAND_TOL[0], BAND_TOL[1] ÷ 官方值) 才開新段。
++    k = 官方值 > 0 的 BAND_PCT 百分位（最近序位法：由小到大第 ceil(P × n ÷ 100) 個）；n = 有效天數。
++    有效天數 < VAL_MIN 或段數 > BAND_SEG_MAX → 不輸出該指標；都沒有 → None。
++    """
++    out, rows = {}, sorted(rows, key=lambda r: r[0])
++    for j, k in ((2, "pe"), (3, "pb")):
++        a, s = sorted(r[j] for r in rows if r[j] is not None and r[j] > 0), []
++        for r in rows:
++            c, v = r[1], r[j]
++            if v is None or v <= 0:
++                if not s or s[-1][1] is not None:
++                    s.append([str(r[0]), None])
++            elif c is not None and (not s or s[-1][1] is None or abs(c / v / s[-1][1] - 1) > max(BAND_TOL[0], BAND_TOL[1] / v)):
++                s.append([str(r[0]), float(f"{c / v:.4g}")])
++        if len(a) >= VAL_MIN and len(s) <= BAND_SEG_MAX:
++            out[k] = {"s": s, "k": [a[-(-p * len(a) // 100) - 1] for p in BAND_PCT], "n": len(a)}
++    return out or None
++
++
++def _load_valuation(cur, shares=None):
++    """
++    讀窗口內的 stock_fundamentals（約 47 萬列）→ (市場估值, {代號: 個股估值}, 窗口最後一天, {代號: 河流圖})。
+     第 12 輪：同一個查詢多讀當天收盤，乘 shares（{代號: 目前股數}）得市值，市場估值加 wpe（市值加權本益比）。
++    第 37 輪：同一個查詢的收盤、本益比、淨值比 → band_series。
+     """
+     days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {VAL_DAYS} trade_date FROM stock_fundamentals ORDER BY trade_date DESC")][::-1]
+     if not days:
+-        return None, {}, None
++        return None, {}, None, {}
+     f = lambda x: None if x is None else float(x)
+     mrows, wrows, series, today = [], [], defaultdict(lambda: {"pe": [], "pb": [], "dy": []}), {}
++    brows = defaultdict(list)
+     shares = shares or {}
+     for d, m, code, pe, pb, dy, close in cur.execute("""
+         SELECT f.trade_date, s.market_type, s.stock_code, f.pe_ratio, f.pb_ratio, f.dividend_yield, p.close_price
+@@ -468,11 +496,13 @@
+                 series[code][k].append(v)
+         if d == days[-1]:
+             today[code] = {"pe": pe, "pb": pb, "dy": dy}
++        brows[code].append((d, f(close), pe, pb))
+     mv = market_valuation(mrows, days)
+     for m, w in market_wpe(wrows, days).items():          # 第 12 輪
+         if m in mv:
+             mv[m]["wpe"] = w
+-    return mv or None, {c: stock_valuation(series[c], today.get(c, {})) for c in series}, days[-1]
++    return (mv or None, {c: stock_valuation(series[c], today.get(c, {})) for c in series}, days[-1],
++            {c: band_series(r) for c, r in brows.items()})
+ 
+ 
+ # ─── 融資融券（B2＋A4）與 ETF（E1）────────────────────────
+@@ -1595,7 +1625,7 @@
+     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
+     p_days = sorted({r[0] for rows in prices.values() for r in rows})   # 第 23 輪 F23-1：完整交易日序列（b_days 只有 120 天，120 日要第 121 天）
+     status = build_status(cur, latest_date, now)
+-    valuation, stock_val, val_date = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe
++    valuation, stock_val, val_date, stock_band = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe；第 37 輪加河流圖
+     fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
+     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
+     fh = _load_qfii(cur)                                       # 第 29 輪 F29-4
+@@ -1690,6 +1720,7 @@
+             **({"capchg": cap} if cap else {}),
+             # F9-4：估值一年位置；股本變動（cap）時官方值可能尚未調整，不輸出；只有窗口最後一天有官方值的股票才有
+             **({"val": {"d": str(val_date), **stock_val[code]}} if stock_val.get(code) and not cap else {}),
++            **({"band": {"d": str(val_date), **stock_band[code]}} if stock_band.get(code) and not cap else {}),   # 第 37 輪 F37-1：同 val 不輸出股本變動
+             **({"alerts": alerts[code]} if code in alerts else {}),
+             # 該市場有融資融券資料時才有 margin；null = 不在信用交易清單（無信用交易）
+             **({"margin": stock_margin(mrows, mlast[info["market"]], m5[info["market"]], conv)}
+--- /dev/null
++++ b/tests/test_iter37.py
+@@ -0,0 +1,330 @@
++"""第 37 輪（不連網、不連資料庫）：F37-1 個股 JSON 的 band、F37-2～4 基本面分頁河流圖卡、F37-5 用詞。
++有 node 時逐字取出 app.js、stock.js 的程式執行（node 14 可跑）。test_real_data 讀已匯出的 site/data（沒有 band 就略過）。"""
++import hashlib
++import json
++import math
++import re
++import shutil
++import subprocess
++import sys
++from datetime import date, timedelta
++from decimal import Decimal
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++from twstock import export  # noqa: E402
++
++SITE = ROOT / "site"
++APP = (SITE / "app.js").read_text(encoding="utf-8")
++STK = (SITE / "stock.js").read_text(encoding="utf-8")
++CSS = (SITE / "app.css").read_text(encoding="utf-8")
++HTML = (SITE / "index.html").read_text(encoding="utf-8")
++EXP = (ROOT / "twstock" / "export.py").read_text(encoding="utf-8")
++README = (ROOT / "README.md").read_text(encoding="utf-8")
++D0 = date(2026, 1, 5)
++
++
++def _grab(src, name):
++    m = re.search(rf"^(?:async )?function {name}\(", src, re.M)
++    if m:
++        i, n = src.index("{", src.index(")", m.start())), 0
++        for j in range(i, len(src)):
++            n += {"{": 1, "}": -1}.get(src[j], 0)
++            if n == 0:
++                return src[m.start():j + 1]
++    m = re.search(rf"^const {name}\b", src, re.M)
++    assert m, name
++    lines = src[m.start():].splitlines()
++    k = next(i for i, l in enumerate(lines) if re.sub(r"\s+//[^'`]*$", "", l).rstrip().endswith(";"))
++    return "\n".join(lines[:k + 1])
++
++
++def _node(js):
++    node = shutil.which("node")
++    if not node:
++        print("  （沒有 node，略過執行）")
++        return None
++    return json.loads(subprocess.run([node, "-e", js], capture_output=True, text=True, check=True).stdout)
++
++
++def _rows(n, close=100.0, pe=20.0, pb=2.0):
++    """n 天的 (日期, 收盤, 本益比, 淨值比)；EPS = 5、每股淨值 = 50。"""
++    return [(D0 + timedelta(days=i), close, pe, pb) for i in range(n)]
++
++
++# ─── F37-1：band_series ──────────────────────────────────
++def test_band_basic():
++    rows = _rows(130)
++    rows[60] = (rows[60][0], 110.0, 20.0, 2.0)                       # EPS 5 → 5.5：開新段
++    b = export.band_series(list(reversed(rows)))                     # 不必排序
++    assert b["pe"]["s"] == [["2026-01-05", 5.0], [str(rows[60][0]), 5.5], [str(rows[61][0]), 5.0]], b["pe"]["s"]
++    assert b["pe"]["n"] == 130 and b["pe"]["k"] == [20.0] * 5 and b["pb"]["s"][0] == ["2026-01-05", 50.0]
++    assert export.BAND_PCT == (10, 25, 50, 75, 90) and export.BAND_TOL == (0.005, 0.012) and export.BAND_SEG_MAX == 24
++
++
++def test_band_tolerance():
++    # 本益比 20：門檻 max(0.5%, 0.012 ÷ 20 = 0.06%) = 0.5%；EPS 5 → 5.02（+0.4%）不切、5.03（+0.6%）切
++    rows = _rows(120)
++    rows[10] = (rows[10][0], 100.4, 20.0, 2.0)
++    rows[20] = (rows[20][0], 100.6, 20.0, 2.0)
++    s = export.band_series(rows)["pe"]["s"]
++    assert [x[1] for x in s] == [5.0, 5.03, 5.0], s
++    # 淨值比 0.5：門檻 0.012 ÷ 0.5 = 2.4%；每股淨值 200 → 204（+2%）不切、205（+2.5%）切
++    rows = _rows(120, close=100.0, pb=0.5)
++    rows[10] = (rows[10][0], 102.0, 20.0, 0.5)
++    rows[20] = (rows[20][0], 102.5, 20.0, 0.5)
++    assert [x[1] for x in export.band_series(rows)["pb"]["s"]] == [200.0, 205.0, 200.0]
++    # 比較的是這一段已輸出的值（不是前一天）：慢慢漂移超過門檻才切
++    rows = [(D0 + timedelta(days=i), 100.0 * (1 + 0.0005 * i), 20.0, 2.0) for i in range(120)]
++    s = export.band_series(rows)["pe"]["s"]
++    assert all(abs(c / v / x - 1) <= 0.005 for (d, c, v, _) in rows for x in [next(y[1] for y in reversed(s) if y[0] <= str(d))]), s
++    assert 8 <= len(s) <= export.BAND_SEG_MAX
++
++
++def test_band_sig_digits():
++    rows = _rows(120, close=24.35, pe=69.57)                         # EPS 0.35001…：4 位有效數字，不是 2 位小數
++    assert export.band_series(rows)["pe"]["s"] == [["2026-01-05", 0.35]]
++    rows = _rows(120, close=7860.0, pe=50.64, pb=33.03)
++    b = export.band_series(rows)
++    assert b["pe"]["s"][0][1] == 155.2 and b["pb"]["s"][0][1] == 238.0
++
++
++def test_band_no_trade_and_loss():
++    rows = _rows(140)
++    for i in (5, 6, 7):
++        rows[i] = (rows[i][0], None, 30.0, 3.0)                      # 無成交：沿用前一段，不切
++    for i in range(50, 60):
++        rows[i] = (rows[i][0], 100.0, None, 2.0)                     # 虧損：None 段
++    rows[60] = (rows[60][0], None, 25.0, 2.0)                        # 轉盈第一天無成交：等到有收盤才開段
++    b = export.band_series(rows)
++    assert b["pe"]["s"] == [["2026-01-05", 5.0], [str(rows[50][0]), None], [str(rows[61][0]), 5.0]], b["pe"]["s"]
++    assert b["pe"]["n"] == 130 and len(b["pb"]["s"]) == 1
++    rows[140 - 1] = (rows[-1][0], 100.0, 0.0, 2.0)                   # ≤ 0 也是 None
++    assert export.band_series(rows)["pe"]["s"][-1] == [str(rows[-1][0]), None]
++
++
++def test_band_percentile():
++    # 最近序位法：由小到大第 ceil(P × n ÷ 100) 個
++    vals = [float(v) for v in range(1, 201)]                         # 1～200
++    rows = [(D0 + timedelta(days=i), v * 5, v, 2.0) for i, v in enumerate(vals)]
++    k = export.band_series(rows)["pe"]["k"]
++    assert k == [20.0, 50.0, 100.0, 150.0, 180.0], k
++    vals = [float(v) for v in range(1, 122)]                         # n = 121
++    rows = [(D0 + timedelta(days=i), v * 5, v, 2.0) for i, v in enumerate(vals)]
++    assert export.band_series(rows)["pe"]["k"] == [vals[math.ceil(p * 121 / 100) - 1] for p in (10, 25, 50, 75, 90)] == [13.0, 31.0, 61.0, 91.0, 109.0]
++    # 只計 > 0；k 落在 val 的一年最低、最高之間
++    rows += [(D0 + timedelta(days=200 + i), 100.0, None, 2.0) for i in range(30)]
++    b, v = export.band_series(rows), export.stock_valuation({"pe": vals}, {"pe": 60.0})
++    assert b["pe"]["n"] == 121 and v["pe"][1] <= b["pe"]["k"][0] and b["pe"]["k"][4] <= v["pe"][2]
++
++
++def test_band_min_days_and_cap():
++    assert export.band_series(_rows(119)) is None                       # 不足 VAL_MIN
++    rows = _rows(119) + [(D0 + timedelta(days=200), 100.0, None, 2.0)]
++    assert set(export.band_series(rows)) == {"pb"}                      # 本益比 119 天、淨值比 120 天
++    # 段數上限：每天跳動 → 超過 BAND_SEG_MAX 不輸出該指標
++    noisy = [(D0 + timedelta(days=i), 100.0 + (i % 2) * 5, 20.0, (100.0 + (i % 2) * 5) / 50) for i in range(130)]   # EPS 5 ↔ 5.25 每天換、每股淨值不變
++    assert set(export.band_series(noisy)) == {"pb"} and len(export.band_series(noisy)["pb"]["s"]) == 1
++    ok = [(D0 + timedelta(days=i), 100.0 + (i // 6 % 2) * 5, 20.0, 2.0) for i in range(6 * 24)]   # 剛好 24 段
++    assert len(export.band_series(ok)["pe"]["s"]) == 24
++
++
++def test_load_valuation_same_query():
++    """_load_valuation：仍是 2 個查詢；val 不變；第 4 個回傳值 = band_series。"""
++    days = [D0 + timedelta(days=i) for i in range(130)]
++
++    class Cur:
++        def __init__(self):
++            self.sql = []
++
++        def execute(self, sql, *a):
++            self.sql.append(sql)
++            if "DISTINCT TOP" in sql:
++                return iter([(d,) for d in reversed(days)])
++            rows = [(d, "TWSE", "1111", Decimal("20.00"), Decimal("2.00"), Decimal("3.00"), Decimal("100.00")) for d in days]
++            rows += [(d, "TPEx", "2222", None, Decimal("1.50"), None, None if i % 9 == 0 else Decimal("30.00")) for i, d in enumerate(days)]
++            return iter(rows)
++    cur = Cur()
++    mv, sv, last, band = export._load_valuation(cur, {"1111": 1000})
++    assert len(cur.sql) == 2 and all(s.lstrip().upper().startswith("SELECT") for s in cur.sql)
++    assert last == days[-1] and sv["1111"] == export.stock_valuation({"pe": [20.0] * 130, "pb": [2.0] * 130, "dy": [3.0] * 130}, {"pe": 20.0, "pb": 2.0, "dy": 3.0})
++    assert band["1111"]["pe"]["s"] == [[str(days[0]), 5.0]] and band["2222"] == {"pb": {"s": [[str(days[1]), 20.0]], "k": [1.5] * 5, "n": 130}}
++    assert export._load_valuation(type("E", (), {"execute": lambda self, *a: iter([])})()) == (None, {}, None, {})
++
++
++def test_export_wiring():
++    assert "valuation, stock_val, val_date, stock_band = _load_valuation(cur, shares)" in EXP
++    line = next(l for l in EXP.splitlines() if '"band"' in l)
++    assert '**({"band": {"d": str(val_date), **stock_band[code]}} if stock_band.get(code) and not cap else {}),' in line   # 和 val 同一個股本變動判斷
++    i = EXP.index('**({"val": {"d": str(val_date)')
++    assert i < EXP.index(line) < EXP.index('"dv": dividends(d_, c, ev')                                                   # 個股 JSON，val 之後
++    assert EXP.count('"band"') == 1 and "band" not in export.SCREEN_KEYS                                    # 只進 stocks/，不進 screen.json、etfp/
++
++
++# ─── F37-2～4：前端 ─────────────────────────────────────
++HELPERS = "\n".join(_grab(APP, n) for n in ("esc", "fmt", "pfmt", "md", "noteHTML", "segHTML"))
++BAND = "\n".join(_grab(STK, n) for n in ("disposeKCharts", "BAND_PCT", "BAND_NM", "bandView", "BAND_NOTE", "bandHTML", "renderBand"))
++MOCK = r"""
++let charts = [], store = {};
++const localStore = (k, f, v) => v === undefined ? (k in store ? store[k] : f) : (store[k] = v, f);
++const css = n => n === '--blue' ? '#00f' : n === '--text' ? '#111' : '#888', created = [], els = {};
++const $ = s => s in els ? els[s] : (els[s] = { innerHTML: '', textContent: '' });
++const window = { LightweightCharts: { createChart: (el, opt) => {
++  const c = { el, opt, ser: [], kinds: [], addLineSeries(o) { const s = { o, setData(d) { this.data = d; } }; this.ser.push(s); this.kinds.push('line'); return s; },
++    timeScale: () => ({ fitContent() {} }), subscribeCrosshairMove(f) { this.cb = f; }, remove() { this.removed = true; } };
++  created.push(c); return c; } } };
++const D = ['2026-11-13', '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20'];
++const mk = (o = {}) => Object.assign({ industry: '半導體', fund: { pe: 20, pb: 2, date: '2026-11-20' }, val: { d: '2026-11-20', pe: [38, 15, 30], pb: [50, 1, 3] },
++  prices: { d: D, c: [95, 100, null, 104, 102, 100] },
++  band: { d: '2026-11-19', pe: { s: [['2026-11-16', 5], ['2026-11-18', null], ['2026-11-19', 5.1]], k: [10, 12, 15, 18, 20], n: 242 },
++          pb: { s: [['2026-11-13', 50]], k: [1.5, 1.8, 2, 2.2, 2.5], n: 242 } } }, o);
++"""
++
++
++def test_js_states():
++    js = HELPERS + "\n" + BAND + MOCK + r"""
++const out = {};
++out.cap = bandHTML(mk({ band: undefined }), '09/29 減資，官方值可能尚未調整');
++out.none = bandHTML(mk({ band: undefined }), '');
++out.card = bandHTML(mk(), '');
++out.view = [mk(), mk({ fund: { pe: null, pb: 0.8, date: 'x' } }), mk({ band: { d: 'x', pb: mk().band.pb } }), mk({ band: { d: 'x', pe: mk().band.pe } })].map(bandView);
++store.bandV = 'pb'; out.view2 = [mk(), mk({ band: { d: 'x', pe: mk().band.pe } })].map(bandView); store = {};
++const msg = (d, k) => { renderBand(d, k); return els['#bandBox'].innerHTML; };
++out.loss = msg(mk({ fund: { pe: null, pb: 2, date: '2026-11-20' } }), 'pe');
++out.short = msg(mk({ band: { d: 'x', pb: mk().band.pb } }), 'pe');
++out.nopb = msg(mk({ fund: { pe: 20, pb: null, date: '2026-11-20' } }), 'pb');
++out.n = created.length;
++console.log(JSON.stringify(out));"""
++    o = _node(js)
++    if o is None:
++        return
++    assert o["cap"].endswith('<div class="muted small">09/29 減資，官方值可能尚未調整；股本變動後 90 天內不畫河流圖</div></section>') and "bandSeg" not in o["cap"]
++    assert "近一年有官方本益比、淨值比的天數都不足 120 天，不畫河流圖" in o["none"] and "bandSeg" not in o["none"]
++    assert '<div class="seg" id="bandSeg"><button data-v="pe" class="on">本益比</button><button data-v="pb" class="">淨值比</button></div>' in o["card"]
++    assert o["card"].startswith('<section class="sec card"><div class="sec-h"><h2 id="bandT">本益比河流圖（近一年）</h2>') and '<div id="bandBox"></div>' in o["card"]
++    assert o["view"] == ["pe", "pb", "pb", "pe"], o["view"]          # 今天虧損、沒有 band.pe → 淨值比；沒有 band.pb → 本益比
++    assert o["view2"] == ["pb", "pe"], o["view2"]                    # 記住淨值比；淨值比畫不出來時改本益比
++    assert o["loss"] == '<div class="muted small">近 4 季 EPS ≤ 0，官方不計算本益比</div>'
++    assert o["short"] == '<div class="muted small">近一年有官方本益比的天數不足 120 天，或反推值變動過於頻繁，不畫河流圖</div>'
++    assert o["nopb"] == '<div class="muted small">官方沒有提供今天的淨值比</div>' and o["n"] == 0
++
++
++def test_js_render():
++    js = HELPERS + "\n" + BAND + MOCK + r"""
++const out = {};
++charts = [{ remove() { out.old = true; } }];
++renderBand(mk(), 'pe');
++const c = created[0];
++out.title = els['#bandT'].textContent; out.box = els['#bandBox'].innerHTML; out.charts = charts.length === 1 && charts[0] === c;
++out.kinds = c.kinds; out.opt = [c.opt.handleScroll, c.opt.handleScale, c.opt.rightPriceScale.entireTextOnly, c.opt.layout.attributionLogo];
++out.ser = c.ser.map(s => [s.o.color, s.o.lineStyle, s.o.lineWidth, s.data.map(p => p.time), s.data.map(p => p.value === undefined ? null : p.value)]);
++out.leg = els['#bandL'].innerHTML; c.cb({ logical: 0, time: D[1] }); out.leg0 = els['#bandL'].innerHTML; c.cb({ logical: null }); out.legx = els['#bandL'].innerHTML;
++renderBand(mk(), 'pb'); out.pb = [els['#bandT'].textContent, els['#bandBox'].innerHTML, created[0].removed, created.length];
++renderBand(mk({ industry: '金融保險', fund: { pe: 120, pb: 2, date: '2026-11-20' }, val: { pe: [99, 15, 130] } }), 'pe'); out.fin = els['#bandBox'].innerHTML;
++console.log(JSON.stringify(out));"""
++    o = _node(js)
++    if o is None:
++        return
++    assert o["old"] and o["charts"] and o["title"] == "本益比河流圖（近一年）"
++    assert o["kinds"] == ["line"] * 6 and o["opt"] == [False, False, True, False], o   # 只有線（不塗色）
++    T = ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"]                  # 從第一段起日到 band.d
++    close = o["ser"][5]
++    assert close[0] == "#111" and close[3] == T and close[4] == [100, None, 104, 102], close   # 原始收盤 prices.c，無成交留空
++    for j, (k, sty, w) in enumerate(zip((10, 12, 15, 18, 20), (2, 0, 0, 0, 2), (1, 1, 2, 1, 1))):
++        s = o["ser"][j]                                                            # 第 i 天 = 當天的階梯值 × k；虧損期間 None：線斷開
++        assert s[:4] == ["#00f", sty, w, T] and s[4][:3] == [5 * k, 5 * k, None] and abs(s[4][3] - 5.1 * k) < 1e-9, s
++    b = o["box"]
++    assert b.index('id="bandL"') < b.index('id="bandC"') < b.index("band-lg")       # 十字線讀數在上、圖例在圖下方
++    assert re.findall(r"第 (\d+) 百分位 ([\d.]+) 倍", b) == [("90", "20.00"), ("75", "18.00"), ("50", "15.00"), ("25", "12.00"), ("10", "10.00")]
++    assert '<i class="dash"></i>第 90' in b and '<i class="mid"></i>第 50' in b and '<i class="cl"></i>收盤（原始價）' in b
++    assert "11/20 收盤 100 元 = 近 4 季 EPS 5.00 元 × 20.00 倍（近一年第 38 百分位）" in b                # 倍數用 fund.pe、位置用 val.pe
++    assert "線斷開 = 當時近 4 季 EPS ≤ 0，官方不計算本益比" in b and "金融業" not in b and "間距很寬" not in b
++    assert "<summary>倍數是用近一年的資料算的，不代表股價會回到某條線<i>說明</i></summary>" in b and "近 242 個有官方值的交易日" in b
++    assert "<b>11/19</b>" in o["leg"] and "近 4 季 EPS <b>5.10 元</b>" in o["leg"] and "本益比約 <b>20.00 倍</b>" in o["leg"]
++    assert "<b>11/16</b>" in o["leg0"] and "收 <b>100</b>" in o["leg0"] and "本益比約 <b>20.00 倍</b>" in o["leg0"] and o["legx"] == o["leg"]
++    t, box, removed, n = o["pb"]
++    assert t == "淨值比河流圖（近一年）" and removed and n == 2 and "每股淨值 50.00 元 × 2.00 倍（近一年第 50 百分位）" in box and "線斷開" not in box
++    assert "金融業獲利受利率、匯率影響較大，常搭配淨值比觀察" in o["fin"] and "EPS 很小時本益比會很大，倍數線間距很寬" in o["fin"] and "（近一年最低）" not in o["fin"]
++
++
++def test_layout_and_hooks():
++    i = STK.index("${bandHTML(data, capSub)}")
++    assert STK.index("${finUp ? `<div class=\"small val-note fin-note\">") < i < STK.index("<section class=\"sec grid ${F ? 'g2' : 'g-one'}\">") < STK.index("${data.dv ? divHTML(data.dv, data.market, P) : ''}")
++    assert "if (tab === 'fund' && data.band) { renderBand(data, bandView(data));" in STK
++    assert "localStore('bandV', null, v);" in STK and "renderBand(data, v); }); }" in STK
++    rb = _grab(STK, "renderBand")
++    assert rb.count("disposeKCharts();") == 1 and "charts = [c];" in rb                # disposeStockCharts 一併釋放
++    assert "data.prices" in rb and "adjFactors" not in rb and "aggregate" not in rb    # 原始收盤，和還原切換無關
++    for w in ("addAreaSeries", "addBaselineSeries", "addHistogramSeries", "topColor", "fillColor", "rgba("):
++        assert w not in rb, w                                                         # 不塗色
++    for w in (".at(", "??", "?.", "||=", "&&=", "replaceAll", "structuredClone"):
++        assert w not in BAND, w                                                        # node 14 可跑
++    assert len(re.findall(r"noteHTML\((['`])(.+?)\1,", APP + STK)) == 8 and "noteHTML(short, BAND_NOTE(k, B.n))" in rb
++    assert ".band-lg{margin:6px 0 4px}" in CSS and ".band-lg i.dash{background:none;height:0;border-top:2px dashed var(--blue);border-radius:0}" in CSS
++
++
++def test_version():
++    for f in ("stock.js", "app.css"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert (f'src="{f}?v={v}"' if f.endswith(".js") else f'href="{f}?v={v}"') in HTML, f"site/index.html 的 {f} 版本參數請改成 ?v={v}"
++
++
++# ─── F37-5：用詞 ─────────────────────────────────────────
++WORDS = ("買進", "賣出", "反彈", "見底", "買點", "超賣", "超買", "推薦", "強勢", "飆股", "勝率", "亮點", "建議", "低估", "高估", "超跌", "便宜",
++         "合理價", "昂貴", "目標價", "上檔", "下檔", "支撐", "壓力", "安全邊際", "賣點", "河道", "歷史本益比", "超漲")
++
++
++def _scope():
++    seg = BAND + "\n" + EXP[EXP.index("def band_series"):EXP.index("def _load_valuation")]
++    seg += "\n".join(l for l in (STK + CSS + EXP).splitlines() if "第 37 輪" in l)
++    seg += "".join(l[l.index("第 37 輪"):] for l in README.splitlines() if "第 37 輪" in l)
++    return seg
++
++
++def test_no_advice_words():
++    seg = _scope()
++    assert seg.count("第 37 輪") >= 5 and "不是股價的評價" in seg and "不代表股價會回到某條線" in seg and "不能用來回測" in seg
++    seg = seg.replace("不是投資建議", "").replace("非投資建議", "")
++    for w in WORDS:
++        assert w not in seg, w
++    assert "便宜" in STK                                         # 第 240 行舊說明不在掃描範圍（test_iter10、test_iter13 要求保留）
++
++
++# ─── 實際匯出資料（有才測）────────────────────────────────
++def test_real_data():
++    d = SITE / "data" / "stocks"
++    files = sorted(d.glob("*.json")) if d.exists() else []
++    objs = [json.loads(p.read_text(encoding="utf-8")) for p in files]
++    if not any("band" in o for o in objs):
++        print("  （尚未用第 37 輪匯出，略過）")
++        return
++    n = {"pe": 0, "pb": 0}
++    for o in objs:
++        B = o.get("band")
++        if o.get("capchg"):
++            assert not B, o["code"]
++        if not B:
++            continue
++        assert set(B) <= {"d", "pe", "pb"} and len(B) >= 2 and (o.get("val") or {}).get("d", B["d"]) == B["d"], o["code"]
++        assert len(json.dumps(B, ensure_ascii=False, separators=(",", ":"))) <= 3000, o["code"]
++        for k in ("pe", "pb"):
++            b = B.get(k)
++            if not b:
++                continue
++            n[k] += 1
++            ds = [x[0] for x in b["s"]]
++            assert b["n"] >= export.VAL_MIN and len(b["s"]) <= export.BAND_SEG_MAX and ds == sorted(set(ds)) and ds[-1] <= B["d"], o["code"]
++            assert b["k"] == sorted(b["k"]) and len(b["k"]) == 5 and all(v > 0 for v in b["k"]), o["code"]
++            assert all(x[1] is None or x[1] > 0 for x in b["s"]), o["code"]
++            v = (o.get("val") or {}).get(k)
++            if v:
++                assert v[1] <= b["k"][0] and b["k"][4] <= v[2], o["code"]
++    assert n["pe"] > 1000 and n["pb"] > 1500, n
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")

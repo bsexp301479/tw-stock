@@ -75,6 +75,70 @@ const ETF_DIV_FULL = '填息日 = 除息日起（含當天）第一個收盤大�
   '除息日、配息與除息前收盤來自證交所、櫃買中心的除息表。上市 ETF 還沒填息就遇到推測的其他價格調整（多為分割）時，寫「不再比較」；上櫃 ETF 無法辨識分割，照常比較。' +
   '還差 = 除息前收盤 − 最新收盤，% 以最新收盤計算。ETF 的配息來源可能含收益平準金、資本利得，不等於獲利。';
 
+// 第 37 輪 F37-2～4：本益比／淨值比河流圖（原始收盤＋5 條倍數線，不塗色）。倍數線 = 當天反推的 EPS（每股淨值）× 近一年官方值的百分位
+const BAND_PCT = [10, 25, 50, 75, 90], BAND_STY = [[2, 1], [0, 1], [0, 2], [0, 1], [2, 1]];   // [lineStyle, 線寬]：10／90 虛線、中位數粗線
+const BAND_NM = { pe: ['本益比', '近 4 季 EPS'], pb: ['淨值比', '每股淨值'] };
+function bandView(data) {                                                              // 選的那個畫不出來、另一個可以 → 改顯示另一個（今天虧損 → 淨值比）
+  const B = data.band || {}, f = data.fund || {}, ok = k => !!(B[k] && f[k] != null);
+  const v = localStore('bandV', 'pe') === 'pb' ? 'pb' : 'pe', o = v === 'pe' ? 'pb' : 'pe';
+  return ok(v) || !ok(o) ? v : o;
+}
+const BAND_NOTE = (k, n) => (k === 'pe' ? '倍數線 = 當天的近 4 季 EPS × 近一年官方本益比的百分位。EPS 由證交所、櫃買中心公布的本益比反推（原始收盤 ÷ 本益比），官方換用新財報時倍數線才會跳動。'
+  : '倍數線 = 當天的每股淨值 × 近一年官方淨值比的百分位。每股淨值由證交所、櫃買中心公布的淨值比反推（原始收盤 ÷ 淨值比），通常一季更新一次。') +
+  `第 P 百分位 = 近 ${n} 個有官方值的交易日由小到大排列，第 P% 的位置（最近序位）；這一年有 P% 的天數小於或等於這個倍數。收盤是原始價，和 K 線預設的還原價不同。` +
+  '倍數是用這一年的資料算的，舊日期的線也用到之後的資料；股價約有一半時間在中間兩條線之間是計算方式造成的，不代表股價會回到某條線。只有一年資料，不是長期區間，也不能用來回測。' +
+  `河流圖只描述股價和${k === 'pe' ? '近 4 季獲利' : '每股淨值'}的關係，不是股價的評價，也不是投資建議${k === 'pe' ? '；獲利大增時股價會落到低倍數線附近，例如景氣循環股在獲利高峰' : ''}。`;
+function bandHTML(data, capSub) {
+  const h = '<section class="sec card"><div class="sec-h"><h2 id="bandT">本益比河流圖（近一年）</h2>';
+  if (!data.band) return `${h}</div><div class="muted small">${capSub ? capSub + '；股本變動後 90 天內不畫河流圖' : '近一年有官方本益比、淨值比的天數都不足 120 天，不畫河流圖'}</div></section>`;
+  return `${h}<span class="sp"></span>${segHTML('bandSeg', [['pe', '本益比'], ['pb', '淨值比']], bandView(data))}</div><div id="bandBox"></div></section>`;
+}
+function renderBand(data, k) {
+  disposeKCharts();                                                                    // 河流圖放在 charts，disposeStockCharts 一併釋放
+  const B = data.band[k], f = data.fund || {}, P = data.prices, [nm, base] = BAND_NM[k], box = $('#bandBox'), LC = window.LightweightCharts;
+  $('#bandT').textContent = nm + '河流圖（近一年）';
+  if (f[k] == null || !B) {
+    box.innerHTML = `<div class="muted small">${f[k] != null ? `近一年有官方${nm}的天數不足 120 天，或反推值變動過於頻繁，不畫河流圖`
+      : k === 'pe' ? '近 4 季 EPS ≤ 0，官方不計算本益比' : '官方沒有提供今天的淨值比'}</div>`;
+    return;
+  }
+  const T = [], C = [], E = [];
+  let j = 0;
+  P.d.forEach((d, i) => { if (d < B.s[0][0] || d > data.band.d) return;
+    while (j + 1 < B.s.length && B.s[j + 1][0] <= d) j++;
+    T.push(d); C.push(P.c[i]); E.push(B.s[j][1]); });
+  const lc = P.c.filter(x => x != null), close = lc[lc.length - 1], V = (data.val || {})[k];
+  const pos = !V ? '' : f[k] <= V[1] ? '（近一年最低）' : f[k] >= V[2] ? '（近一年最高）' : `（近一年第 ${V[0]} 百分位）`;   // 和頁首一年位置同一個數字
+  const ex = [B.s.some(x => x[1] == null) ? `線斷開 = 當時${k === 'pe' ? '近 4 季 EPS ≤ 0，官方不計算本益比' : '官方沒有淨值比'}` : '',
+    data.industry === '金融保險' ? '金融業獲利受利率、匯率影響較大，常搭配淨值比觀察' : '', k === 'pe' && f.pe > 100 ? 'EPS 很小時本益比會很大，倍數線間距很寬' : ''];
+  const lg = B.k.map((x, i) => `<span class="lg"><i class="${BAND_STY[i][0] ? 'dash' : BAND_STY[i][1] > 1 ? 'mid' : ''}"></i>第 ${BAND_PCT[i]} 百分位 ${fmt(x, 2)} 倍</span>`).reverse().join('');
+  const short = '倍數是用近一年的資料算的，不代表股價會回到某條線';                      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
+  box.innerHTML = `<div class="kleg" id="bandL"></div><div id="bandC" class="chart-box" style="height:220px"></div>
+    <div class="kleg band-lg">${lg}<span class="lg"><i class="cl"></i>收盤（原始價）</span></div>
+    <div class="small">${md(f.date)} 收盤 ${pfmt(close)} 元 = ${base} ${fmt(close / f[k], 2)} 元 × ${fmt(f[k], 2)} 倍${pos}</div>
+    ${ex.filter(Boolean).map(t => `<div class="muted small">${t}</div>`).join('')}<div class="muted small" style="margin-top:6px">${noteHTML(short, BAND_NOTE(k, B.n))}</div>`;
+  if (!LC || !T.length) return;
+  const dt = t => typeof t === 'string' ? t : [t.year, t.month, t.day].map(x => String(x).padStart(2, '0')).join('-');
+  const c = LC.createChart($('#bandC'), { autoSize: true, handleScroll: false, handleScale: false,
+    layout: { background: { type: 'solid', color: 'transparent' }, textColor: css('--text2'), fontSize: 11, attributionLogo: false },
+    grid: { vertLines: { visible: false }, horzLines: { color: css('--border') } },
+    rightPriceScale: { borderVisible: false, minimumWidth: 76, entireTextOnly: true },
+    timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true,
+      tickMarkFormatter: (t, type) => { const [y, m, d] = dt(t).split('-').map(Number); return type === 0 ? String(y) : type === 1 ? `${m}月` : `${m}/${d}`; } },
+    localization: { locale: 'zh-TW', timeFormatter: t => dt(t).split('-').join('/') } });
+  const px = { type: 'custom', minMove: 0.01, formatter: pfmt };
+  const add = (vals, color, st, w) => c.addLineSeries({ color, lineStyle: st, lineWidth: w, priceFormat: px, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+    .setData(vals.map((v, i) => v == null ? { time: T[i] } : { time: T[i], value: v }));
+  B.k.forEach((x, i) => add(E.map(e => e == null ? null : e * x), css('--blue'), ...BAND_STY[i]));   // 虧損期間 null：線斷開，不補值
+  add(C, css('--text'), 0, 2);
+  charts = [c];
+  c.timeScale().fitContent();
+  const show = i => { $('#bandL').innerHTML = `<span><b>${md(T[i])}</b></span><span>收 <b>${pfmt(C[i])}</b></span><span>${base} <b>${E[i] == null ? '--' : fmt(E[i], 2) + ' 元'}</b></span>` +
+    `<span>${nm}約 <b>${C[i] == null || E[i] == null ? '--' : fmt(C[i] / E[i], 2) + ' 倍'}</b></span>`; };
+  c.subscribeCrosshairMove(p => { const i = p.logical == null ? -1 : Math.round(p.logical); show(p.time !== undefined && i >= 0 && i < T.length ? i : T.length - 1); });
+  show(T.length - 1);
+}
+
 const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];
 const ETF_TABS = STOCK_TABS.slice(0, 2);       // 第 15 輪 F15-2：ETF 個股頁沒有基本面
 // 第 15 輪 F15-2：ETF 個股頁的價格說明（原始價）。短句一定可見，完整說明收合（短句用變數：test_iter13 數 noteHTML 字面呼叫）
@@ -239,6 +303,7 @@ window.renderStock = async function (code, sub) {
       `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。${E ? '' : '占股本以目前發行股數計算。'}</div>`)}
     ${acHTML}` : tab === 'fund' ? `${VAL ? `<div class="muted small val-note">${noteHTML('獲利大增時本益比會落到一年低點，位置低不代表股價便宜', `一年位置 = 近 ${App.latest.valuation?.TWSE?.days ?? 242} 個交易日中，官方值小於或等於今天的天數比例（資料 ${md(VAL.d)}）。本益比 = 股價 ÷ 近 4 季 EPS，位置也反映獲利變化：獲利下降時本益比會升高；獲利大增時本益比（淨值比也可能）會落到一年低點，例如景氣循環股在獲利高峰，不代表股價便宜。${F ? '請對照下方季報卡的近 4 季 EPS 與一年前比較。' : ''}`)}</div>` : ''}
     ${finUp ? `<div class="small val-note fin-note">近 4 季 EPS 一年前 ${fmt(F.e4p, 2)} 元 → 現在 ${fmt(F.e4, 2)} 元（${F.e4p <= 0 ? '轉盈' : fmt(F.e4 / F.e4p, 1) + ' 倍'}）：本益比會因獲利增加而下降，位置低不代表股價便宜；請看下方季報卡的單季 EPS 是否已經轉弱。</div>` : ''}
+    ${bandHTML(data, capSub)}
     <section class="sec grid ${F ? 'g2' : 'g-one'}">
       <div class="card"><div class="sec-h"><h2>月營收</h2><span class="sp"></span><span id="revSegBox"></span></div><div id="revBox"></div></div>
       ${F ? `<div class="card"><div class="sec-h"><h2>季報</h2><span class="muted small">${qName(F.q.at(-1)[0])}${F.c.fs ? `｜本站收錄 ${md(F.c.fs)}` : ''}｜${FIN_TBL[F.t] || ''}</span></div><div id="finBox"></div></div>` : ''}
@@ -284,6 +349,8 @@ window.renderStock = async function (code, sub) {
     $('#starBtn').textContent = on ? '★ 已加入自選' : '☆ 加入自選';
   });
   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
+  if (tab === 'fund' && data.band) { renderBand(data, bandView(data));                // 第 37 輪 F37-3：本益比／淨值比切換
+    onSeg('bandSeg', v => { localStore('bandV', null, v); document.querySelectorAll('#bandSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); renderBand(data, v); }); }
   if (tab === 'chip') onSeg('chipSeg', v => { chipN = v; document.querySelectorAll('#chipSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
   if (tab === 'chip' && $('#chipInv')) onSeg('chipInv', v => { chipI = v; document.querySelectorAll('#chipInv button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
   if (tab === 'chip') buildChip(data, E);

@@ -365,3 +365,4 @@ a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
 @media (max-width:520px){.tl-yr:not(.all) .tl-x{display:none}.tl-all{display:inline-block}}
 @media (max-width:520px){.tl-opl .tl-kv,.tl-opl .tl-kv tbody{display:block}.tl-opl .tl-kv tr{display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:12px;border-bottom:1px solid var(--border)}.tl-opl .tl-kv th,.tl-opl .tl-kv td{border-bottom:0}.tl-opl .tl-kv td{flex:1 1 auto}.tl-opl .tl-kv td .small{word-break:keep-all}}
 @media (max-width:720px){.s-head .tl-go{position:absolute;top:36px;right:0;padding:4px 10px;font-size:13px}.s-head .s-px{padding-right:56px}}
+.band-lg{margin:6px 0 4px}.band-lg i{background:var(--blue)}.band-lg i.mid{height:4px}.band-lg i.dash{background:none;height:0;border-top:2px dashed var(--blue);border-radius:0}.band-lg i.cl{background:var(--text)}   /* 第 37 輪 F37-2：河流圖圖例在圖下方 */

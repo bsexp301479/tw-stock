@@ -57,6 +57,9 @@ SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "n
 VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
 VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
 VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
+BAND_PCT = (10, 25, 50, 75, 90)  # 第 37 輪 F37-1：河流圖倍數 = 窗口內官方值的這幾個百分位（最近序位法）
+BAND_TOL = (0.005, 0.012)       # 反推值和這一段的值相差超過 max(0.5%, 0.012 ÷ 當天官方值) 才開新段（官方值只有 2 位小數）
+BAND_SEG_MAX = 24               # 段數超過此值（反推雜訊）→ 不輸出該指標
 FIN_QUARTERS = 8                # 第 10 輪 B5：個股季報卡的季數
 _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
@@ -443,16 +446,41 @@ def stock_valuation(series, today):
     return out or None
 
 
+def band_series(rows):
+    """
+    第 37 輪 F37-1：河流圖。rows = [(日期, 原始收盤, 本益比, 淨值比)]（float 或 None，不必排序），窗口內一檔股票。
+    每個指標：s = 階梯 [[起日, 收盤 ÷ 官方值（4 位有效數字）| None]]，官方值空或 ≤ 0 → None 段（虧損）；
+    收盤空（無成交）沿用前一段；和這一段的值相差超過 max(BAND_TOL[0], BAND_TOL[1] ÷ 官方值) 才開新段。
+    k = 官方值 > 0 的 BAND_PCT 百分位（最近序位法：由小到大第 ceil(P × n ÷ 100) 個）；n = 有效天數。
+    有效天數 < VAL_MIN 或段數 > BAND_SEG_MAX → 不輸出該指標；都沒有 → None。
+    """
+    out, rows = {}, sorted(rows, key=lambda r: r[0])
+    for j, k in ((2, "pe"), (3, "pb")):
+        a, s = sorted(r[j] for r in rows if r[j] is not None and r[j] > 0), []
+        for r in rows:
+            c, v = r[1], r[j]
+            if v is None or v <= 0:
+                if not s or s[-1][1] is not None:
+                    s.append([str(r[0]), None])
+            elif c is not None and (not s or s[-1][1] is None or abs(c / v / s[-1][1] - 1) > max(BAND_TOL[0], BAND_TOL[1] / v)):
+                s.append([str(r[0]), float(f"{c / v:.4g}")])
+        if len(a) >= VAL_MIN and len(s) <= BAND_SEG_MAX:
+            out[k] = {"s": s, "k": [a[-(-p * len(a) // 100) - 1] for p in BAND_PCT], "n": len(a)}
+    return out or None
+
+
 def _load_valuation(cur, shares=None):
     """
-    讀窗口內的 stock_fundamentals（約 47 萬列）→ (市場估值, {代號: 個股估值}, 窗口最後一天)。
+    讀窗口內的 stock_fundamentals（約 47 萬列）→ (市場估值, {代號: 個股估值}, 窗口最後一天, {代號: 河流圖})。
     第 12 輪：同一個查詢多讀當天收盤，乘 shares（{代號: 目前股數}）得市值，市場估值加 wpe（市值加權本益比）。
+    第 37 輪：同一個查詢的收盤、本益比、淨值比 → band_series。
     """
     days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {VAL_DAYS} trade_date FROM stock_fundamentals ORDER BY trade_date DESC")][::-1]
     if not days:
-        return None, {}, None
+        return None, {}, None, {}
     f = lambda x: None if x is None else float(x)
     mrows, wrows, series, today = [], [], defaultdict(lambda: {"pe": [], "pb": [], "dy": []}), {}
+    brows = defaultdict(list)
     shares = shares or {}
     for d, m, code, pe, pb, dy, close in cur.execute("""
         SELECT f.trade_date, s.market_type, s.stock_code, f.pe_ratio, f.pb_ratio, f.dividend_yield, p.close_price
@@ -468,11 +496,13 @@ def _load_valuation(cur, shares=None):
                 series[code][k].append(v)
         if d == days[-1]:
             today[code] = {"pe": pe, "pb": pb, "dy": dy}
+        brows[code].append((d, f(close), pe, pb))
     mv = market_valuation(mrows, days)
     for m, w in market_wpe(wrows, days).items():          # 第 12 輪
         if m in mv:
             mv[m]["wpe"] = w
-    return mv or None, {c: stock_valuation(series[c], today.get(c, {})) for c in series}, days[-1]
+    return (mv or None, {c: stock_valuation(series[c], today.get(c, {})) for c in series}, days[-1],
+            {c: band_series(r) for c, r in brows.items()})
 
 
 # ─── 融資融券（B2＋A4）與 ETF（E1）────────────────────────
@@ -1595,7 +1625,7 @@ def export_all() -> float:
     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
     p_days = sorted({r[0] for rows in prices.values() for r in rows})   # 第 23 輪 F23-1：完整交易日序列（b_days 只有 120 天，120 日要第 121 天）
     status = build_status(cur, latest_date, now)
-    valuation, stock_val, val_date = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe
+    valuation, stock_val, val_date, stock_band = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe；第 37 輪加河流圖
     fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
     fh = _load_qfii(cur)                                       # 第 29 輪 F29-4
@@ -1690,6 +1720,7 @@ def export_all() -> float:
             **({"capchg": cap} if cap else {}),
             # F9-4：估值一年位置；股本變動（cap）時官方值可能尚未調整，不輸出；只有窗口最後一天有官方值的股票才有
             **({"val": {"d": str(val_date), **stock_val[code]}} if stock_val.get(code) and not cap else {}),
+            **({"band": {"d": str(val_date), **stock_band[code]}} if stock_band.get(code) and not cap else {}),   # 第 37 輪 F37-1：同 val 不輸出股本變動
             **({"alerts": alerts[code]} if code in alerts else {}),
             # 該市場有融資融券資料時才有 margin；null = 不在信用交易清單（無信用交易）
             **({"margin": stock_margin(mrows, mlast[info["market"]], m5[info["market"]], conv)}
