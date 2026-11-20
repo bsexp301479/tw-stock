@@ -1,0 +1,625 @@
+--- a/twstock/export.py
++++ b/twstock/export.py
+@@ -732,10 +732,11 @@
+     return px, latest
+ 
+ 
+-def etf_block(latest, margin_rows, sbl_rows=None):
++def etf_block(latest, margin_rows, sbl_rows=None, div_rows=None):
+     """
+     latest.json 的 etfs。margin_rows：{代號: (融資前日, 融資餘額, 融券前日, 融券餘額)}（該市場最新融資融券日）。
+     第 12 輪：sbl_rows：{代號: (借券前日餘額, 借券餘額)}（股，該市場最新借券日）→ lb、l1（張）。
++    第 36 輪：div_rows：{代號: etf_div_row(...)} → dvd、dvn、dvx、dvc。
+     """
+     if not latest:
+         return None
+@@ -750,11 +751,12 @@
+             sl = (sbl_rows or {}).get(code)
+             if sl:
+                 r.update(lb=lots(sl[1]), l1=lots(sl[1] - sl[0]))
++            r.update((div_rows or {}).get(code, {}))
+             rows[code] = r
+     return {"dates": {m: str(d) for m, (d, _) in latest.items()}, "rows": rows}
+ 
+ 
+-# ─── 第 15 輪 F15-2：ETF 個股頁（etfp/{代號}.json；原始價，本站沒有 ETF 除息資料）──────
++# ─── 第 15 輪 F15-2：ETF 個股頁（etfp/{代號}.json；原始價；第 36 輪起有官方除息 dv）──────
+ def _load_etf_hist(cur):
+     """ETF 完整歷史：({代號: [(日期, 開, 高, 低, 收, 量（股）, 官方漲跌)]}, 融資融券 {代號: {日期: (資前, 資餘, 資限額, 券前, 券餘, 註記)}},
+     借券 {代號: {日期: (前日, 餘額, 限額, 備註)}}（股）, {市場: 借券日期（舊到新）})。不改 _load_margin、_load_etf_sbl（市場合計、ETF 列表在用）。"""
+@@ -773,6 +775,50 @@
+         sb[code][d] = tuple(r)
+         sd[m].add(d)
+     return px, mg, sb, {m: sorted(v) for m, v in sd.items()}
++
++
++def _load_etf_events(cur):
++    """第 36 輪 F36-1：ETF 官方除息 {代號: [(除息日, 除息前收盤, 參考價, 每單位配息)]}（舊到新；第 24 輪起每晚收集存入）。"""
++    out = defaultdict(list)
++    for code, *r in cur.execute("""
++        SELECT e.etf_code, x.event_date, x.prev_close, x.ref_price, x.div_cash
++        FROM etf_events x JOIN etfs e ON e.etf_id = x.etf_id ORDER BY x.event_date"""):
++        out[code].append(tuple(r))
++    return out
++
++
++def etf_dividends(d_, c, events, gx=()):
++    """
++    第 36 輪 F36-1：ETF 配息與填息（舊到新），格式同個股的 dv（t 一律「息」）：c 每單位配息、p 除息前收盤、r 參考價（K 線十字線用）。
++    填息同 dividends()：除息日（第 1 天）起第一個原始收盤 ≥ p，f 填息日、n 第幾個交易日；除息日不在行情（停牌）只列不算。
++    上市：填息前遇到不是官方除息日的推測調整日（gx，多為分割），停在那一列：x = [日期, "價格調整"]。上櫃沒有 gx，不判斷（D63-4）。
++    """
++    ex = {str(e[0]) for e in events}
++    stop = {i for i, d in enumerate(d_) if str(d) in set(gx) - ex}
++    out = []
++    for d, p, r, cash in events:
++        row = {"d": str(d), "t": "息", "c": float(cash), "p": float(p), "r": float(r)}
++        out.append(row)
++        i = bisect_left(d_, d)
++        if i == len(d_) or d_[i] != d:
++            continue
++        for j in range(i, len(d_)):
++            if j in stop:
++                row["x"] = [str(d_[j]), "價格調整"]
++                break
++            if c[j] is not None and float(c[j]) >= row["p"]:
++                row.update(f=str(d_[j]), n=j - i + 1)
++                break
++    return out
++
++
++def etf_div_row(dv, today):
++    """第 36 輪 F36-3：ETF 列表的配息欄。最近一次同 div_screen；dvc = 近 365 天每單位配息合計。近 365 天沒有配息 → {}。"""
++    y = [r["c"] for r in dv if (today - date.fromisoformat(r["d"])).days <= 365]
++    if not y:
++        return {}
++    s = div_screen(dv, today)
++    return {"dvd": s["dvd"], "dvn": s["dvn"], "dvx": s["dvx"], "dvc": round(sum(y), 6)}
+ 
+ 
+ def etf_gaps(d_, c, ch, market):
+@@ -787,11 +833,12 @@
+             and abs(float(c[i]) - float(ch[i]) - float(c[i - 1])) >= 0.005]
+ 
+ 
+-def etf_export(code, name, market, rows, mrows, srows, mdate, md5, sdate, sd5):
++def etf_export(code, name, market, rows, mrows, srows, mdate, md5, sdate, sd5, events=()):
+     """
+     etfp/{代號}.json。prices 同個股格式（原始價；量為張；ch = 官方漲跌，推測調整日且官方為 0 → null「不比價」）；
+     gx = etf_gaps（沒有就不輸出）；margin、sbl、mg 沿用 stock_margin、stock_sbl、margin_series（ETF 沒有換算紀錄、沒有股數）。
+     mdate、md5：該市場最新／往前第 5 個融資融券日；sdate、sd5：該市場 ETF 最新／往前第 5 個借券日。
++    第 36 輪：events = _load_etf_events 的一檔 → dv（沒有紀錄就不輸出）。
+     """
+     d_, o, h, l, c, v, ch = zip(*rows)
+     gx = etf_gaps(d_, c, ch, market)
+@@ -805,7 +852,8 @@
+             **({"gx": gx} if gx else {}),
+             **({"margin": stock_margin(mrows, mdate, md5)} if mdate else {}),     # null = 不在信用交易清單
+             **({"sbl": sbl} if sbl else {}),
+-            **({"mg": mg} if mg else {})}
++            **({"mg": mg} if mg else {}),
++            **({"dv": dv} if (dv := etf_dividends(d_, c, events, gx)) else {})}
+ 
+ 
+ def _load_holdings(cur):
+@@ -1554,6 +1602,7 @@
+     edates, esbl, esbl_m = _load_etf_sbl(cur)                  # 第 12 輪 ETF 借券
+     closed = load_closed(cur)                                  # 第 14 輪 F14-3：結算日推算用的休市日
+     epx, emg, esb, esd = _load_etf_hist(cur)                   # 第 15 輪 F15-2：ETF 個股頁
++    eev = _load_etf_events(cur)                                # 第 36 輪 F36-1：ETF 官方除息
+     conn.close()
+     mlast = {m: ds[-1] for m, ds in mdates.items()}
+     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
+@@ -1758,12 +1807,15 @@
+     etf_margin_rows = {code: (mp, mb, sp, sb) for m, d in mlast.items() for code, mp, mb, sp, sb in metfs[m].get(d, [])}
+     # 第 15 輪 F15-2：ETF 個股檔 = latest.json etfs.rows 的 ETF（已下市、最新一天沒有列的不匯出）
+     n_etf = kb_etf = 0
++    edv = {}                                                    # 第 36 輪 F36-3：ETF 列表的配息欄
+     for m, (_, items) in (etf_latest or {}).items():
+         ds = esd.get(m, [])
+         for code, name, *_ in items:
+             p = SITE_DATA_DIR / "etfp" / f"{code}.json"
+-            _write(p, etf_export(code, name, m, epx[code], emg.get(code, {}), esb.get(code, {}), mlast.get(m), m5.get(m),
+-                                 ds[-1] if ds else None, ds[-6] if len(ds) >= 6 else None))
++            E = etf_export(code, name, m, epx[code], emg.get(code, {}), esb.get(code, {}), mlast.get(m), m5.get(m),
++                           ds[-1] if ds else None, ds[-6] if len(ds) >= 6 else None, eev.get(code, ()))
++            _write(p, E)
++            edv[code] = etf_div_row(E.get("dv", []), latest_date)
+             n_etf, kb_etf = n_etf + 1, kb_etf + p.stat().st_size / 1024
+ 
+     if futures:
+@@ -1795,7 +1847,7 @@
+         "margin": margin,
+         "sbl": {m: market_sbl(sdates[m], srecent[m]) for m in ("TWSE", "TPEx") if sdates.get(m)} or None,   # 第 11 輪 B14
+         "sbl_etf": {m: market_sbl([d], {d: [(p, b) for _, p, b in esbl_m[m].values()]}) for m, d in edates.items()} or None,   # 第 12 輪
+-        "etfs": etf_block(etf_latest, etf_margin_rows, esbl),
++        "etfs": etf_block(etf_latest, etf_margin_rows, esbl, edv),
+         "holdings": {code: {"d": str(hd[-1]), "n": etf_names[code][0],
+                             **({"u1": u} if (u := unit_change(hs, hd)) is not None else {})}
+                      for code, (hd, hs, _) in holdings.items()},
+--- a/site/app.js
++++ b/site/app.js
+@@ -1411,7 +1411,11 @@
+ 
+ // ─── ETF（E1）：與股票完全分開，不計入任何個股統計 ─────────
+ const ETF_SORT = [['tv', '成交額', -1], ['p+', '漲幅', -1], ['p-', '跌幅', 1], ['m1', '融資增減', -1], ['s1', '融券增減', -1],
+-  ['l1+', '借券增加', -1], ['l1-', '借券減少', 1], ['lb', '借券餘額', -1]];     // 第 12 輪 ETF-借券
++  ['l1+', '借券增加', -1], ['l1-', '借券減少', 1], ['lb', '借券餘額', -1],     // 第 12 輪 ETF-借券
++  ['dvr', '配息率', -1], ['dva', '最近除息', 1]];                                  // 第 36 輪 F36-3
++// 第 36 輪 F36-3：ETF 配息欄。dvr 配息率 = 近一年配息 ÷ 收盤（%）；dva 除息至今天數（相對網站資料日，排序用）
++const etfDiv = (r, d) => { r.dvr = r.dvc > 0 && r.c > 0 ? r.dvc / r.c * 100 : null; r.dva = r.dvd ? Math.round((Date.parse(d) - Date.parse(r.dvd)) / 864e5) : null; return r; };
++const ETF_DIV_NOTE = '配息率 = 近一年（365 天）每單位配息合計 ÷ 今日收盤，用過去的配息，不代表未來；股價下跌時配息率會變高。最近除息的第二行：填息 = 除息當天起原始收盤回到除息前收盤，只看最近一次；上市 ETF 填息前遇到推測的其他價格調整（多為分割）標「中斷」。除息資料來自證交所、櫃買中心的除息表。';
+ 
+ // ETF 列（tr[data-etf]）→ ETF 個股頁；列內的「持股」小標（<a>）照舊連到持股頁。第 20 輪：ETF 列表與自選頁共用
+ const onEtfRow = e => { const tr = e.target.closest('tr[data-etf]'); if (tr && !e.target.closest('a,button')) location.hash = '#/stock/' + tr.dataset.etf; };
+@@ -1426,7 +1430,7 @@
+   const by = localStore('etfSort', 'tv'), mkt = localStore('etfMkt', 'all');
+   const [key, , dir] = ETF_SORT.find(x => x[0] === by) || ETF_SORT[0];
+   const f = key.replace(/[+-]$/, '');
+-  const list = Object.entries(E.rows).filter(([, r]) => mkt === 'all' || r.m === mkt)
++  const list = Object.entries(E.rows).map(([c, r]) => [c, etfDiv(r, App.latest.date)]).filter(([, r]) => mkt === 'all' || r.m === mkt)
+     .sort((a, b) => (a[1][f] == null) - (b[1][f] == null) || dir * ((a[1][f] ?? 0) - (b[1][f] ?? 0)));
+   const lots = v => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v, 0)}</td>`;
+   const dates = Object.entries(E.dates).map(([m, d]) => `${m === 'TWSE' ? '上市' : '上櫃'} ${md(d)}`).join('　');
+@@ -1436,18 +1440,21 @@
+         <input id="etfQ" class="sel" type="search" placeholder="篩選代號或名稱" aria-label="篩選 ETF" value="${esc(App.etfQ || '')}">
+         <select id="etfSel" class="sel" aria-label="排序">${ETF_SORT.map(x => `<option value="${x[0]}"${x[0] === by ? ' selected' : ''}>${x[1]}</option>`).join('')}</select></div>
+       <div class="card"><div class="tbl-wrap"><table class="tbl etf-tbl"><thead><tr>
+-        <th>ETF</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>成交額</th><th>融資餘額</th><th>融資增減</th><th>融券餘額</th><th>融券增減</th><th>借券餘額</th><th>借券增減</th></tr></thead><tbody>` +
++        <th>ETF</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>成交額</th><th>融資餘額</th><th>融資增減</th><th>融券餘額</th><th>融券增減</th><th>借券餘額</th><th>借券增減</th><th>近一年配息</th><th>配息率</th><th>最近除息</th></tr></thead><tbody>` +
+       list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
+         <td class="num ${cls(r.ch)}">${pfmt(r.c)}</td>
+         <td class="num ${cls(r.ch)}">${r.c == null ? '無成交' : sgn(r.p) + '%'}</td>
+         <td class="num">${fmt(r.v)}</td><td class="num">${fmt(r.tv, 2)}億</td>
+         <td class="num">${r.mb == null ? '--' : fmt(r.mb)}</td>${lots(r.m1)}
+         <td class="num">${r.sb == null ? '--' : fmt(r.sb)}</td>${lots(r.s1)}
+-        <td class="num">${r.lb == null ? '--' : fmt(r.lb)}</td>${lots(r.l1)}</tr>`).join('') +
++        <td class="num">${r.lb == null ? '--' : fmt(r.lb)}</td>${lots(r.l1)}
++        <td class="num">${r.dvc == null ? '--' : r.dvc.toLocaleString('zh-TW', { maximumFractionDigits: 4 })}</td><td class="num">${r.dvr == null ? '--' : fmt(r.dvr, 2) + '%'}</td>
++        <td class="num">${r.dvd ? md(r.dvd) + `<span class="sub2">${r.dvn != null ? r.dvn + ' 天填息' : r.dvx ? '中斷' : '未填息'}</span>` : '--'}</td></tr>`).join('') +
+       `</tbody></table></div></div>
+       ${list.length > ETF_N ? `<button class="chip" id="etfMore" style="margin-top:8px">${App.etfAll ? `只顯示前 ${ETF_N} 檔` : `顯示全部 ${list.length} 檔`}</button>` : ''}
+-      <div class="muted small" style="margin-top:6px">共 ${list.length} 檔。成交量為張、成交額為億元；融資融券為張，增減 = 今日餘額 − 前日餘額，「--」表示不在信用交易清單。借券為借券賣出（張，資料晚上 8 點半以後更新），多為造市、套利與避險，不等於看空。ETF 不計入首頁家數、成交額、類股資金流、排行與股票口徑的融資融券。</div></section>`;
++      <div class="muted small" style="margin-top:6px">共 ${list.length} 檔。成交量為張、成交額為億元；融資融券為張，增減 = 今日餘額 − 前日餘額，「--」表示不在信用交易清單。借券為借券賣出（張，資料晚上 8 點半以後更新），多為造市、套利與避險，不等於看空。ETF 不計入首頁家數、成交額、類股資金流、排行與股票口徑的融資融券。${ETF_DIV_NOTE}</div></section>`;
+   keyCol({ tv: 4, p: 2, m1: 6, s1: 8, l1: 10, lb: 9 }[f]);
++  keyCol({ dvr: 12, dva: 13 }[f]);                                           // 第 36 輪 F36-3
+   $('#etfSel').addEventListener('change', e => { localStore('etfSort', null, e.target.value); renderEtf(); });
+   onSeg('etfMktSeg', v => { localStore('etfMkt', null, v); renderEtf(); });
+   const etfQ = () => { const q = (App.etfQ = $('#etfQ').value.trim()).toLowerCase();   // 第 25 輪 D25-15：只隱藏列，不重畫
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -48,9 +48,10 @@
+ // 第 24 輪 F24-6：股利與填息（匯出端 dv：d 除權息日、t 類型、k 分類、c 現金股利、s 每仟股配股、a 權值＋息值（沒有 c 時）、p 除權息前收盤、
+ // f 填息日、n 第幾個交易日、x = [日期, 原因] 股本變動後不再比較）；填息在匯出端算，這裡只顯示。D36-12：金額最多 4 位小數、去掉尾端 0
+ const dfmt = (n, d = 4) => n == null ? '--' : Number(n).toLocaleString('zh-TW', { maximumFractionDigits: d });
+-function divHTML(dv, mkt, P) {
+-  const head = '<section class="sec card"><div class="sec-h"><h2>股利與填息</h2></div>', from = P.d[0];
+-  if (!dv.length) return `${head}<div class="muted small">${from} 起沒有除權息紀錄</div></section>`;
++// 第 36 輪 F36-2：etf = true 時為 ETF 版（標題「配息與填息」、沒有配股欄、說明不同），股票輸出不變
++function divHTML(dv, mkt, P, etf = false) {
++  const head = `<section class="sec card"><div class="sec-h"><h2>${etf ? '配息與填息' : '股利與填息'}</h2></div>`, from = P.d[0];
++  if (!dv.length) return `${head}<div class="muted small">${from} 起沒有${etf ? '除息' : '除權息'}紀錄</div></section>`;
+   const tr = P.c.map((c, i) => c != null ? i : -1).filter(i => i >= 0), lt = tr[tr.length - 1], lc = P.c[lt];
+   const late = P.d[lt] !== App.latest.date ? `，最後成交 ${md(P.d[lt])}` : '';      // D37-7：停牌股照算，寫最後成交日
+   const split = r => mkt === 'TWSE' && r.t === '權息' ? ` title="上市除權息的官方表只有權值＋息值合計 ${dfmt(r.a, 6)} 元，無法拆分現金與配股"` : '';
+@@ -60,22 +61,29 @@
+   const fill = r => r.t === '權' ? '<span title="純配股不計算填權">--</span>' : r.f ? `${r.n === 1 ? '當天' : md(r.f)}<span>第 ${r.n} 個交易日</span>`
+     : r.x ? `不再比較<span>${md(r.x[0])} ${r.x[1]}後</span>` : `尚未填息<span>還差 ${fmt(r.p - lc, 2)} 元，+${fmt((r.p - lc) / lc * 100, 2)}%${late}</span>`;
+   const short = `填息 = 收盤回到除息前收盤；天數含除息日當天。資料自 ${from} 起`;     // 短句用變數：test_iter13 數 noteHTML 字面呼叫
+-  const full = '填息日 = 除權息日起（含當天）第一個收盤大於或等於除權息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除權息日當天算第 1 天，無成交日也算。' +
++  const full = etf ? ETF_DIV_FULL : '填息日 = 除權息日起（含當天）第一個收盤大於或等於除權息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除權息日當天算第 1 天，無成交日也算。' +
+     '純配股（除權）不計算填權；只有現金增資的除權不列入。還沒填息就遇到之後的配股、減資或面額變更時，原始價不能再和除權息前收盤比較，寫「不再比較」。' +
+     '上市除權息的官方表只有權值＋息值合計，現金股利寫「--」（滑過可看合計）；上櫃的配股是每千股無償配股的股數。還差 = 除權息前收盤 − 最新收盤，% 以最新收盤計算。';
+-  return `${head}<div class="tbl-wrap"><table class="tbl dv-tbl"><thead><tr><th>除權息日</th><th>現金股利<br>（元）</th><th>配股<br>每千股</th><th>除權息<br>前收盤</th><th>填息</th></tr></thead><tbody>` +
++  return `${head}<div class="tbl-wrap"><table class="tbl dv-tbl"><thead><tr>${etf ? '<th>除息日</th><th>配息<br>（元）</th><th>除息<br>前收盤</th>'
++    : '<th>除權息日</th><th>現金股利<br>（元）</th><th>配股<br>每千股</th><th>除權息<br>前收盤</th>'}<th>填息</th></tr></thead><tbody>` +
+     dv.slice().reverse().map(r => `<tr><td>${r.d.replaceAll('-', '/')}${r.t === '息' ? '' : `<span>${EV_LABEL[r.t]}</span>`}</td><td class="num">${cash(r)}</td>` +
+-      `<td class="num">${stock(r)}</td><td class="num">${pfmt(r.p)}</td><td>${fill(r)}</td></tr>`).join('') +
++      `${etf ? '' : `<td class="num">${stock(r)}</td>`}<td class="num">${pfmt(r.p)}</td><td>${fill(r)}</td></tr>`).join('') +
+     `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
+ }
+ 
++const ETF_DIV_FULL = '填息日 = 除息日起（含當天）第一個收盤大於或等於除息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除息日當天算第 1 天，無成交日也算。' +
++  '除息日、配息與除息前收盤來自證交所、櫃買中心的除息表。上市 ETF 還沒填息就遇到推測的其他價格調整（多為分割）時，寫「不再比較」；上櫃 ETF 無法辨識分割，照常比較。' +
++  '還差 = 除息前收盤 − 最新收盤，% 以最新收盤計算。ETF 的配息來源可能含收益平準金、資本利得，不等於獲利。';
++
+ const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];
+ const ETF_TABS = STOCK_TABS.slice(0, 2);       // 第 15 輪 F15-2：ETF 個股頁沒有基本面
+-// 第 15 輪 F15-2：ETF 個股頁的價格說明（原始價；本站沒有 ETF 除息資料）。短句一定可見，完整說明收合（短句用變數：test_iter13 數 noteHTML 字面呼叫）
+-const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除息日會向下跳空，不是當天下跌${m === 'TWSE' ? '；圖上「息?」「調?」是推測的價格調整日' : '；上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日'}`;
+-  return noteHTML(short, '本頁價格是證交所、櫃買中心公布的原始成交價，沒有依除息調整（本站還沒有 ETF 的除息資料）。配息 ETF 除息日的開盤參考價會扣掉配息，K 線會向下跳空；均線、MACD 與 52 週高低也用原始價計算，除息日前後會失真，所以本頁不提供技術面訊號。' +
+-  '上市 ETF：除息等價格調整日官方漲跌為 0（不比價），本站把「收盤 − 官方漲跌」和前一日收盤不同的日子標成「息?」（官方漲跌 0）或「調?」（漲跌不是 0，多為分割），只是推測，也可能是合併或資料更正，沒有配息金額。' +
+-  '上櫃 ETF：官方漲跌就是收盤減前一日收盤，除息日的漲跌含除息的跌幅，本站無法辨識除息日，不標示。'); };
++// 第 15 輪 F15-2：ETF 個股頁的價格說明（原始價）。短句一定可見，完整說明收合（短句用變數：test_iter13 數 noteHTML 字面呼叫）
++// 第 36 輪 F36-4：除息日改用官方除息表（「息」），上櫃也標；「息?」「調?」只留給除息表沒有的推測調整
++const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除息日會向下跳空，不是當天下跌；圖上「息」是官方除息日${m === 'TWSE' ? '，「息?」「調?」是推測的其他價格調整' : ''}`;
++  return noteHTML(short, '本頁價格是證交所、櫃買中心公布的原始成交價，沒有依除息調整。配息 ETF 除息日的開盤參考價會扣掉配息，K 線會向下跳空；均線、MACD 與 52 週高低也用原始價計算，除息日前後會失真，所以本頁不提供技術面訊號。' +
++  '除息日來自證交所、櫃買中心的除息表，標成「息」，十字線列出前收與參考價；除息日的漲跌顯示「不比價」，週、月 K 用參考價 ÷ 前收換算。' +
++  '上市 ETF：除息表沒有的價格調整日（「收盤 − 官方漲跌」和前一日收盤不同），本站標成「息?」（官方漲跌 0）或「調?」（漲跌不是 0，多為分割），只是推測，也可能是合併或資料更正。' +
++  '上櫃 ETF：除息表以外的價格調整（如分割）本站無法辨識，不標示。'); };
+ 
+ // 第 25 輪 D25-05：產業鏈、概念股標籤只顯示前 2 個，其餘收在「+N」（點了展開，展開後按「收合」收回）
+ // 第 27 輪 D27-07：融資融券子圖一次只畫一條線（右側刻度就是這條線）；借券只在有資料時可選
+@@ -101,7 +109,8 @@
+   const last = n - 1;
+   // 最新一天沒成交（開高低收為 --）時，改顯示最後成交日的收盤，不算漲跌
+   const traded = P.c.map((c, i) => c != null ? i : -1).filter(i => i >= 0);
+-  const lt = traded.at(-1) ?? last, noTrade = lt !== last, gxLast = (data.gx || []).includes(P.d[last]);   // gxLast：最新一天是推測的價格調整日（官方不比價）
++  const dvLast = (data.dv || []).find(r => r.d === P.d[last]);        // 第 36 輪 F36-4：ETF 最新一天是官方除息日（上櫃官方漲跌為空，收盤 − 前收會含配息）
++  const lt = traded.at(-1) ?? last, noTrade = lt !== last, gxLast = (data.gx || []).includes(P.d[last]) || !!dvLast;   // gxLast：最新一天是價格調整日（官方不比價）
+   const close = P.c[lt];
+   const prevClose = P.c[traded.at(-2)] ?? null;
+   // 優先用官方漲跌價差（除權息日「收盤 − 昨收」會失真）
+@@ -189,7 +198,8 @@
+         <div>
+           <div class="s-nm"><span class="s-name">${esc(data.name)}</span><span class="s-code">${code}</span></div>
+           <div class="s-px"><span class="s-price num ${cls(change)}">${pfmt(close)}</span>
+-            ${noTrade ? '<span class="s-chg flat">無成交</span>' : gxLast ? '<span class="s-chg flat" title="官方漲跌為 0、收盤和前一日收盤不同：推測是除息等價格調整">不比價（推測價格調整）</span>'
++            ${noTrade ? '<span class="s-chg flat">無成交</span>' : gxLast ? (dvLast ? '<span class="s-chg flat" title="除息日的開盤參考價扣掉配息，收盤減前一日收盤會含配息">不比價（今天除息）</span>'
++              : '<span class="s-chg flat" title="官方漲跌為 0、收盤和前一日收盤不同：推測是除息等價格調整">不比價（推測價格調整）</span>')
+               : `<span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span>`}
+             ${!noTrade && s?.rel ? `<span class="muted small">相對 ${md(s.rel)} 收盤（前一交易日無成交）</span>` : ''}</div>
+           <div class="tags">
+@@ -201,7 +211,7 @@
+             ${tagFold([...(data.chains || []).map(([chain, seg, subs]) => `<span class="pill chain" title="${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}">${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}</span>`),
+             ...(data.concepts || []).map(c => `<span class="pill">${esc(c)}</span>`)])}
+             <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
+-            ${E && E.m === 'TPEx' ? '<span class="muted small">上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日</span>' : ''}
++            ${dvLast ? `<span class="muted small">今天除息，每單位配息 ${dfmt(dvLast.c)} 元，除息前收盤 ${pfmt(dvLast.p)}</span>` : ''}
+           </div>
+           ${HL.length ? `<div class="s-hl"><a class="muted small" href="#/rank/hl">近期新訊號 →</a>${HL.map(hlTag).join('')}<span class="muted small">只描述發生了什麼，不代表之後的走勢</span>${HL.length > 1 ? `<button class="pill more hl-more" id="hlMore">+${HL.length - 1}</button>` : ''}</div>` : ''}
+           <div class="s-ohlc small num muted"><span class="nw">開 <b>${pfmt(P.o[last])}</b></span>　<span class="nw">高 <b class="up">${pfmt(P.h[last])}</b></span>　<span class="nw">低 <b class="dn">${pfmt(P.l[last])}</b></span>　<span class="nw">昨收 <b>${pfmt(prev)}</b></span>　<span class="nw">量 <b>${fmt(P.v[last])}</b> 張</span></div>
+@@ -256,7 +266,7 @@
+     </section>
+ 
+     ${data.pf ? perfHTML(data.pf, data.market, noTrade ? P.d[lt] : null) : ''}
+-    ${E ? '' : '<section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>'}`}`;
++    ${E ? divHTML(data.dv || [], data.market, P, true) : '<section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>'}`}`;   // 第 36 輪 F36-2
+ 
+   const ptab = $('#view .page-tabs'), topH = () => $('.top').offsetHeight;   // 第 30 輪 D30-01
+   ptab.classList.add('pt-stick');
+@@ -317,7 +327,8 @@
+ 
+ // ─── 日線 → 週線 / 月線（法人買賣超加總）；adj = 是否用還原價 ─────
+ function aggregate(data, mode, adj) {
+-  const P = data.prices, I = data.insti, ev = data.ev || [], G = data.mg;
++  const P = data.prices, I = data.insti, G = data.mg;
++  const ev = data.ev || (data.dv || []).map(r => ({ d: r.d, t: r.t, p: r.p, r: r.r }));   // 第 36 輪 F36-4：ETF 沒有 ev，官方除息（dv）當成「息」事件
+   const af = adj ? adjFactors(P.d, ev) : P.d.map(() => 1);
+   // F8-3：融資融券餘額；還原時乘上該日之後所有官方換算的 k（面額變更、減資），原始為官方原值
+   const gk = d => adj && G?.k ? G.k.reduce((a, x) => x.d > d ? a * x.k : a, 1) : 1;
+@@ -340,7 +351,7 @@
+       rows.push({ d, o: P.o[i] * k, h: P.h[i] * k, l: P.l[i] * k, c: P.c[i] * k, v: P.v[i],
+         ch: ch == null ? null : ch * k,                                         // 還原後的漲跌（元）
+         pc: ch == null || P.c[i] === ch ? null : ch / (P.c[i] - ch) * 100,       // 漲跌幅以原始價計算（不受係數影響）
+-        rel, ev: e, gx: gx.has(d) ? (ch == null ? '息?' : '調?') : '', ...inst, ...mgAt(i), nt: false });
++        rel, ev: e, gx: gx.has(d) && !e.length ? (ch == null ? '息?' : '調?') : '', ...inst, ...mgAt(i), nt: false });   // 第 36 輪：官方除息日不標推測
+       prevC = P.c[i] * k; lastD = d;
+     } else if (prevC != null) {
+       rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, ch: null, pc: null, rel: null, ev: e, ...inst, ...mgAt(i), nt: true });
+@@ -585,7 +596,7 @@
+     legend.innerHTML = `<span><b>${mode === '月' ? T[i].slice(0, 7) + ' 月' : mode === '週' ? T[i] + ' 當週' : T[i]}</b></span><span>開 <b>${pfmt(O[i])}</b></span><span>高 <b class="up">${pfmt(H[i])}</b></span>` +
+       `<span>低 <b class="dn">${pfmt(L[i])}</b></span><span>收 <b class="${c}">${pfmt(C[i])}</b></span>` +
+       (NT[i] ? '<span class="flat">無成交</span>'
+-        : chg == null ? `<span class="flat" title="${gxBar ? '期間含推測的價格調整（除息、分割等），原始價相減會失真' : '官方未提供漲跌，且找不到對應的除權息、減資、面額變更事件'}">不比價</span>`
++        : chg == null ? `<span class="flat" title="${gxBar ? '期間含推測的價格調整（除息、分割等），原始價相減會失真' : raw[i].ev.some(e => e.t === '息') ? '除息日官方未提供漲跌' : '官方未提供漲跌，且找不到對應的除權息、減資、面額變更事件'}">不比價</span>`
+         : `<span class="${c}"${f !== 1 ? ' title="期間含除權息等事件：前一根收盤先乘上參考價 ÷ 前收再相減"' : ''}>${psgn(chg)} (${sgn(p)}%)</span>`) +
+       (mode === '日' && raw[i].rel ? `<span class="muted">相對 ${md(raw[i].rel)} 收盤</span>` : '') +
+       raw[i].ev.map(e => `<span class="ev-note"${e.t === '調' ? ' title="依櫃買官方漲跌反推的參考價調整（減資、面額變更等）"' : /c/.test(e.k || '') ? ` title="${CASH_INC_TIP}"` : ''}>` +
+--- a/site/index.html
++++ b/site/index.html
+@@ -10,8 +10,8 @@
+ <link rel="stylesheet" href="app.css?v=0a9e90f1">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=acd783df" defer></script>
+-<script src="stock.js?v=003f936e" defer></script>
++<script src="app.js?v=d175c222" defer></script>
++<script src="stock.js?v=55bdf502" defer></script>
+ <script src="tools.js?v=9f5f495d" defer></script>
+ </head>
+ <body>
+--- a/tests/test_iter15.py
++++ b/tests/test_iter15.py
+@@ -91,7 +91,7 @@
+     assert "F.c.eb != null && F.c.eb <= 0 && F.c.e > 0 ? '轉盈'" in STK
+     # F15-2
+     assert "loadStock(code, E ? 'etfp' : 'stocks')" in STK and "async function loadStock(code, dir = 'stocks')" in APP
+-    assert "價格未還原除息：配息 ETF 在除息日會向下跳空，不是當天下跌" in STK and "上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日" in STK
++    assert "價格未還原除息：配息 ETF 在除息日會向下跳空，不是當天下跌" in STK and "圖上「息」是官方除息日" in STK          # 第 36 輪：除息日改用官方除息表（使用者同意改）
+     assert "pick(Object.entries(App.latest.etfs?.rows || {}))" in APP and "esc(s.i ?? 'ETF')" in APP
+     assert "location.hash = '#/stock/' + tr.dataset.etf" in APP and "location.replace('#/stock/' + code)" in APP
+     assert 'href="#/stock/${code}">行情 →</a>' in APP and 'href="#/etf/${code}">持股 →</a>' in STK
+--- a/tests/test_iter24.py
++++ b/tests/test_iter24.py
+@@ -230,7 +230,7 @@
+         assert s in SRC, s
+     etf = SRC[SRC.index("def etf_export"):]
+     etf = etf[:etf.index("\ndef ")]
+-    assert '"dv"' not in etf and "dividends" not in etf and "etf_events" not in SRC          # D37-4：ETF 本輪只入表
++    assert "dividends(d_, c, ev, " not in etf and "etf_dividends(d_, c, events, gx)" in etf   # 第 36 輪：ETF 用官方除息表 etf_events（使用者同意改；原為 D37-4 只入表）
+ 
+ 
+ # ─── node：stock.js ─────────────────────────────────────
+--- /dev/null
++++ b/tests/test_iter36.py
+@@ -0,0 +1,279 @@
++"""第 36 輪（不連網、不連資料庫）：F36-1 etfp dv、F36-2 ETF 配息卡、F36-3 ETF 列表配息欄、F36-4 K 線官方除息標記。
++有 node 時逐字取出 app.js、stock.js 的程式執行（node 14 可跑）。test_real_data 讀已匯出的 site/data（沒有就略過）。"""
++import hashlib
++import json
++import re
++import shutil
++import subprocess
++import sys
++from datetime import date
++from decimal import Decimal
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++from twstock import export  # noqa: E402
++
++SITE = ROOT / "site"
++APP = (SITE / "app.js").read_text(encoding="utf-8")
++STK = (SITE / "stock.js").read_text(encoding="utf-8")
++HTML = (SITE / "index.html").read_text(encoding="utf-8")
++EXP = (ROOT / "twstock" / "export.py").read_text(encoding="utf-8")
++D = date.fromisoformat
++
++
++def _grab(src, name):
++    m = re.search(rf"^(?:async )?function {name}\(", src, re.M)
++    if m:
++        i, n = src.index("{", src.index(")", m.start())), 0
++        for j in range(i, len(src)):
++            n += {"{": 1, "}": -1}.get(src[j], 0)
++            if n == 0:
++                return src[m.start():j + 1]
++    m = re.search(rf"^const {name}\b", src, re.M)
++    assert m, name
++    lines = src[m.start():].splitlines()
++    k = next(i for i, l in enumerate(lines) if re.sub(r"\s+//[^'`]*$", "", l).rstrip().endswith(";"))
++    return "\n".join(lines[:k + 1])
++
++
++PF = ("if (!Array.prototype.at) Array.prototype.at = function (i) { return this[i < 0 ? this.length + i : i]; };\n"
++      "if (!String.prototype.replaceAll) String.prototype.replaceAll = function (a, b) { return this.split(a).join(b); };\n")
++
++
++def _node(js):
++    node = shutil.which("node")
++    if not node:
++        print("  （沒有 node，略過執行）")
++        return None
++    return json.loads(subprocess.run([node, "-e", PF + js], capture_output=True, text=True, check=True).stdout)
++
++
++# ─── F36-1：匯出 ────────────────────────────────────────
++DAYS = [D(s) for s in ("2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09")]
++
++
++def test_etf_dividends():
++    c = [20.0, 19.5, 19.8, 20.1, None, 20.0, 21.0]
++    ev = [(DAYS[1], 20.0, 19.4, 0.6)]
++    # 除息日（第 1 天）起第一個原始收盤 ≥ 除息前收盤；c、p、r 轉 float
++    assert export.etf_dividends(DAYS, c, ev) == [{"d": "2026-07-02", "t": "息", "c": 0.6, "p": 20.0, "r": 19.4, "f": "2026-07-06", "n": 3}]
++    # 當天就回到：第 1 天；Decimal 輸入
++    assert export.etf_dividends(DAYS, c, [(DAYS[5], Decimal("19.9"), Decimal("19.5"), Decimal("0.4"))]) == \
++        [{"d": "2026-07-08", "t": "息", "c": 0.4, "p": 19.9, "r": 19.5, "f": "2026-07-08", "n": 1}]
++    # 未填息：沒有 f、n、x
++    assert export.etf_dividends(DAYS, c, [(DAYS[1], 30.0, 29.0, 1.0)]) == [{"d": "2026-07-02", "t": "息", "c": 1.0, "p": 30.0, "r": 29.0}]
++    # 無成交（None）跳過、不算填息，但天數照算
++    assert export.etf_dividends(DAYS, c, [(DAYS[3], 20.5, 20.0, 0.05)])[0] == {"d": "2026-07-06", "t": "息", "c": 0.05, "p": 20.5, "r": 20.0, "f": "2026-07-09", "n": 4}
++    # 除息日不在行情（停牌）：只列，不算
++    assert export.etf_dividends(DAYS, c, [(D("2026-06-30"), 15.0, 14.0, 1.0)]) == [{"d": "2026-06-30", "t": "息", "c": 1.0, "p": 15.0, "r": 14.0}]
++    assert export.etf_dividends(DAYS, c, ()) == []
++
++
++def test_etf_dividends_gx():
++    c = [20.0, 19.5, 19.6, 9.9, 10.0, 10.1, 25.0]
++    ev = [(DAYS[1], 20.0, 19.4, 0.6)]
++    # 填息前遇到不是官方除息日的推測調整（分割）：停在那天，不再比較
++    assert export.etf_dividends(DAYS, c, ev, ["2026-07-02", "2026-07-06"]) == \
++        [{"d": "2026-07-02", "t": "息", "c": 0.6, "p": 20.0, "r": 19.4, "x": ["2026-07-06", "價格調整"]}]
++    # 推測調整日剛好是官方除息日（另一次除息）：不算中斷
++    ev2 = ev + [(DAYS[3], 19.6, 9.8, 0.1)]
++    out = export.etf_dividends(DAYS, c, ev2, ["2026-07-02", "2026-07-06"])
++    assert out[0] == {"d": "2026-07-02", "t": "息", "c": 0.6, "p": 20.0, "r": 19.4, "f": "2026-07-09", "n": 6}
++    assert out[1] == {"d": "2026-07-06", "t": "息", "c": 0.1, "p": 19.6, "r": 9.8, "f": "2026-07-09", "n": 4}
++    # 除息日當天本身是推測調整日：不算中斷
++    assert "x" not in export.etf_dividends(DAYS, c, [(DAYS[3], 9.95, 9.9, 0.05)], ["2026-07-06"])[0]
++    # 已填息後才遇到：不影響
++    assert export.etf_dividends(DAYS, [20, 19.5, 20.0, 9.9, 10, 10, 10], ev, ["2026-07-06"])[0]["f"] == "2026-07-03"
++
++
++def test_etf_div_row():
++    T = D("2026-11-20")
++    assert export.etf_div_row([], T) == {}
++    assert export.etf_div_row([{"d": "2025-11-19", "t": "息", "c": 1.0, "p": 20.0}], T) == {}                      # 第 366 天：不算
++    one = [{"d": "2025-11-20", "t": "息", "c": 1.0, "p": 20.0, "f": "2025-11-25", "n": 4}]
++    assert export.etf_div_row(one, T) == {"dvd": "2025-11-20", "dvn": 4, "dvx": None, "dvc": 1.0}                  # 第 365 天：算
++    dv = [{"d": "2025-10-20", "t": "息", "c": 9.0, "p": 20.0},
++          {"d": "2026-01-20", "t": "息", "c": 0.1, "p": 20.0, "f": "2026-01-21", "n": 2},
++          {"d": "2026-04-20", "t": "息", "c": 0.2, "p": 20.0},
++          {"d": "2026-10-20", "t": "息", "c": 0.3, "p": 20.0, "x": ["2026-10-30", "價格調整"]}]
++    assert export.etf_div_row(dv, T) == {"dvd": "2026-10-20", "dvn": None, "dvx": "價格調整", "dvc": 0.6}           # 合計去浮點誤差
++    assert export.etf_div_row(dv[:3], T) == {"dvd": "2026-04-20", "dvn": None, "dvx": None, "dvc": 0.3}
++
++
++def _rows():
++    days = [str(d) for d in DAYS]
++    return [(D(d), c, c, c, c, 2000, ch) for d, c, ch in zip(days, [20, 19.5, 19.8, 20.1, 20.0, 20.0, 21.0], [0.1, 0, 0.3, 0.3, -0.1, 0, 1])]
++
++
++def test_etf_export():
++    rows = _rows()
++    T = export.etf_export("006201", "元大富櫃50", "TPEx", rows, {}, {}, None, None, None, None)
++    assert set(T) == {"code", "name", "market", "prices"}                                                       # 沒有事件：不輸出 dv（test_iter15:83）
++    T = export.etf_export("006201", "元大富櫃50", "TPEx", rows, {}, {}, None, None, None, None, [(DAYS[1], 20.0, 19.4, 0.6)])
++    assert T["dv"] == [{"d": "2026-07-02", "t": "息", "c": 0.6, "p": 20.0, "r": 19.4, "f": "2026-07-06", "n": 3}]
++    assert set(T) == {"code", "name", "market", "prices", "dv"} and T["prices"]["ch"][1] == 0                    # 上櫃：官方漲跌照傳（F36-5 不做）
++
++
++def test_etf_block():
++    latest = {"TWSE": (D("2026-11-20"), [("0056", "元大高股息", 44.31, -3.1, 188190000, 84.74e8)])}
++    base = export.etf_block(latest, {}, None)
++    add = export.etf_block(latest, {}, None, {"0056": {"dvd": "2026-10-22", "dvn": None, "dvx": None, "dvc": 4.936}})
++    assert add["rows"]["0056"] == {**base["rows"]["0056"], "dvd": "2026-10-22", "dvn": None, "dvx": None, "dvc": 4.936}
++    assert export.etf_block(latest, {}, None, {}) == base and "dvc" not in base["rows"]["0056"]
++    assert "r.update((div_rows or {}).get(code, {}))" in EXP
++
++
++def test_export_wiring():
++    assert "eev = _load_etf_events(cur)" in EXP and EXP.index("eev = _load_etf_events(cur)") < EXP.index("conn.close()", EXP.index("eev ="))
++    assert "SELECT e.etf_code, x.event_date, x.prev_close, x.ref_price, x.div_cash" in EXP
++    assert "FROM etf_events x JOIN etfs e ON e.etf_id = x.etf_id ORDER BY x.event_date" in EXP
++    assert "ds[-1] if ds else None, ds[-6] if len(ds) >= 6 else None, eev.get(code, ()))" in EXP
++    assert "edv[code] = etf_div_row(E.get(\"dv\", []), latest_date)" in EXP
++    assert '"etfs": etf_block(etf_latest, etf_margin_rows, esbl, edv),' in EXP
++    assert '**({"dv": dv} if (dv := etf_dividends(d_, c, events, gx)) else {})}' in EXP
++    # 讀資料庫只有 SELECT
++    seg = EXP[EXP.index("def _load_etf_events"):EXP.index("def etf_gaps")]
++    for w in ("INSERT", "UPDATE", "DELETE", "commit("):
++        assert w not in seg, w
++
++
++# ─── F36-2：ETF 配息卡 ───────────────────────────────────
++def test_js_etf_card():
++    js = "\n".join(_grab(APP, n) for n in ("fmt", "pfmt", "md", "noteHTML")) + "\n" + \
++        "\n".join(_grab(STK, n) for n in ("EV_LABEL", "dfmt", "divHTML", "ETF_DIV_FULL")) + """
++const App = { latest: { date: '2026-11-20' } };
++const P = { d: ['2025-10-30', '2026-11-19', '2026-11-20'], c: [30, 29.71, 26.35] };
++const dv = [{ d: '2026-08-20', t: '息', c: 0.5, p: 25, r: 24.5, f: '2026-08-21', n: 2 }, { d: '2026-10-20', t: '息', c: 0.25, p: 30, r: 29.75, x: ['2026-10-30', '價格調整'] },
++  { d: '2026-11-20', t: '息', c: 3.36, p: 29.71, r: 26.35 }];
++console.log(JSON.stringify([divHTML([], 'TPEx', P, true), divHTML(dv, 'TPEx', P, true), divHTML(dv, 'TPEx', P)]));"""
++    o = _node(js)
++    if o is None:
++        return
++    empty, etf, stock = o
++    assert "<h2>配息與填息</h2>" in empty and "2025-10-30 起沒有除息紀錄" in empty and "<table" not in empty
++    assert "<th>除息日</th><th>配息<br>（元）</th><th>除息<br>前收盤</th><th>填息</th>" in etf and "配股" not in etf.split("<tbody>")[0]
++    rows = re.findall(r"<tr><td>(.*?)</tr>", etf)
++    assert [r[:10] for r in rows] == ["2026/11/20", "2026/10/20", "2026/08/20"] and all(r.count("<td") == 3 for r in rows)   # 4 欄：日期＋3
++    assert "08/21<span>第 2 個交易日</span>" in etf and "不再比較<span>10/30 價格調整後</span>" in etf
++    assert "尚未填息<span>還差 3.36 元，+12.75%</span>" in etf and '<td class="num">3.36</td>' in etf
++    for s in ("收益平準金、資本利得，不等於獲利", "上櫃 ETF 無法辨識分割", "除息表"):
++        assert s in etf, s
++    assert "<h2>股利與填息</h2>" in stock and "<th>配股<br>每千股</th>" in stock                                    # 預設仍是股票版
++    # 走勢分頁：ETF 換成配息卡，股票照舊是技術面訊號
++    assert "${E ? divHTML(data.dv || [], data.market, P, true) : '<section class=\"sec card\"><div class=\"sec-h\"><h2 id=\"sigTitle\">技術面訊號</h2>" in STK
++
++
++# ─── F36-3：ETF 列表 ────────────────────────────────────
++def test_js_etf_list():
++    assert "['dvr', '配息率', -1], ['dva', '最近除息', 1]];" in APP
++    assert "<th>借券增減</th><th>近一年配息</th><th>配息率</th><th>最近除息</th></tr></thead><tbody>" in APP
++    assert "keyCol({ dvr: 12, dva: 13 }[f]);" in APP
++    assert ".map(([c, r]) => [c, etfDiv(r, App.latest.date)]).filter(([, r]) => mkt === 'all' || r.m === mkt)" in APP
++    assert "${r.dvn != null ? r.dvn + ' 天填息' : r.dvx ? '中斷' : '未填息'}" in APP
++    js = "\n".join(_grab(APP, n) for n in ("ETF_SORT", "etfDiv")) + """
++const rows = { A: { c: 20, dvc: 1.2, dvd: '2026-11-20' }, B: { c: 10, dvc: 1.0, dvd: '2026-03-01' }, C: { c: null, dvc: 1, dvd: '2026-10-01' }, E: { c: 5 } };
++const d = '2026-11-20', out = Object.entries(rows).map(([c, r]) => [c, etfDiv(r, d)]);
++const srt = by => { const [key, , dir] = ETF_SORT.find(x => x[0] === by); return out.slice().sort((a, b) => (a[1][key] == null) - (b[1][key] == null) || dir * ((a[1][key] ?? 0) - (b[1][key] ?? 0))).map(x => x[0]); };
++console.log(JSON.stringify([out, srt('dvr'), srt('dva')]));"""
++    o = _node(js)
++    if o is None:
++        return
++    out, by_r, by_a = o
++    r = dict(out)
++    assert r["A"]["dvr"] == 6 and r["B"]["dvr"] == 10 and r["C"]["dvr"] is None and r["E"]["dvr"] is None     # 無成交 → --
++    assert r["A"]["dva"] == 0 and r["B"]["dva"] == 264 and r["C"]["dva"] == 50 and r["E"]["dva"] is None
++    assert by_r == ["B", "A", "C", "E"] and by_a == ["A", "C", "B", "E"]                                       # 高到低；近到遠；沒有的排最後
++
++
++def test_notes():
++    note = _grab(APP, "ETF_DIV_NOTE")
++    for s in ("近一年（365 天）每單位配息合計 ÷ 今日收盤", "不代表未來", "股價下跌時配息率會變高", "只看最近一次", "標「中斷」"):
++        assert s in note, s
++    assert "股票口徑的融資融券。${ETF_DIV_NOTE}</div></section>`;" in APP
++
++
++# ─── F36-4：K 線與頁頭 ──────────────────────────────────
++def test_kline_marks():
++    assert "const ev = data.ev || (data.dv || []).map(r => ({ d: r.d, t: r.t, p: r.p, r: r.r }));" in STK
++    assert "gx: gx.has(d) && !e.length ? (ch == null ? '息?' : '調?') : ''" in STK
++    assert "raw[i].ev.some(e => e.t === '息') ? '除息日官方未提供漲跌'" in STK
++    assert "const dvLast = (data.dv || []).find(r => r.d === P.d[last]);" in STK and "|| !!dvLast;" in STK
++    assert "不比價（今天除息）" in STK and "今天除息，每單位配息 ${dfmt(dvLast.c)} 元，除息前收盤 ${pfmt(dvLast.p)}" in STK
++    note = STK[STK.index("const ETF_NOTE = "):STK.index("\n\n", STK.index("const ETF_NOTE = "))]
++    assert "本站無法辨識除息日" not in note and "本站還沒有 ETF 的除息資料" not in note
++    assert "圖上「息」是官方除息日${m === 'TWSE' ? '，「息?」「調?」是推測的其他價格調整' : ''}" in note
++    assert "上櫃 ETF：除息表以外的價格調整（如分割）本站無法辨識" in note
++
++
++def test_js_aggregate_marks():
++    """官方除息日：ev 有「息」、gx 不標推測；不是官方除息日的推測日照舊。"""
++    names = ("adjFactors", "aggregate")
++    if not all(re.search(rf"^function {n}\(", STK, re.M) for n in names):
++        print("  （找不到 aggregate，略過執行）")
++        return
++    js = "\n".join(_grab(STK, n) for n in names) + """
++const data = { prices: { d: ['2026-07-01', '2026-07-02', '2026-07-03'], o: [20, 19.5, 9.9], h: [20, 19.5, 9.9], l: [20, 19.5, 9.9], c: [20, 19.5, 9.9], v: [1, 1, 1], ch: [0, null, 0.1] },
++  gx: ['2026-07-02', '2026-07-03'], dv: [{ d: '2026-07-02', t: '息', c: 0.6, p: 20, r: 19.4 }] };
++const R = aggregate(data, '日', false).rows || aggregate(data, '日', false);
++console.log(JSON.stringify(R.map(x => [x.gx, x.ev.map(e => e.t)])));"""
++    try:
++        o = _node(js)
++    except subprocess.CalledProcessError:
++        print("  （aggregate 需要其他函式，改由 8001 實測）")
++        return
++    if o is None:
++        return
++    assert o == [["", []], ["", ["息"]], ["調?", []]], o
++
++
++def test_version():
++    for f in ("app.js", "stock.js"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f'src="{f}?v={v}"' in HTML, f"site/index.html 的 {f} 版本參數請改成 ?v={v}"
++
++
++def test_no_advice_words():
++    seg = _grab(APP, "ETF_DIV_NOTE") + _grab(STK, "ETF_DIV_FULL") + STK[STK.index("const ETF_NOTE = "):STK.index("\n\n", STK.index("const ETF_NOTE = "))]
++    seg += "".join(l for l in APP.splitlines() + STK.splitlines() if "第 36 輪" in l or "dvLast" in l or "配息率" in l)
++    seg += EXP[EXP.index("def _load_etf_events"):EXP.index("def etf_gaps")]
++    assert "配息率" in seg and "填息" in seg
++    for w in ("買進", "賣出", "反彈", "見底", "買點", "超賣", "超買", "推薦", "強勢", "飆股", "勝率", "亮點", "建議", "低估", "高估",
++              "便宜", "價值陷阱", "穩定配息", "划算", "安全", "危險", "殖利率"):
++        assert w not in seg, w
++
++
++# ─── 實際匯出資料（有才測）────────────────────────────────
++def test_real_data():
++    lp = SITE / "data" / "latest.json"
++    if not lp.exists():
++        print("  （沒有 site/data，略過）")
++        return
++    L = json.loads(lp.read_text(encoding="utf-8"))
++    rows, today = (L.get("etfs") or {}).get("rows", {}), D(L["date"])
++    if not any("dvc" in r for r in rows.values()):
++        print("  （尚未用第 36 輪匯出，略過）")
++        return
++    n = 0
++    for code, r in rows.items():
++        p = SITE / "data" / "etfp" / f"{code}.json"
++        if not p.exists():
++            continue
++        E = json.loads(p.read_text(encoding="utf-8"))
++        assert E.get("dv", 0) != [], code                                             # 沒有就不輸出鍵
++        dv = E.get("dv", [])
++        assert {k: r[k] for k in ("dvd", "dvn", "dvx", "dvc") if k in r} == export.etf_div_row(dv, today), code
++        ds = E["prices"]["d"]
++        for x in dv:
++            if "f" in x:
++                i = ds.index(x["d"])
++                assert ds[i + x["n"] - 1] == x["f"] and E["prices"]["c"][i + x["n"] - 1] >= x["p"], code
++        n += bool(dv)
++    assert n > 100, n
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")

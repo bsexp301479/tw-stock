@@ -48,9 +48,10 @@ function perfHTML(pf, mkt, nt) {
 // 第 24 輪 F24-6：股利與填息（匯出端 dv：d 除權息日、t 類型、k 分類、c 現金股利、s 每仟股配股、a 權值＋息值（沒有 c 時）、p 除權息前收盤、
 // f 填息日、n 第幾個交易日、x = [日期, 原因] 股本變動後不再比較）；填息在匯出端算，這裡只顯示。D36-12：金額最多 4 位小數、去掉尾端 0
 const dfmt = (n, d = 4) => n == null ? '--' : Number(n).toLocaleString('zh-TW', { maximumFractionDigits: d });
-function divHTML(dv, mkt, P) {
-  const head = '<section class="sec card"><div class="sec-h"><h2>股利與填息</h2></div>', from = P.d[0];
-  if (!dv.length) return `${head}<div class="muted small">${from} 起沒有除權息紀錄</div></section>`;
+// 第 36 輪 F36-2：etf = true 時為 ETF 版（標題「配息與填息」、沒有配股欄、說明不同），股票輸出不變
+function divHTML(dv, mkt, P, etf = false) {
+  const head = `<section class="sec card"><div class="sec-h"><h2>${etf ? '配息與填息' : '股利與填息'}</h2></div>`, from = P.d[0];
+  if (!dv.length) return `${head}<div class="muted small">${from} 起沒有${etf ? '除息' : '除權息'}紀錄</div></section>`;
   const tr = P.c.map((c, i) => c != null ? i : -1).filter(i => i >= 0), lt = tr[tr.length - 1], lc = P.c[lt];
   const late = P.d[lt] !== App.latest.date ? `，最後成交 ${md(P.d[lt])}` : '';      // D37-7：停牌股照算，寫最後成交日
   const split = r => mkt === 'TWSE' && r.t === '權息' ? ` title="上市除權息的官方表只有權值＋息值合計 ${dfmt(r.a, 6)} 元，無法拆分現金與配股"` : '';
@@ -60,22 +61,29 @@ function divHTML(dv, mkt, P) {
   const fill = r => r.t === '權' ? '<span title="純配股不計算填權">--</span>' : r.f ? `${r.n === 1 ? '當天' : md(r.f)}<span>第 ${r.n} 個交易日</span>`
     : r.x ? `不再比較<span>${md(r.x[0])} ${r.x[1]}後</span>` : `尚未填息<span>還差 ${fmt(r.p - lc, 2)} 元，+${fmt((r.p - lc) / lc * 100, 2)}%${late}</span>`;
   const short = `填息 = 收盤回到除息前收盤；天數含除息日當天。資料自 ${from} 起`;     // 短句用變數：test_iter13 數 noteHTML 字面呼叫
-  const full = '填息日 = 除權息日起（含當天）第一個收盤大於或等於除權息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除權息日當天算第 1 天，無成交日也算。' +
+  const full = etf ? ETF_DIV_FULL : '填息日 = 除權息日起（含當天）第一個收盤大於或等於除權息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除權息日當天算第 1 天，無成交日也算。' +
     '純配股（除權）不計算填權；只有現金增資的除權不列入。還沒填息就遇到之後的配股、減資或面額變更時，原始價不能再和除權息前收盤比較，寫「不再比較」。' +
     '上市除權息的官方表只有權值＋息值合計，現金股利寫「--」（滑過可看合計）；上櫃的配股是每千股無償配股的股數。還差 = 除權息前收盤 − 最新收盤，% 以最新收盤計算。';
-  return `${head}<div class="tbl-wrap"><table class="tbl dv-tbl"><thead><tr><th>除權息日</th><th>現金股利<br>（元）</th><th>配股<br>每千股</th><th>除權息<br>前收盤</th><th>填息</th></tr></thead><tbody>` +
+  return `${head}<div class="tbl-wrap"><table class="tbl dv-tbl"><thead><tr>${etf ? '<th>除息日</th><th>配息<br>（元）</th><th>除息<br>前收盤</th>'
+    : '<th>除權息日</th><th>現金股利<br>（元）</th><th>配股<br>每千股</th><th>除權息<br>前收盤</th>'}<th>填息</th></tr></thead><tbody>` +
     dv.slice().reverse().map(r => `<tr><td>${r.d.replaceAll('-', '/')}${r.t === '息' ? '' : `<span>${EV_LABEL[r.t]}</span>`}</td><td class="num">${cash(r)}</td>` +
-      `<td class="num">${stock(r)}</td><td class="num">${pfmt(r.p)}</td><td>${fill(r)}</td></tr>`).join('') +
+      `${etf ? '' : `<td class="num">${stock(r)}</td>`}<td class="num">${pfmt(r.p)}</td><td>${fill(r)}</td></tr>`).join('') +
     `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
 }
 
+const ETF_DIV_FULL = '填息日 = 除息日起（含當天）第一個收盤大於或等於除息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除息日當天算第 1 天，無成交日也算。' +
+  '除息日、配息與除息前收盤來自證交所、櫃買中心的除息表。上市 ETF 還沒填息就遇到推測的其他價格調整（多為分割）時，寫「不再比較」；上櫃 ETF 無法辨識分割，照常比較。' +
+  '還差 = 除息前收盤 − 最新收盤，% 以最新收盤計算。ETF 的配息來源可能含收益平準金、資本利得，不等於獲利。';
+
 const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];
 const ETF_TABS = STOCK_TABS.slice(0, 2);       // 第 15 輪 F15-2：ETF 個股頁沒有基本面
-// 第 15 輪 F15-2：ETF 個股頁的價格說明（原始價；本站沒有 ETF 除息資料）。短句一定可見，完整說明收合（短句用變數：test_iter13 數 noteHTML 字面呼叫）
-const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除息日會向下跳空，不是當天下跌${m === 'TWSE' ? '；圖上「息?」「調?」是推測的價格調整日' : '；上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日'}`;
-  return noteHTML(short, '本頁價格是證交所、櫃買中心公布的原始成交價，沒有依除息調整（本站還沒有 ETF 的除息資料）。配息 ETF 除息日的開盤參考價會扣掉配息，K 線會向下跳空；均線、MACD 與 52 週高低也用原始價計算，除息日前後會失真，所以本頁不提供技術面訊號。' +
-  '上市 ETF：除息等價格調整日官方漲跌為 0（不比價），本站把「收盤 − 官方漲跌」和前一日收盤不同的日子標成「息?」（官方漲跌 0）或「調?」（漲跌不是 0，多為分割），只是推測，也可能是合併或資料更正，沒有配息金額。' +
-  '上櫃 ETF：官方漲跌就是收盤減前一日收盤，除息日的漲跌含除息的跌幅，本站無法辨識除息日，不標示。'); };
+// 第 15 輪 F15-2：ETF 個股頁的價格說明（原始價）。短句一定可見，完整說明收合（短句用變數：test_iter13 數 noteHTML 字面呼叫）
+// 第 36 輪 F36-4：除息日改用官方除息表（「息」），上櫃也標；「息?」「調?」只留給除息表沒有的推測調整
+const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除息日會向下跳空，不是當天下跌；圖上「息」是官方除息日${m === 'TWSE' ? '，「息?」「調?」是推測的其他價格調整' : ''}`;
+  return noteHTML(short, '本頁價格是證交所、櫃買中心公布的原始成交價，沒有依除息調整。配息 ETF 除息日的開盤參考價會扣掉配息，K 線會向下跳空；均線、MACD 與 52 週高低也用原始價計算，除息日前後會失真，所以本頁不提供技術面訊號。' +
+  '除息日來自證交所、櫃買中心的除息表，標成「息」，十字線列出前收與參考價；除息日的漲跌顯示「不比價」，週、月 K 用參考價 ÷ 前收換算。' +
+  '上市 ETF：除息表沒有的價格調整日（「收盤 − 官方漲跌」和前一日收盤不同），本站標成「息?」（官方漲跌 0）或「調?」（漲跌不是 0，多為分割），只是推測，也可能是合併或資料更正。' +
+  '上櫃 ETF：除息表以外的價格調整（如分割）本站無法辨識，不標示。'); };
 
 // 第 25 輪 D25-05：產業鏈、概念股標籤只顯示前 2 個，其餘收在「+N」（點了展開，展開後按「收合」收回）
 // 第 27 輪 D27-07：融資融券子圖一次只畫一條線（右側刻度就是這條線）；借券只在有資料時可選
@@ -101,7 +109,8 @@ window.renderStock = async function (code, sub) {
   const last = n - 1;
   // 最新一天沒成交（開高低收為 --）時，改顯示最後成交日的收盤，不算漲跌
   const traded = P.c.map((c, i) => c != null ? i : -1).filter(i => i >= 0);
-  const lt = traded.at(-1) ?? last, noTrade = lt !== last, gxLast = (data.gx || []).includes(P.d[last]);   // gxLast：最新一天是推測的價格調整日（官方不比價）
+  const dvLast = (data.dv || []).find(r => r.d === P.d[last]);        // 第 36 輪 F36-4：ETF 最新一天是官方除息日（上櫃官方漲跌為空，收盤 − 前收會含配息）
+  const lt = traded.at(-1) ?? last, noTrade = lt !== last, gxLast = (data.gx || []).includes(P.d[last]) || !!dvLast;   // gxLast：最新一天是價格調整日（官方不比價）
   const close = P.c[lt];
   const prevClose = P.c[traded.at(-2)] ?? null;
   // 優先用官方漲跌價差（除權息日「收盤 − 昨收」會失真）
@@ -189,7 +198,8 @@ window.renderStock = async function (code, sub) {
         <div>
           <div class="s-nm"><span class="s-name">${esc(data.name)}</span><span class="s-code">${code}</span></div>
           <div class="s-px"><span class="s-price num ${cls(change)}">${pfmt(close)}</span>
-            ${noTrade ? '<span class="s-chg flat">無成交</span>' : gxLast ? '<span class="s-chg flat" title="官方漲跌為 0、收盤和前一日收盤不同：推測是除息等價格調整">不比價（推測價格調整）</span>'
+            ${noTrade ? '<span class="s-chg flat">無成交</span>' : gxLast ? (dvLast ? '<span class="s-chg flat" title="除息日的開盤參考價扣掉配息，收盤減前一日收盤會含配息">不比價（今天除息）</span>'
+              : '<span class="s-chg flat" title="官方漲跌為 0、收盤和前一日收盤不同：推測是除息等價格調整">不比價（推測價格調整）</span>')
               : `<span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span>`}
             ${!noTrade && s?.rel ? `<span class="muted small">相對 ${md(s.rel)} 收盤（前一交易日無成交）</span>` : ''}</div>
           <div class="tags">
@@ -201,7 +211,7 @@ window.renderStock = async function (code, sub) {
             ${tagFold([...(data.chains || []).map(([chain, seg, subs]) => `<span class="pill chain" title="${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}">${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}</span>`),
             ...(data.concepts || []).map(c => `<span class="pill">${esc(c)}</span>`)])}
             <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
-            ${E && E.m === 'TPEx' ? '<span class="muted small">上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日</span>' : ''}
+            ${dvLast ? `<span class="muted small">今天除息，每單位配息 ${dfmt(dvLast.c)} 元，除息前收盤 ${pfmt(dvLast.p)}</span>` : ''}
           </div>
           ${HL.length ? `<div class="s-hl"><a class="muted small" href="#/rank/hl">近期新訊號 →</a>${HL.map(hlTag).join('')}<span class="muted small">只描述發生了什麼，不代表之後的走勢</span>${HL.length > 1 ? `<button class="pill more hl-more" id="hlMore">+${HL.length - 1}</button>` : ''}</div>` : ''}
           <div class="s-ohlc small num muted"><span class="nw">開 <b>${pfmt(P.o[last])}</b></span>　<span class="nw">高 <b class="up">${pfmt(P.h[last])}</b></span>　<span class="nw">低 <b class="dn">${pfmt(P.l[last])}</b></span>　<span class="nw">昨收 <b>${pfmt(prev)}</b></span>　<span class="nw">量 <b>${fmt(P.v[last])}</b> 張</span></div>
@@ -256,7 +266,7 @@ window.renderStock = async function (code, sub) {
     </section>
 
     ${data.pf ? perfHTML(data.pf, data.market, noTrade ? P.d[lt] : null) : ''}
-    ${E ? '' : '<section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>'}`}`;
+    ${E ? divHTML(data.dv || [], data.market, P, true) : '<section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>'}`}`;   // 第 36 輪 F36-2
 
   const ptab = $('#view .page-tabs'), topH = () => $('.top').offsetHeight;   // 第 30 輪 D30-01
   ptab.classList.add('pt-stick');
@@ -317,7 +327,8 @@ const CASH_INC_TIP = '現金增資除權：股東可依持股比例出錢認購�
 
 // ─── 日線 → 週線 / 月線（法人買賣超加總）；adj = 是否用還原價 ─────
 function aggregate(data, mode, adj) {
-  const P = data.prices, I = data.insti, ev = data.ev || [], G = data.mg;
+  const P = data.prices, I = data.insti, G = data.mg;
+  const ev = data.ev || (data.dv || []).map(r => ({ d: r.d, t: r.t, p: r.p, r: r.r }));   // 第 36 輪 F36-4：ETF 沒有 ev，官方除息（dv）當成「息」事件
   const af = adj ? adjFactors(P.d, ev) : P.d.map(() => 1);
   // F8-3：融資融券餘額；還原時乘上該日之後所有官方換算的 k（面額變更、減資），原始為官方原值
   const gk = d => adj && G?.k ? G.k.reduce((a, x) => x.d > d ? a * x.k : a, 1) : 1;
@@ -340,7 +351,7 @@ function aggregate(data, mode, adj) {
       rows.push({ d, o: P.o[i] * k, h: P.h[i] * k, l: P.l[i] * k, c: P.c[i] * k, v: P.v[i],
         ch: ch == null ? null : ch * k,                                         // 還原後的漲跌（元）
         pc: ch == null || P.c[i] === ch ? null : ch / (P.c[i] - ch) * 100,       // 漲跌幅以原始價計算（不受係數影響）
-        rel, ev: e, gx: gx.has(d) ? (ch == null ? '息?' : '調?') : '', ...inst, ...mgAt(i), nt: false });
+        rel, ev: e, gx: gx.has(d) && !e.length ? (ch == null ? '息?' : '調?') : '', ...inst, ...mgAt(i), nt: false });   // 第 36 輪：官方除息日不標推測
       prevC = P.c[i] * k; lastD = d;
     } else if (prevC != null) {
       rows.push({ d, o: prevC, h: prevC, l: prevC, c: prevC, v: P.v[i] ?? 0, ch: null, pc: null, rel: null, ev: e, ...inst, ...mgAt(i), nt: true });
@@ -585,7 +596,7 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
     legend.innerHTML = `<span><b>${mode === '月' ? T[i].slice(0, 7) + ' 月' : mode === '週' ? T[i] + ' 當週' : T[i]}</b></span><span>開 <b>${pfmt(O[i])}</b></span><span>高 <b class="up">${pfmt(H[i])}</b></span>` +
       `<span>低 <b class="dn">${pfmt(L[i])}</b></span><span>收 <b class="${c}">${pfmt(C[i])}</b></span>` +
       (NT[i] ? '<span class="flat">無成交</span>'
-        : chg == null ? `<span class="flat" title="${gxBar ? '期間含推測的價格調整（除息、分割等），原始價相減會失真' : '官方未提供漲跌，且找不到對應的除權息、減資、面額變更事件'}">不比價</span>`
+        : chg == null ? `<span class="flat" title="${gxBar ? '期間含推測的價格調整（除息、分割等），原始價相減會失真' : raw[i].ev.some(e => e.t === '息') ? '除息日官方未提供漲跌' : '官方未提供漲跌，且找不到對應的除權息、減資、面額變更事件'}">不比價</span>`
         : `<span class="${c}"${f !== 1 ? ' title="期間含除權息等事件：前一根收盤先乘上參考價 ÷ 前收再相減"' : ''}>${psgn(chg)} (${sgn(p)}%)</span>`) +
       (mode === '日' && raw[i].rel ? `<span class="muted">相對 ${md(raw[i].rel)} 收盤</span>` : '') +
       raw[i].ev.map(e => `<span class="ev-note"${e.t === '調' ? ' title="依櫃買官方漲跌反推的參考價調整（減資、面額變更等）"' : /c/.test(e.k || '') ? ` title="${CASH_INC_TIP}"` : ''}>` +

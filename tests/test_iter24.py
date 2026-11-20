@@ -230,7 +230,7 @@ def test_export_source():
         assert s in SRC, s
     etf = SRC[SRC.index("def etf_export"):]
     etf = etf[:etf.index("\ndef ")]
-    assert '"dv"' not in etf and "dividends" not in etf and "etf_events" not in SRC          # D37-4：ETF 本輪只入表
+    assert "dividends(d_, c, ev, " not in etf and "etf_dividends(d_, c, events, gx)" in etf   # 第 36 輪：ETF 用官方除息表 etf_events（使用者同意改；原為 D37-4 只入表）
 
 
 # ─── node：stock.js ─────────────────────────────────────

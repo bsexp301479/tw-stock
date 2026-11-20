@@ -91,7 +91,7 @@ def test_f15_site_source():
     assert "F.c.eb != null && F.c.eb <= 0 && F.c.e > 0 ? '轉盈'" in STK
     # F15-2
     assert "loadStock(code, E ? 'etfp' : 'stocks')" in STK and "async function loadStock(code, dir = 'stocks')" in APP
-    assert "價格未還原除息：配息 ETF 在除息日會向下跳空，不是當天下跌" in STK and "上櫃 ETF 的漲跌可能含除息，本站無法辨識除息日" in STK
+    assert "價格未還原除息：配息 ETF 在除息日會向下跳空，不是當天下跌" in STK and "圖上「息」是官方除息日" in STK          # 第 36 輪：除息日改用官方除息表（使用者同意改）
     assert "pick(Object.entries(App.latest.etfs?.rows || {}))" in APP and "esc(s.i ?? 'ETF')" in APP
     assert "location.hash = '#/stock/' + tr.dataset.etf" in APP and "location.replace('#/stock/' + code)" in APP
     assert 'href="#/stock/${code}">行情 →</a>' in APP and 'href="#/etf/${code}">持股 →</a>' in STK
