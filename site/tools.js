@@ -1,4 +1,4 @@
-// 台股資金流 第 34 輪：試算工具 #/tools/dt 交易成本（含當沖、漲跌停）、#/tools/cp 複利、#/tools/pl 股票質借。
+// 台股資金流 第 34 輪：試算工具 #/tools/dt 交易成本（含當沖、漲跌停）、#/tools/cp 複利、#/tools/pl 股票質借；第 39 輪 #/tools/dv 除權息。
 // 只在瀏覽器計算；網址帶 ?c=代號 時只讀同站 data/（loadStock，個股頁看過的不再請求）。
 // 共用 app.js 的 $、esc、fmt、pfmt、md、segHTML、onSeg、pageTabsHTML、localStore、loadStock
 'use strict';
@@ -11,7 +11,7 @@ const TL_RULES = {
   limit: 10,                                                       // R9 漲跌幅 10%
   pl: { cap: 60, call: 130, back: 166, term: 183, max: 548 },      // P3 成數上限、P9 追繳 130%／補繳至 166%、P2 每次 6 個月（續借 2 次）
 };
-const TL_TABS = [['dt', '交易成本'], ['cp', '複利'], ['pl', '股票質借']];
+const TL_TABS = [['dt', '交易成本'], ['cp', '複利'], ['pl', '股票質借'], ['dv', '除權息']];
 
 // R7 升降單位（分）：股票六級、ETF 二級（e 為 true）。≥ 1,000 元改 1 元的新制尚未生效（D49 = A）
 const tlTick = (p, e) => e ? (p < 5000 ? 1 : 5) : p < 1000 ? 1 : p < 5000 ? 5 : p < 10000 ? 10 : p < 50000 ? 50 : p < 100000 ? 100 : 500;
@@ -73,6 +73,17 @@ function tlPledge(o) {
   return r;
 }
 
+// 第 39 輪 F39-1：R25 除權息參考價（分）。P 前收（分）、C 現金股利（10^-6 元）、S 每千股配股（10^-8 股），皆 BigInt；
+// 上市除息捨去、上市有配股與上櫃四捨五入到 0.01（D82-1 = A，本站官方參考價驗算）。整數運算：34.8 − 2.3 不會變成 32.4999…
+function tlExRef(P, C, S, tw) {
+  const num = (P * 10000n - C) * 10n ** 11n, den = (10n ** 11n + S) * 10000n;
+  return tw && !S ? num / den : (2n * num + den) / (2n * den);
+}
+// 小數字串 → BigInt（× 10^k）；空白 = 0、不合法或小數超過 k 位 = null
+const tlBig = (s, k) => { const m = /^(\d{1,12})(?:\.(\d+))?$/.exec(String(s == null ? '' : s).replace(/,/g, '').trim() || '0');
+  return m && (m[2] || '').length <= k ? BigInt(m[1] + (m[2] || '').padEnd(k, '0')) : null; };
+const tlDec = (v, k) => { const s = v.toString().padStart(k + 1, '0'), i = s.length - k; return (s.slice(0, i) + '.' + s.slice(i)).replace(/\.?0+$/, ''); };   // BigInt（× 10^k）→ 去尾 0 的字串
+
 // ─── 輸入與畫面 ───────────────────────────────────────────
 const tlNum = (s, k = 9) => { const t = String(s == null ? '' : s).replace(/,/g, '').trim();
   return new RegExp('^-?\\d+' + (k ? '(\\.\\d{1,' + k + '})?' : '') + '$').test(t) && Math.abs(t) < 1e12 ? +t || 0 : NaN; };   // 太大的數字當作不合法；-0 當作 0（QA34-01）
@@ -94,7 +105,8 @@ function tlFeePref(raw) {
 const TL = { code: undefined, info: null,
   dt: { mode: 'dt', dir: 'b', k: 's', b: '', s: '', n: '1000', ref: '' },
   cp: { P: '0', M: '5000', at: 'end', r: '', n: '10', dv: '0', y: '' },
-  pl: { p1: '', p2: '', q: '1', u: 'lot', cap: '60', loan: '', rate: '', days: '180', base: '365', fee: '0', call: '130' } };
+  pl: { p1: '', p2: '', q: '1', u: 'lot', cap: '60', loan: '', rate: '', days: '180', base: '365', fee: '0', call: '130' },
+  dv: { mk: 'l', k: 's', p: '', c: '', s: '0', n: '1000', cost: '', y1: '' } };   // 第 39 輪：持有成本不帶入（D83-1 = A）
 
 function tlTaxTxt(k, dt, t) {
   const s = k === 'b' ? '債券 ETF 停徵（至 2026/12/31）' : k === 'e' ? 'ETF 0.1%（當沖不減半）' : dt ? '股票現股當沖 0.15%（至 2027/12/31）' : '股票 0.3%';
@@ -228,7 +240,60 @@ function tlPlForm(st) {
     tlIn('loan', '借款金額（元）', st.loan, '空白 = 以上限計算') + tlIn('rate', '年利率（%）', st.rate, '必填，各券商不同') +
     tlIn('days', `借款天數（1～${TL_RULES.pl.max}）`, st.days) + tlIn('fee', '手續費（一次，元）', st.fee) + tlIn('call', '追繳門檻（%）', st.call);
 }
-const TL_VIEW = { dt: ['交易成本與損益兩平', tlDtForm, tlDtOut], cp: ['複利', tlCpForm, tlCpOut], pl: ['股票質借（單檔擔保品）', tlPlForm, tlPlOut] };
+// 第 39 輪 F39-1：除權息試算。金額都用 BigInt 整數：價格（分）、股利（10^-6 元）、配股（10^-8 股）
+function tlDvOut(st, I) {
+  const P = tlBig(st.p, 2), C = tlBig(st.c, 6), S = tlBig(st.s, 8), n = tlBig(st.n, 0), cost = tlBig(st.cost, 2), y1 = tlBig(st.y1, 6), msg = [];
+  const has = k => String(st[k] == null ? '' : st[k]).trim() !== '', tw = st.mk === 'l', e = st.k === 'e';
+  if (!P || !has('p')) msg.push('請輸入除權息前收盤（大於 0，小數最多 2 位）');
+  if (C === null) msg.push('現金股利請填 0 以上的數字，小數最多 6 位');
+  if (S === null) msg.push('每千股配股請填 0 以上的數字，小數最多 8 位');
+  if (!n || !has('n')) msg.push('持有股數請輸入正整數');
+  if (has('cost') && !cost) msg.push('持有成本請填大於 0 的數字（小數最多 2 位），或留空');
+  if (y1 === null) msg.push('近一年現金股利請填 0 以上的數字（小數最多 6 位），或留空');
+  if (C === 0n && S === 0n) msg.push('請輸入現金股利或配股');
+  else if (P && C !== null && C >= P * 10000n) msg.push('現金股利須小於除權息前收盤');
+  const note = tlNote(['參考價 = (前收 − 現金股利) ÷ (1 + 每千股配股 ÷ 1,000)；上市除息捨去、上市有配股與上櫃四捨五入到 0.01（本站用近一年官方參考價驗算）。',
+    '官方以實際每股金額計算（常有小數尾數），只填到元或角時可能和官方差 0.01；有現金增資時參考價請看官方公告。配股 1 元 = 每千股 100 股（面額 10 元時）。',
+    '可領現金元以下捨去；不足 1 股依公司公告折付現金，可在期限內湊股；實際以公司發放為準。',
+    '二代健保補充保費：單次股利 2 萬元以上扣 2.11%，元以下四捨五入，單次以 1,000 萬元為上限；同一基準日的股票股利以面額一起計入，本頁只算現金股利。']);
+  const hint = I && I.dvh ? tlNote(I.dvh) : '';
+  if (msg.length) return tlMsg(msg) + hint + note;
+  const E11 = 10n ** 11n, r = Number(tlExRef(P, C, S, tw)), lim = tlLimit(r, e), cash = n * C / 1000000n, sh = n * S, w = sh / E11, fr = sh % E11;
+  const after = ((n * E11 + sh) * BigInt(r) * 10000n + n * C * E11 + 5n * 10n ** 16n) / 10n ** 17n;   // (股數＋配股) × 參考價＋現金股利，四捨五入到元
+  const nhi = cash >= 20000n ? fmt(Number(((cash < 10000000n ? cash : 10000000n) * 211n + 5000n) / 10000n)) + ' 元（2.11%）' : '未達 2 萬元，不扣';
+  let rows = tlRow('除權息參考價', `<b class="tl-big">${fmt(r / 100, 2)}</b>`) +
+    tlRow('下一交易日漲跌停', `漲停 ${tlPx(lim[0], e)}、跌停 ${tlPx(lim[1], e)}`) +
+    tlRow('可領現金股利', fmt(Number(cash)) + ' 元');
+  if (S) rows += tlRow('配發股數', fmt(Number(w)) + ' 股' + (fr ? `<br><span class="small">另有不足 1 股 ${tlDec(fr, 11)} 股</span>` : '')) + tlRow('除權後股數', fmt(Number(n + w)) + ' 股');
+  rows += tlRow('除權息前市值', tlY(Number(n * P)) + ' 元') + tlRow('除權息後市值＋現金股利', fmt(Number(after)) + ' 元') + tlRow('二代健保補充保費', nhi);
+  if (C) rows += tlRow('本次現金股利 ÷ 前收', fmt(Number(C) / Number(P) / 100, 2) + '%');
+  if (cost && has('y1')) rows += tlRow('成本殖利率（近一年 ÷ 成本）', fmt(Number(y1) / Number(cost) / 100, 2) + '%');
+  return `<table class="tl-kv">${rows}</table>` + hint + tlNote([`漲跌停 = 參考價 ±${TL_RULES.limit}%，依升降單位取到可成交價${e ? '；國外成分、槓反 ETF 漲跌幅規定不同' : ''}。`,
+    `除權息前後的總價值相同${fr ? '（不足 1 股以參考價計）' : ''}，差額來自參考價捨入到 0.01。`]) + note;
+}
+function tlDvForm(st) {
+  return `<div class="tl-segs">${tlSeg('mk', [['l', '上市'], ['o', '上櫃']], st.mk)}${tlSeg('k', [['s', '股票'], ['e', 'ETF']], st.k)}</div>` +
+    tlIn('p', '除權息前收盤（元）', st.p) + tlIn('c', '現金股利（元／股）', st.c, '空白 = 0') + tlIn('s', '每千股配股（股）', st.s, '空白 = 0') +
+    tlIn('n', '持有股數', st.n) + tlIn('cost', '持有成本（元／股）', st.cost, '選填') + tlIn('y1', '近一年現金股利（元／股）', st.y1, '選填');
+}
+// 第 39 輪 F39-2：帶入最近一次股利（D82-3 = A：前收用最新收盤）與近一年現金股利合計；回傳要帶入的欄位與提示
+function tlDvLoad(d) {
+  const V = d.dv || [], x = V[V.length - 1], tw = d.market !== 'TPEx', D = d.prices.d;
+  const o = { mk: tw ? 'l' : 'o', c: '', s: '0', y1: '', cost: '' }, h = [];   // 換股票時清掉上一檔的持有成本
+  if (!x || !x.t) return [o, [`${D[0]} 起沒有除權息紀錄，請依公司公告填寫`]];
+  const from = new Date(Date.parse(D[D.length - 1]) - 365 * 864e5).toISOString().slice(0, 10);
+  let y = 0n, k = 0, miss = false;
+  V.forEach(v => { if (v.d > from && (v.t === '息' || v.t === '權息')) { const c = v.c == null ? null : tlBig(String(v.c), 6); if (c === null) miss = true; else { y += c; k++; } } });
+  if (k) o.y1 = tlDec(y, 6);
+  if (x.k === 'sc') h.push(`最近一次（${md(x.d)}）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入`);
+  else if (tw && x.c == null && x.a != null) h.push(`上市官方表只有 ${md(x.d)} 的權值＋息值合計 ${x.a} 元，請依公告填現金股利與配股`);
+  else { o.c = x.c != null ? String(x.c) : '0'; o.s = x.s != null ? String(x.s) : '0'; h.push(`已帶入 ${md(x.d)} 的股利（最近一次），下次請依公司公告修改`); }
+  const ev = (d.ev || []).filter(v => v.d === x.d && v.t === x.t)[0], R = x.r != null ? x.r : ev && ev.r;
+  if (R != null && x.p != null) h.push(`上次官方參考價 ${pfmt(R)}（${md(x.d)}，前收 ${pfmt(x.p)}）；前收改成 ${pfmt(x.p)} 可對照`);
+  h.push(k ? `近一年現金股利 = ${md(from)} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${md(from)} 以後的現金股利官方表沒有分項，請自行確認` : `${md(from)} 以後沒有現金股利`);
+  return [o, h];
+}
+const TL_VIEW = { dt: ['交易成本與損益兩平', tlDtForm, tlDtOut], cp: ['複利', tlCpForm, tlCpOut], pl: ['股票質借（單檔擔保品）', tlPlForm, tlPlOut], dv: ['除權息試算', tlDvForm, tlDvOut] };
 const TL_FOOT = '試算僅供參考，不代表實際成交、扣款或核貸金額；費率、稅率、折扣與規則以券商與主管機關公告為準。';
 
 // 網址帶代號時讀最新收盤（股票 data/stocks、ETF data/etfp）；不在 latest.json 的代號不發請求
@@ -245,6 +310,9 @@ async function tlLoad(code) {
   Object.assign(TL.dt, { b: c, s: '', ref: c, k: E ? 'e' : 's' });
   Object.assign(TL.pl, { p1: c, p2: '' });
   TL.cp.y = TL.info.dy != null ? String(TL.info.dy) : '';
+  const [o, h] = tlDvLoad(d);                                                          // 第 39 輪 F39-2
+  TL.info.dvh = h;
+  Object.assign(TL.dv, o, { p: c, k: E ? 'e' : 's' });
 }
 function tlInfo(I) {
   if (!I) return '';

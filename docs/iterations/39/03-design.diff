@@ -1,0 +1,601 @@
+diff --git a/README.md b/README.md
+index 434b7ca..06278fa 100644
+--- a/README.md
++++ b/README.md
+@@ -81,6 +81,7 @@ python3 tests/test_iter09.py                     # 第 9 輪測試
+ python3 tests/test_iter10.py                     # 第 10 輪測試
+ python3 tests/test_iter34.py                     # 第 34 輪測試（試算工具）
+ python3 tests/test_iter38.py                     # 第 38 輪測試（工具頁文字、零股提示、複利成長圖）
++python3 tests/test_iter39.py                     # 第 39 輪測試（除權息試算）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -138,6 +139,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker
+ - 個股頁估值位置（第 9 輪，`stocks/{代號}.json` 的 `val`：`{d, pe|pb|dy: [位置 %, 一年最低, 一年最高]}`）：本益比、淨值比、殖利率指標卡加「一年位置 N%（最低～最高）」，窗口同上，只計入大於 0 的官方值（殖利率 0 = 不配息，不算位置）。今天值為空或 ≤ 0（虧損、無股利）、窗口內有效天數少於 120 天（新上市），或 90 天內股本變動（官方值可能尚未調整）時不顯示。估值說明（第 10 輪改寫）：本益比 = 股價 ÷ 近 4 季 EPS；獲利下降時本益比會升高，獲利大增時本益比（淨值比也可能）會落到一年低點（例如景氣循環股在獲利高峰），不代表股價便宜；有季報卡時加「請對照下方季報卡的近 4 季 EPS 與一年前比較」。淨值比卡也標「資料 MM/DD」（股本變動註記照舊只在本益比、殖利率卡）。第 12 輪：個股頁指標卡加「市值」（≥ 1 萬億顯示兆）與「週轉率」（`stocks/{代號}.json` 的 `mt`：`{d, mc 億元, to %}`，目前股數計算；沒有股數的股票沒有 `mt`，兩張卡顯示 `--`）。
+ - 個股頁河流圖（第 37 輪，「基本面」分頁一年位置說明之下、月營收／季報之前；`stocks/{代號}.json` 的 `band` = `{d, pe|pb: {s: [[起日, 值|null], …], k: [5 個倍數], n}}`）：和 `val` 同一個窗口與查詢。`s` 是「原始收盤 ÷ 官方本益比（淨值比）」反推的近 4 季 EPS（每股淨值）階梯，4 位有效數字；官方值空或 ≤ 0 是 `null` 段（畫面斷線），無成交日沿用前一段，和這一段相差超過 max(0.5%, 0.012 ÷ 官方值) 才開新段，超過 24 段不輸出；`k` = 窗口內官方值的第 10／25／50／75／90 百分位（最近序位法）；有效天數 < 120 不輸出該指標，90 天內股本變動不輸出 `band`。畫面是原始收盤＋5 條倍數線（不塗色），可切換本益比／淨值比，今天沒有本益比時預設淨值比；只描述股價和獲利（淨值）的關係，倍數用近一年資料算，不是股價的評價。
+ - 工具頁（第 38 輪）：三個工具的標籤縮短到 1024／375 寬一行放得下（折扣標籤「手續費折扣（折）」，「不打折 = 10」放在 placeholder），說明文字縮短、免責與規則出處用語保留；折扣驗證訊息改成和程式一致（大於 0、最多 10、小數最多 2 位）；非當沖、股數不是 1,000 的倍數且最低手續費 20 元時提示「零股多數券商每筆最低 1 元」，不自動改值；交易成本、複利結果表在 520px 以下整列換行。複利結果加逐年成長圖（純 SVG，第 0～n 年：期末金額實線、累計投入虛線，開股利時加另一種股利處理方式的點線對照；只畫線不塗色，顏色用 CSS 變數，數字都在圖下圖例，和摘要表同一格式）。
++- 除權息試算（第 39 輪）：工具頁第 4 個分頁 `#/tools/dv`，算除權息參考價（上市除息捨去、上市有配股與上櫃四捨五入到 0.01，整數運算；和本站近一年官方參考價全部相同，`k = sc` 現金增資不適用）、下一交易日漲跌停、可領現金（元以下捨去）、配股與不足 1 股、二代健保補充保費（只算現金，2.11%、單次上限 1,000 萬元）、本次現金股利 ÷ 前收、成本殖利率。`?c=代號` 帶入最新收盤與最近一次股利、上次官方參考價、近一年現金股利合計；上市「權息」只有權值＋息值合計，不帶入現金與配股。個股「股利與填息」、ETF「配息與填息」卡標題列有「試算 →」連結（在 `renderStock` 加在卡片外，`divHTML` 輸出不變）。持有成本不帶入、換股票時清空。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+diff --git a/site/app.css b/site/app.css
+index 17e2681..4f732c5 100644
+--- a/site/app.css
++++ b/site/app.css
+@@ -367,4 +367,5 @@ a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
+ @media (max-width:520px){:is(.tl-odt,.tl-ocp) .tl-kv,:is(.tl-odt,.tl-ocp) .tl-kv tbody{display:block}:is(.tl-odt,.tl-ocp) .tl-kv tr{display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:12px;border-bottom:1px solid var(--border)}:is(.tl-odt,.tl-ocp) .tl-kv th,:is(.tl-odt,.tl-ocp) .tl-kv td{border-bottom:0}:is(.tl-odt,.tl-ocp) .tl-kv td{flex:1 1 auto;white-space:nowrap}}   /* 第 38 輪 D74：交易成本、複利結果表窄螢幕整列換行，數值與單位不拆開 */
+ .tl-gr{display:block;width:100%;height:160px;margin:12px 0 6px}.tl-lg i{height:0;border-radius:0;border-top:2px solid var(--blue)}.tl-lg i.d{border-top:2px dashed var(--text2)}.tl-lg i.v{border-top:2px dotted var(--violet)}   /* 第 38 輪 F38-3a：複利成長圖（只畫線、不塗色） */
+ @media (max-width:720px){.s-head .tl-go{position:absolute;top:36px;right:0;padding:4px 10px;font-size:13px}.s-head .s-px{padding-right:56px}}
++@media (max-width:520px){.tl-odv .tl-kv,.tl-odv .tl-kv tbody{display:block}.tl-odv .tl-kv tr{display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:12px;border-bottom:1px solid var(--border)}.tl-odv .tl-kv th,.tl-odv .tl-kv td{border-bottom:0}.tl-odv .tl-kv td{flex:1 1 auto;white-space:nowrap}}   /* 第 39 輪：除權息結果表窄螢幕整列換行 */
+ .band-lg{margin:6px 0 4px}.band-lg i{background:var(--blue)}.band-lg i.mid{height:4px}.band-lg i.dash{background:none;height:0;border-top:2px dashed var(--blue);border-radius:0}.band-lg i.cl{background:var(--text)}   /* 第 37 輪 F37-2：河流圖圖例在圖下方 */
+diff --git a/site/app.js b/site/app.js
+index 81415b8..5f6f633 100644
+--- a/site/app.js
++++ b/site/app.js
+@@ -76,7 +76,7 @@ async function route() {
+   const share = location.hash.match(/^#\/watch\?add=([^&#]*)/);   // 第 32 輪 F32-2：分享連結先記下代號、網址換回 #/watch（重新整理不會再問）
+   if (share) { App.watchAdd = share[1].split(','); history.replaceState(history.state, '', '#/watch'); }
+   const tl = location.hash.match(/^#\/tools(?:\/([^?]*))?(\?.*)?$/);   // 第 34 輪：#/tools、#/tools?c=、不認得的分頁補成 #/tools/dt（保留 ?c=）
+-  if (tl && !['dt', 'cp', 'pl'].includes(tl[1])) history.replaceState(history.state, '', '#/tools/dt' + (tl[2] || ''));
++  if (tl && !['dt', 'cp', 'pl', 'dv'].includes(tl[1])) history.replaceState(history.state, '', '#/tools/dt' + (tl[2] || ''));
+   const [, page = 'today', arg, sub] = location.hash.split('/');
+   const k = history.state?.k;
+   scrollKey = null;                                                     // 換頁中（內容長度改變）的捲動不記
+diff --git a/site/index.html b/site/index.html
+index 0e1e223..a13b789 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,12 +7,12 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=cbb3fec1">
++<link rel="stylesheet" href="app.css?v=16263394">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=d175c222" defer></script>
+-<script src="stock.js?v=94125fde" defer></script>
+-<script src="tools.js?v=e587ec88" defer></script>
++<script src="app.js?v=a88e48d3" defer></script>
++<script src="stock.js?v=a88a6b25" defer></script>
++<script src="tools.js?v=2a957b9a" defer></script>
+ </head>
+ <body>
+ <header class="top">
+diff --git a/site/stock.js b/site/stock.js
+index b534a9b..82ea4d1 100644
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -338,6 +338,8 @@ window.renderStock = async function (code, sub) {
+   ptab.insertAdjacentHTML('beforeend', `<span class="pt-nm">${esc(data.name)} <b class="num ${cls(change)}">${pfmt(close)}</b>${noTrade || pct == null ? '' : ` <span class="num ${cls(change)}">${sgn(pct)}%</span>`}</span>`);
+   new IntersectionObserver(([e]) => ptab.classList.toggle('stuck', !e.isIntersecting), { rootMargin: `-${topH()}px 0px 0px 0px` }).observe($('#view .s-head'));
+   if (App.ptStuck) { App.ptStuck = false; ptab.style.position = 'static'; const y = ptab.getBoundingClientRect().top + scrollY; ptab.style.position = ''; scrollTo(0, y - topH()); }   // 固定狀態換分頁：新分頁從分頁列下方開始
++  const dvh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '配息與填息' : '股利與填息'))[0];   // 第 39 輪 F39-3：連結加在 divHTML 外，卡片字面不變
++  if (dvh) dvh.insertAdjacentHTML('afterend', `<span class="sp"></span><a class="small dv-go" href="#/tools/dv?c=${code}">試算 →</a>`);
+   onSeg('stockTabSeg', v => { App.ptStuck = $('#view .s-head').getBoundingClientRect().bottom <= topH(); localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
+   $('#hlMore')?.addEventListener('click', e => e.currentTarget.parentElement.classList.add('open'));
+   $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });
+diff --git a/site/tools.js b/site/tools.js
+index 28020cf..5eab959 100644
+--- a/site/tools.js
++++ b/site/tools.js
+@@ -1,4 +1,4 @@
+-// 台股資金流 第 34 輪：試算工具 #/tools/dt 交易成本（含當沖、漲跌停）、#/tools/cp 複利、#/tools/pl 股票質借。
++// 台股資金流 第 34 輪：試算工具 #/tools/dt 交易成本（含當沖、漲跌停）、#/tools/cp 複利、#/tools/pl 股票質借；第 39 輪 #/tools/dv 除權息。
+ // 只在瀏覽器計算；網址帶 ?c=代號 時只讀同站 data/（loadStock，個股頁看過的不再請求）。
+ // 共用 app.js 的 $、esc、fmt、pfmt、md、segHTML、onSeg、pageTabsHTML、localStore、loadStock
+ 'use strict';
+@@ -11,7 +11,7 @@ const TL_RULES = {
+   limit: 10,                                                       // R9 漲跌幅 10%
+   pl: { cap: 60, call: 130, back: 166, term: 183, max: 548 },      // P3 成數上限、P9 追繳 130%／補繳至 166%、P2 每次 6 個月（續借 2 次）
+ };
+-const TL_TABS = [['dt', '交易成本'], ['cp', '複利'], ['pl', '股票質借']];
++const TL_TABS = [['dt', '交易成本'], ['cp', '複利'], ['pl', '股票質借'], ['dv', '除權息']];
+ 
+ // R7 升降單位（分）：股票六級、ETF 二級（e 為 true）。≥ 1,000 元改 1 元的新制尚未生效（D49 = A）
+ const tlTick = (p, e) => e ? (p < 5000 ? 1 : 5) : p < 1000 ? 1 : p < 5000 ? 5 : p < 10000 ? 10 : p < 50000 ? 50 : p < 100000 ? 100 : 500;
+@@ -73,6 +73,17 @@ function tlPledge(o) {
+   return r;
+ }
+ 
++// 第 39 輪 F39-1：R25 除權息參考價（分）。P 前收（分）、C 現金股利（10^-6 元）、S 每千股配股（10^-8 股），皆 BigInt；
++// 上市除息捨去、上市有配股與上櫃四捨五入到 0.01（D82-1 = A，本站官方參考價驗算）。整數運算：34.8 − 2.3 不會變成 32.4999…
++function tlExRef(P, C, S, tw) {
++  const num = (P * 10000n - C) * 10n ** 11n, den = (10n ** 11n + S) * 10000n;
++  return tw && !S ? num / den : (2n * num + den) / (2n * den);
++}
++// 小數字串 → BigInt（× 10^k）；空白 = 0、不合法或小數超過 k 位 = null
++const tlBig = (s, k) => { const m = /^(\d{1,12})(?:\.(\d+))?$/.exec(String(s == null ? '' : s).replace(/,/g, '').trim() || '0');
++  return m && (m[2] || '').length <= k ? BigInt(m[1] + (m[2] || '').padEnd(k, '0')) : null; };
++const tlDec = (v, k) => { const s = v.toString().padStart(k + 1, '0'), i = s.length - k; return (s.slice(0, i) + '.' + s.slice(i)).replace(/\.?0+$/, ''); };   // BigInt（× 10^k）→ 去尾 0 的字串
++
+ // ─── 輸入與畫面 ───────────────────────────────────────────
+ const tlNum = (s, k = 9) => { const t = String(s == null ? '' : s).replace(/,/g, '').trim();
+   return new RegExp('^-?\\d+' + (k ? '(\\.\\d{1,' + k + '})?' : '') + '$').test(t) && Math.abs(t) < 1e12 ? +t || 0 : NaN; };   // 太大的數字當作不合法；-0 當作 0（QA34-01）
+@@ -94,7 +105,8 @@ function tlFeePref(raw) {
+ const TL = { code: undefined, info: null,
+   dt: { mode: 'dt', dir: 'b', k: 's', b: '', s: '', n: '1000', ref: '' },
+   cp: { P: '0', M: '5000', at: 'end', r: '', n: '10', dv: '0', y: '' },
+-  pl: { p1: '', p2: '', q: '1', u: 'lot', cap: '60', loan: '', rate: '', days: '180', base: '365', fee: '0', call: '130' } };
++  pl: { p1: '', p2: '', q: '1', u: 'lot', cap: '60', loan: '', rate: '', days: '180', base: '365', fee: '0', call: '130' },
++  dv: { mk: 'l', k: 's', p: '', c: '', s: '0', n: '1000', cost: '', y1: '' } };   // 第 39 輪：持有成本不帶入（D83-1 = A）
+ 
+ function tlTaxTxt(k, dt, t) {
+   const s = k === 'b' ? '債券 ETF 停徵（至 2026/12/31）' : k === 'e' ? 'ETF 0.1%（當沖不減半）' : dt ? '股票現股當沖 0.15%（至 2027/12/31）' : '股票 0.3%';
+@@ -228,7 +240,60 @@ function tlPlForm(st) {
+     tlIn('loan', '借款金額（元）', st.loan, '空白 = 以上限計算') + tlIn('rate', '年利率（%）', st.rate, '必填，各券商不同') +
+     tlIn('days', `借款天數（1～${TL_RULES.pl.max}）`, st.days) + tlIn('fee', '手續費（一次，元）', st.fee) + tlIn('call', '追繳門檻（%）', st.call);
+ }
+-const TL_VIEW = { dt: ['交易成本與損益兩平', tlDtForm, tlDtOut], cp: ['複利', tlCpForm, tlCpOut], pl: ['股票質借（單檔擔保品）', tlPlForm, tlPlOut] };
++// 第 39 輪 F39-1：除權息試算。金額都用 BigInt 整數：價格（分）、股利（10^-6 元）、配股（10^-8 股）
++function tlDvOut(st, I) {
++  const P = tlBig(st.p, 2), C = tlBig(st.c, 6), S = tlBig(st.s, 8), n = tlBig(st.n, 0), cost = tlBig(st.cost, 2), y1 = tlBig(st.y1, 6), msg = [];
++  const has = k => String(st[k] == null ? '' : st[k]).trim() !== '', tw = st.mk === 'l', e = st.k === 'e';
++  if (!P || !has('p')) msg.push('請輸入除權息前收盤（大於 0，小數最多 2 位）');
++  if (C === null) msg.push('現金股利請填 0 以上的數字，小數最多 6 位');
++  if (S === null) msg.push('每千股配股請填 0 以上的數字，小數最多 8 位');
++  if (!n || !has('n')) msg.push('持有股數請輸入正整數');
++  if (has('cost') && !cost) msg.push('持有成本請填大於 0 的數字（小數最多 2 位），或留空');
++  if (y1 === null) msg.push('近一年現金股利請填 0 以上的數字（小數最多 6 位），或留空');
++  if (C === 0n && S === 0n) msg.push('請輸入現金股利或配股');
++  else if (P && C !== null && C >= P * 10000n) msg.push('現金股利須小於除權息前收盤');
++  const note = tlNote(['參考價 = (前收 − 現金股利) ÷ (1 + 每千股配股 ÷ 1,000)；上市除息捨去、上市有配股與上櫃四捨五入到 0.01（本站用近一年官方參考價驗算）。',
++    '官方以實際每股金額計算（常有小數尾數），只填到元或角時可能和官方差 0.01；有現金增資時參考價請看官方公告。配股 1 元 = 每千股 100 股（面額 10 元時）。',
++    '可領現金元以下捨去；不足 1 股依公司公告折付現金，可在期限內湊股；實際以公司發放為準。',
++    '二代健保補充保費：單次股利 2 萬元以上扣 2.11%，元以下四捨五入，單次以 1,000 萬元為上限；同一基準日的股票股利以面額一起計入，本頁只算現金股利。']);
++  const hint = I && I.dvh ? tlNote(I.dvh) : '';
++  if (msg.length) return tlMsg(msg) + hint + note;
++  const E11 = 10n ** 11n, r = Number(tlExRef(P, C, S, tw)), lim = tlLimit(r, e), cash = n * C / 1000000n, sh = n * S, w = sh / E11, fr = sh % E11;
++  const after = ((n * E11 + sh) * BigInt(r) * 10000n + n * C * E11 + 5n * 10n ** 16n) / 10n ** 17n;   // (股數＋配股) × 參考價＋現金股利，四捨五入到元
++  const nhi = cash >= 20000n ? fmt(Number(((cash < 10000000n ? cash : 10000000n) * 211n + 5000n) / 10000n)) + ' 元（2.11%）' : '未達 2 萬元，不扣';
++  let rows = tlRow('除權息參考價', `<b class="tl-big">${fmt(r / 100, 2)}</b>`) +
++    tlRow('下一交易日漲跌停', `漲停 ${tlPx(lim[0], e)}、跌停 ${tlPx(lim[1], e)}`) +
++    tlRow('可領現金股利', fmt(Number(cash)) + ' 元');
++  if (S) rows += tlRow('配發股數', fmt(Number(w)) + ' 股' + (fr ? `<br><span class="small">另有不足 1 股 ${tlDec(fr, 11)} 股</span>` : '')) + tlRow('除權後股數', fmt(Number(n + w)) + ' 股');
++  rows += tlRow('除權息前市值', tlY(Number(n * P)) + ' 元') + tlRow('除權息後市值＋現金股利', fmt(Number(after)) + ' 元') + tlRow('二代健保補充保費', nhi);
++  if (C) rows += tlRow('本次現金股利 ÷ 前收', fmt(Number(C) / Number(P) / 100, 2) + '%');
++  if (cost && has('y1')) rows += tlRow('成本殖利率（近一年 ÷ 成本）', fmt(Number(y1) / Number(cost) / 100, 2) + '%');
++  return `<table class="tl-kv">${rows}</table>` + hint + tlNote([`漲跌停 = 參考價 ±${TL_RULES.limit}%，依升降單位取到可成交價${e ? '；國外成分、槓反 ETF 漲跌幅規定不同' : ''}。`,
++    `除權息前後的總價值相同${fr ? '（不足 1 股以參考價計）' : ''}，差額來自參考價捨入到 0.01。`]) + note;
++}
++function tlDvForm(st) {
++  return `<div class="tl-segs">${tlSeg('mk', [['l', '上市'], ['o', '上櫃']], st.mk)}${tlSeg('k', [['s', '股票'], ['e', 'ETF']], st.k)}</div>` +
++    tlIn('p', '除權息前收盤（元）', st.p) + tlIn('c', '現金股利（元／股）', st.c, '空白 = 0') + tlIn('s', '每千股配股（股）', st.s, '空白 = 0') +
++    tlIn('n', '持有股數', st.n) + tlIn('cost', '持有成本（元／股）', st.cost, '選填') + tlIn('y1', '近一年現金股利（元／股）', st.y1, '選填');
++}
++// 第 39 輪 F39-2：帶入最近一次股利（D82-3 = A：前收用最新收盤）與近一年現金股利合計；回傳要帶入的欄位與提示
++function tlDvLoad(d) {
++  const V = d.dv || [], x = V[V.length - 1], tw = d.market !== 'TPEx', D = d.prices.d;
++  const o = { mk: tw ? 'l' : 'o', c: '', s: '0', y1: '', cost: '' }, h = [];   // 換股票時清掉上一檔的持有成本
++  if (!x || !x.t) return [o, [`${D[0]} 起沒有除權息紀錄，請依公司公告填寫`]];
++  const from = new Date(Date.parse(D[D.length - 1]) - 365 * 864e5).toISOString().slice(0, 10);
++  let y = 0n, k = 0, miss = false;
++  V.forEach(v => { if (v.d > from && (v.t === '息' || v.t === '權息')) { const c = v.c == null ? null : tlBig(String(v.c), 6); if (c === null) miss = true; else { y += c; k++; } } });
++  if (k) o.y1 = tlDec(y, 6);
++  if (x.k === 'sc') h.push(`最近一次（${md(x.d)}）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入`);
++  else if (tw && x.c == null && x.a != null) h.push(`上市官方表只有 ${md(x.d)} 的權值＋息值合計 ${x.a} 元，請依公告填現金股利與配股`);
++  else { o.c = x.c != null ? String(x.c) : '0'; o.s = x.s != null ? String(x.s) : '0'; h.push(`已帶入 ${md(x.d)} 的股利（最近一次），下次請依公司公告修改`); }
++  const ev = (d.ev || []).filter(v => v.d === x.d && v.t === x.t)[0], R = x.r != null ? x.r : ev && ev.r;
++  if (R != null && x.p != null) h.push(`上次官方參考價 ${pfmt(R)}（${md(x.d)}，前收 ${pfmt(x.p)}）；前收改成 ${pfmt(x.p)} 可對照`);
++  h.push(k ? `近一年現金股利 = ${md(from)} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${md(from)} 以後的現金股利官方表沒有分項，請自行確認` : `${md(from)} 以後沒有現金股利`);
++  return [o, h];
++}
++const TL_VIEW = { dt: ['交易成本與損益兩平', tlDtForm, tlDtOut], cp: ['複利', tlCpForm, tlCpOut], pl: ['股票質借（單檔擔保品）', tlPlForm, tlPlOut], dv: ['除權息試算', tlDvForm, tlDvOut] };
+ const TL_FOOT = '試算僅供參考，不代表實際成交、扣款或核貸金額；費率、稅率、折扣與規則以券商與主管機關公告為準。';
+ 
+ // 網址帶代號時讀最新收盤（股票 data/stocks、ETF data/etfp）；不在 latest.json 的代號不發請求
+@@ -245,6 +310,9 @@ async function tlLoad(code) {
+   Object.assign(TL.dt, { b: c, s: '', ref: c, k: E ? 'e' : 's' });
+   Object.assign(TL.pl, { p1: c, p2: '' });
+   TL.cp.y = TL.info.dy != null ? String(TL.info.dy) : '';
++  const [o, h] = tlDvLoad(d);                                                          // 第 39 輪 F39-2
++  TL.info.dvh = h;
++  Object.assign(TL.dv, o, { p: c, k: E ? 'e' : 's' });
+ }
+ function tlInfo(I) {
+   if (!I) return '';
+diff --git a/tests/test_iter39.py b/tests/test_iter39.py
+new file mode 100644
+index 0000000..13f65b0
+--- /dev/null
++++ b/tests/test_iter39.py
+@@ -0,0 +1,399 @@
++"""第 39 輪（不連網、不連資料庫）：除權息試算 #/tools/dv（F39-1）、?c= 帶入（F39-2）、股利卡「試算 →」（F39-3）。
++有 node 時取出 app.js 的共用函式＋整個 tools.js 執行（node 14 可跑）；共用 test_iter34 的取函式與執行工具。
++檢查函式都接受 src（tools.js 內容），test_contrast 把 tools.js 改壞後重跑，確認會失敗。"""
++import hashlib
++import json
++import random
++import re
++import sys
++from fractions import Fraction
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++import test_iter34 as T  # noqa: E402
++
++SITE, CSS, HTML, TOOLS, APP, STK = T.SITE, T.CSS, T.HTML, T.TOOLS, T.APP, T.STK
++BAD = re.compile(r"NaN|Infinity|∞|undefined|(?<![\d.,])-0(?:\.0+)?(?![.,\d])")
++ADVICE = ("買進", "賣出", "反彈", "見底", "買點", "超賣", "超買", "推薦", "強勢", "飆股", "勝率", "亮點", "建議", "低估", "高估", "超跌", "便宜",
++          "保證", "穩賺", "安全", "危險", "划算", "填息機率", "貼息", "存股", "配息穩定", "穩定配息", "高息", "價值陷阱")
++# 分析師 1-3 節的測試答案（本站官方參考價）：前收、現金、每千股配股、上市？、參考價。1110（15.95 − 0.3）用浮點 × 100 會得到 1564.99… → 15.64
++ANS = [("2385", "7.000001", "0", True, "2,377.99"), ("34.8", "2.3", "0", True, "32.50"), ("2550", "46.084461", "0", False, "2,503.92"),
++       ("15.95", "0.3", "0", True, "15.65"), ("24.35", "0.500021", "99.99999376", False, "21.68"), ("58", "0", "50.00000791", False, "55.24"), ("41.4", "0", "30.43406242", True, "40.18")]
++
++
++def _run(expr, src=TOOLS):
++    return T._node(T.HELPERS + "\nconst window = {};\nconst App = { latest: %s, stockCache: {} };\n" % json.dumps(T.LATEST, ensure_ascii=False)
++                   + src + "\nconsole.log(JSON.stringify(%s));" % expr)
++
++
++def _st(**kw):
++    st = {"mk": "l", "k": "s", "p": "", "c": "", "s": "0", "n": "1000", "cost": "", "y1": ""}
++    st.update({k: str(v) for k, v in kw.items()})
++    return st
++
++
++def _out(sts, src=TOOLS, I=None):
++    return _run("[%s]" % ",".join("tlDvOut(%s, %s)" % (json.dumps(s, ensure_ascii=False), json.dumps(I, ensure_ascii=False)) for s in sts), src)
++
++
++def _ref(html):
++    return re.search(r'<th>除權息參考價</th><td class="num "><b class="tl-big">([\d,.]+)</b>', html).group(1)
++
++
++def _row(html, th):
++    m = re.search(r"<th>%s</th><td[^>]*>(.*?)</td></tr>" % re.escape(th), html)
++    return m and m.group(1)
++
++
++# ─── 參考價（驗收 1、2）──────────────────────────────────────
++def check_answers(src=TOOLS):
++    o = _out([_st(mk="l" if tw else "o", p=p, c=c, s=s) for p, c, s, tw, _ in ANS], src)
++    if o is None:
++        return []
++    return [(a, _ref(h)) for a, h in zip(ANS, o) if _ref(h) != a[4]]
++
++
++def test_answers():
++    assert check_answers() == []
++
++
++def _official_rows():
++    """本站每一筆除權息（股票 ev.r、ETF dv.r）：[市場, 種類, 前收, 現金, 配股, 官方參考價]；k = sc、上市只有合計 a 的略過。"""
++    lp = SITE / "data" / "latest.json"
++    if not lp.exists():
++        return None
++    rows = []
++    for d in ("stocks", "etfp"):
++        for f in sorted((SITE / "data" / d).glob("*.json")):
++            j = json.loads(f.read_text(encoding="utf-8"))
++            ev = {(e["d"], e["t"]): e.get("r") for e in j.get("ev") or []}
++            for x in j.get("dv") or []:
++                r = x.get("r", ev.get((x["d"], x["t"])))
++                if r is None or x.get("k") == "sc" or (x.get("c") is None and x.get("s") is None):
++                    continue
++                kind = "etf" if d == "etfp" else x["t"] == "息" and "息" or "權"
++                rows.append([j["market"], kind, repr(x["p"]), repr(x.get("c") or 0), repr(x.get("s") or 0), r])
++    return rows
++
++
++def check_official(src=TOOLS, rows=None):
++    rows = rows if rows is not None else _official_rows()
++    if not rows:
++        return []
++    js = "%s.map(r => Number(tlExRef(tlBig(r[2], 2), tlBig(r[3], 6), tlBig(r[4], 8), r[0] === 'TWSE')))" % json.dumps(rows)
++    o = _run(js, src)
++    if o is None:
++        return []
++    return [(r, v) for r, v in zip(rows, o) if v != round(r[5] * 100)]
++
++
++def test_official_all():
++    rows = _official_rows()
++    if rows is None:
++        print("  （沒有 site/data，略過）")
++        return
++    n = {}
++    for r in rows:
++        n[(r[0], r[1])] = n.get((r[0], r[1]), 0) + 1
++    assert n[("TWSE", "息")] > 500 and n[("TPEx", "息")] > 400 and n[("TPEx", "權")] > 30 and n[("TWSE", "etf")] + n[("TPEx", "etf")] > 800, n
++    assert n.get(("TWSE", "權"), 0) >= 1, n                                                          # 8908：上市配股四捨五入
++    bad = check_official(rows=rows)
++    assert bad == [], bad[:5]
++    print("  官方參考價全部相同：", sorted(n.items()))
++
++
++# ─── 漲跌停、股數、健保、殖利率（驗收 3～6）─────────────────────
++def test_limit_same_as_dt():
++    cases = [(p, k) for p in ("9.99", "10", "49.95", "50", "99.9", "100", "499.5", "500", "999", "1000", "4995", "5000") for k in ("s", "e")]
++    sts = [_st(p=p, c="0.01", k=k) for p, k in cases]
++    o = _out(sts)
++    if o is None:
++        return
++    for (p, k), h in zip(cases, o):
++        r = _ref(h).replace(",", "")
++        dt = _run("tlDtOut(%s, null, '2026-11-21')" % json.dumps({"mode": "g", "dir": "b", "k": k, "b": r, "s": "", "n": "1000", "ref": r, "d": "10", "m": "20"}))
++        m = re.search(r"漲停 ([\d,.]+)、跌停 ([\d,.]+)（參考價", dt)
++        assert _row(h, "下一交易日漲跌停") == f"漲停 {m.group(1)}、跌停 {m.group(2)}", (p, k)
++        assert ("國外成分、槓反 ETF" in h) == (k == "e")
++
++
++def _ref_frac(p, c, s, tw):
++    v = (Fraction(p) - Fraction(c)) / (1 + Fraction(s) / 1000) * 100
++    return (v.numerator // v.denominator) if tw and Fraction(s) == 0 else int(v + Fraction(1, 2))
++
++
++def check_random(src=TOOLS, N=200):
++    rnd, cases = random.Random(39), []
++    for _ in range(N):
++        p = f"{rnd.randint(100, 500000) / 100:.2f}"
++        c = f"{rnd.randint(0, 2000000) / 1e6:.6f}" if rnd.random() < .8 else "0"
++        s = f"{rnd.randint(0, 30000000000) / 1e8:.8f}" if rnd.random() < .4 or c == "0" else "0"
++        if Fraction(c) == 0 and Fraction(s) == 0:
++            s = "1.5"
++        if Fraction(c) >= Fraction(p):
++            c = "0.5"
++        cases.append((p, c, s, rnd.random() < .5, str(rnd.choice([1, 999, 1000, 1500, 12345, 1000000, 37]))))
++    o = _out([_st(mk="l" if tw else "o", p=p, c=c, s=s, n=n) for p, c, s, tw, n in cases], src)
++    if o is None:
++        return []
++    bad = []
++    for (p, c, s, tw, n), h in zip(cases, o):
++        r = _ref_frac(p, c, s, tw)
++        sh = int(n) * Fraction(s) / 1000
++        cash = int(int(n) * Fraction(c))
++        nhi = "未達 2 萬元，不扣" if cash < 20000 else f"{int(min(cash, 10 ** 7) * Fraction(211, 10000) + Fraction(1, 2)):,} 元（2.11%）"
++        after = int((int(n) + sh) * Fraction(r, 100) + int(n) * Fraction(c) + Fraction(1, 2))
++        want = [f"{r / 100:,.2f}", f"{cash:,} 元", nhi, f"{after:,} 元"]
++        got = [_ref(h), _row(h, "可領現金股利"), _row(h, "二代健保補充保費"), _row(h, "除權息後市值＋現金股利")]
++        if Fraction(s):
++            w, fr = int(sh), sh - int(sh)
++            want.append(f"{w:,} 股" + (f'<br><span class="small">另有不足 1 股 {_dec(fr)} 股</span>' if fr else ""))
++            got.append(_row(h, "配發股數"))
++        if want != got or BAD.search(h):
++            bad.append((p, c, s, tw, n, want, got))
++    return bad
++
++
++def _dec(fr):
++    """Fraction（分母整除 10^11）→ 去尾 0 的小數字串。"""
++    v = fr * 10 ** 11
++    assert v.denominator == 1
++    return ("0." + str(v.numerator).rjust(11, "0")).rstrip("0")
++
++
++def test_random_fraction():
++    """驗收 4：200 組隨機輸入，參考價、可領現金、配股、健保、權益和 Fraction 獨立重算相同。"""
++    bad = check_random()
++    assert bad == [], bad[:3]
++
++
++def check_shares_nhi(src=TOOLS):
++    o = _out([_st(mk="o", p="24.35", c="0.500021", s="99.99999376"), _st(p="100", c="19.999"), _st(p="100", c="20"),
++              _st(p="1000", c="10", n="1000000"), _st(p="1000", c="11", n="1000000"), _st(p="100", c="0", s="50")], src)
++    if o is None:
++        return []
++    want = [("配發股數", '99 股<br><span class="small">另有不足 1 股 0.99999376 股</span>'), ("可領現金股利", "500 元"), ("除權後股數", "1,099 股")]
++    bad = [(k, _row(o[0], k)) for k, v in want if _row(o[0], k) != v]
++    for h, v in zip(o[1:5], ("未達 2 萬元，不扣", "422 元（2.11%）", "211,000 元（2.11%）", "211,000 元（2.11%）")):
++        if _row(h, "二代健保補充保費") != v:
++            bad.append((v, _row(h, "二代健保補充保費")))
++    if _row(o[5], "二代健保補充保費") != "未達 2 萬元，不扣" or "本次現金股利" in o[5]:
++        bad.append("純配股")
++    for h in o:
++        if not all(w in h for w in ("同一基準日的股票股利以面額一起計入，本頁只算現金股利", "單次以 1,000 萬元為上限", "不足 1 股依公司公告折付現金")):
++            bad.append("說明")
++    return bad
++
++
++def test_shares_nhi():
++    """驗收 4、5：1,000 股 × 每千股 99.99999376 股；健保 19,999 不扣、20,000 → 422、上限 1,000 萬。"""
++    assert check_shares_nhi() == []
++
++
++def test_cost_yield():
++    o = _out([_st(p="50", c="2"), _st(p="50", c="2", cost="40"), _st(p="50", c="2", y1="3"), _st(p="50", c="2", cost="40", y1="3"), _st(p="50", c="2", cost="40", y1="0")])
++    if o is None:
++        return
++    assert all("成本殖利率" not in h for h in o[:3])
++    assert _row(o[3], "成本殖利率（近一年 ÷ 成本）") == "7.50%" and _row(o[4], "成本殖利率（近一年 ÷ 成本）") == "0.00%"
++    assert _row(o[0], "本次現金股利 ÷ 前收") == "4.00%"
++
++
++# ─── 驗證（驗收 7）──────────────────────────────────────────
++def test_validation():
++    bad = [(dict(p=""), "請輸入除權息前收盤"), (dict(p="0"), "請輸入除權息前收盤"), (dict(p="-5"), "請輸入除權息前收盤"), (dict(p="abc"), "請輸入除權息前收盤"),
++           (dict(p="10.123"), "請輸入除權息前收盤"), (dict(c="-1"), "現金股利請填 0 以上"), (dict(c="1.1234567"), "現金股利請填 0 以上"),
++           (dict(s="-1"), "每千股配股請填 0 以上"), (dict(n="0"), "持有股數請輸入正整數"), (dict(n="1.5"), "持有股數請輸入正整數"), (dict(n=""), "持有股數請輸入正整數"),
++           (dict(cost="0"), "持有成本請填大於 0"), (dict(cost="abc"), "持有成本請填大於 0"), (dict(y1="-1"), "近一年現金股利請填 0 以上"),
++           (dict(c="0", s="0"), "請輸入現金股利或配股"), (dict(c="", s=""), "請輸入現金股利或配股"), (dict(c="50"), "現金股利須小於除權息前收盤")]
++    base = dict(p="50", c="2")
++    o = _out([_st(**{**base, **kw}) for kw, _ in bad] + [_st(p="50", c="", s="100"), _st(p="1,000", c="1", n="1,000")])
++    if o is None:
++        return
++    for (kw, m), h in zip(bad, o):
++        assert m in h and "tl-kv" not in h and not BAD.search(h), (kw, h[:200])
++    assert _ref(o[-2]) == "45.45" and _ref(o[-1]) == "999.00"                                     # 現金空白 = 0；千分位可輸入
++
++
++# ─── 帶入（驗收 8、9）與路由（驗收 11）─────────────────────────
++DAYS = ["2026-11-19", "2026-11-20"]
++FIX = {
++    "2330": {"name": "台積電", "market": "TWSE", "prices": {"d": DAYS, "c": [1450.0, 1460.0]}, "fund": {"dy": 1.5},
++             "dv": [{"d": "2025-11-13", "t": "息", "c": 5.0, "p": 1450}, {"d": "2025-12-11", "t": "息", "c": 5.0, "p": 1500},
++                    {"d": "2026-03-12", "t": "息", "c": 5.000004, "p": 1800}, {"d": "2026-06-11", "t": "息", "c": 6.000035, "p": 2255.0},
++                    {"d": "2026-09-16", "t": "息", "c": 7.000001, "p": 2385.0}],
++             "ev": [{"d": "2026-09-16", "t": "息", "p": 2385.0, "r": 2377.99}]},
++    "2063": {"name": "世鎧", "market": "TPEx", "prices": {"d": DAYS, "c": [22.0, 22.5]},
++             "dv": [{"d": "2026-05-01", "t": "權", "k": "s", "c": 0.0, "s": 50.0, "p": 30.0},
++                    {"d": "2026-10-28", "t": "權息", "k": "s", "c": 0.500021, "s": 99.99999376, "p": 24.35}],
++             "ev": [{"d": "2026-10-28", "t": "權息", "p": 24.35, "r": 21.68, "k": "s"}]},
++    "5876": {"name": "上海商銀", "market": "TWSE", "prices": {"d": DAYS, "c": [46.0, 46.2]},
++             "dv": [{"d": "2026-01-10", "t": "息", "c": 1.2, "p": 45}, {"d": "2026-07-28", "t": "權息", "k": "s", "a": 2.247525, "p": 47.0}],
++             "ev": [{"d": "2026-07-28", "t": "權息", "k": "s", "p": 47.0, "r": 44.75}]},
++    "2464": {"name": "盟立", "market": "TWSE", "prices": {"d": DAYS, "c": [180.0, 181.0]},
++             "dv": [{"d": "2026-09-02", "t": "權息", "k": "sc", "a": 2.192145, "p": 184.5}]},
++    "1213": {"name": "大飲", "market": "TWSE", "prices": {"d": DAYS, "c": [10.0, 10.1]}},
++    "0056": {"name": "元大高股息", "market": "TWSE", "prices": {"d": DAYS, "c": [37.0, 37.2]},
++             "dv": [{"d": "2026-07-21", "t": "息", "c": 1.35, "p": 49.95, "r": 48.6}, {"d": "2026-10-22", "t": "息", "c": 1.72, "p": 58.75, "r": 57.03}]},
++    "006201": {"name": "元大富櫃50", "market": "TPEx", "prices": {"d": DAYS, "c": [30.0, 30.5]},
++               "dv": [{"d": "2026-11-18", "t": "息", "c": 0.4, "p": 31.0, "r": 30.6}]},
++}
++LATEST39 = {"date": "2026-11-20", "stocks": {k: {"n": v["name"]} for k, v in FIX.items() if k not in ("0056", "006201")},
++            "etfs": {"rows": {"0056": {"n": "元大高股息"}, "006201": {"n": "元大富櫃50"}}}}
++
++
++def check_load(src=TOOLS):
++    js = """
++const view = { innerHTML: '' }, els = {};
++const $ = s => s === '#view' ? view : (els[s] = els[s] || { innerHTML: '', classList: { add() {} }, addEventListener(t, f) { this[t] = f; } });
++const history = { replaceState() {} }, localStore = (k, f) => f, FIX = %s;
++const loadStock = async c => JSON.parse(JSON.stringify(FIX[c]));
++(async () => {
++  const r = {};
++  for (const c of Object.keys(FIX)) { TL.dv.cost = '99'; await window.renderTools('dv?c=' + c); r[c] = { html: view.innerHTML, dv: Object.assign({}, TL.dv), dt: Object.assign({}, TL.dt), pl: Object.assign({}, TL.pl), y: TL.cp.y }; }
++  console.log(JSON.stringify(r));
++})();""" % json.dumps(FIX, ensure_ascii=False)
++    o = T._node(T.HELPERS + "\nconst window = {};\nconst App = { latest: %s, stockCache: {} };\n" % json.dumps(LATEST39, ensure_ascii=False) + src + "\n" + js)
++    if o is None:
++        return []
++    want = {   # 代號：帶入值、要出現的提示
++        "2330": ({"mk": "l", "k": "s", "p": "1460", "c": "7.000001", "s": "0", "y1": "23.00004"},
++                 ["已帶入 09/16 的股利（最近一次），下次請依公司公告修改", "上次官方參考價 2,377.99（09/16，前收 2,385）", "近一年現金股利 = 11/20 以後 4 次合計"]),
++        "2063": ({"mk": "o", "k": "s", "p": "22.5", "c": "0.500021", "s": "99.99999376", "y1": "0.500021"}, ["已帶入 10/28 的股利", "上次官方參考價 21.68（10/28，前收 24.35）", "近一年現金股利 = 11/20 以後 1 次合計<"]),   # 純權不計
++        "5876": ({"mk": "l", "c": "", "s": "0", "y1": "1.2"},
++                 ["上市官方表只有 07/28 的權值＋息值合計 2.247525 元，請依公告填現金股利與配股", "上次官方參考價 44.75", "近一年現金股利 = 11/20 以後 1 次合計；部分缺值，請自行確認"]),
++        "2464": ({"mk": "l", "c": "", "s": "0", "y1": ""}, ["最近一次（09/02）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入", "11/20 以後的現金股利官方表沒有分項，請自行確認"]),
++        "1213": ({"mk": "l", "c": "", "s": "0", "y1": "", "p": "10.1"}, ["2026-11-19 起沒有除權息紀錄，請依公司公告填寫"]),
++        "0056": ({"mk": "l", "k": "e", "c": "1.72", "s": "0", "y1": "3.07", "p": "37.2"}, ["已帶入 10/22 的股利", "上次官方參考價 57.03（10/22，前收 58.75）"]),
++        "006201": ({"mk": "o", "k": "e", "c": "0.4", "y1": "0.4"}, ["上次官方參考價 30.6（11/18，前收 31）"]),
++    }
++    bad = []
++    for c, (st, hs) in want.items():
++        x = o[c]
++        bad += [(c, k, x["dv"][k]) for k, v in st.items() if x["dv"][k] != v]
++        bad += [(c, h) for h in hs if h not in x["html"]]
++        if "<h2>除權息試算</h2>" not in x["html"] or '<button data-v="dv" class="on">除權息</button>' not in x["html"] or BAD.search(x["html"]):
++            bad.append((c, "畫面"))
++        if x["dv"]["cost"] != "" or x["dv"]["n"] != "1000":
++            bad.append((c, "持有成本不帶入、換股票時清空"))                                          # D83-1 = A
++        p = x["dv"]["p"]                                                                           # 其他分頁帶入不變
++        if x["dt"]["b"] != p or x["dt"]["ref"] != p or x["pl"]["p1"] != p or x["dt"]["k"] != x["dv"]["k"]:
++            bad.append((c, "其他分頁"))
++    if o["2330"]["y"] != "1.5":
++        bad.append("cp.y")
++    return bad
++
++
++def test_load():
++    assert check_load() == []
++
++
++def test_route():
++    js = T._grab(APP, "esc") + "\n" + T._grab(APP, "scrollAt") + "\nlet scrollKey = null;\n" + T._grab(APP, "route") + r"""
++let hash = '', seen = [];
++const location = { get hash() { return hash; } };
++const history = { state: null, replaceState(s, t, u) { this.state = s; if (u) hash = u; } };
++const window = { scrollTo() {} };
++const document = { title: '', querySelectorAll: () => [] }, $ = () => null, App = {};
++const disposeFuturesChart = () => {}, renderToday = async () => {};
++const routes = { tools: async arg => { seen.push([arg, hash]); } };
++(async () => {
++  for (const h of ['#/tools/dv', '#/tools/dv?c=2330', '#/tools/dvx', '#/tools/dv/x?c=0056'])
++    { hash = h; history.state = null; await route(); }
++  console.log(JSON.stringify(seen));
++})();"""
++    o = T._node(js)
++    if o is None:
++        return
++    assert o == [["dv", "#/tools/dv"], ["dv?c=2330", "#/tools/dv?c=2330"], ["dt", "#/tools/dt"], ["dt?c=0056", "#/tools/dt?c=0056"]], o   # 不認得的照第 34 輪補成 dt（保留 ?c=）
++    assert "onSeg('toolTabSeg', t => { history.replaceState(null, '', '#/tools/' + t + (TL.code ? '?c=' + TL.code : '')); tlDraw(t); });" in TOOLS   # 切分頁保留 ?c=
++
++
++# ─── 卡片連結（驗收 10）、既有不變（驗收 12）──────────────────────
++def test_card_link():
++    assert hashlib.sha1(T._grab(STK, "divHTML").encode()).hexdigest()[:12] == "ce48816af767"                   # 卡片字面不變
++    i = STK.index("const dvh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '配息與填息' : '股利與填息'))[0];")
++    assert STK.index("ptab.insertAdjacentHTML('beforeend'") < i
++    assert "if (dvh) dvh.insertAdjacentHTML('afterend', `<span class=\"sp\"></span><a class=\"small dv-go\" href=\"#/tools/dv?c=${code}\">試算 →</a>`);" in STK
++    js = """
++const h = { textContent: '%s', html: '', insertAdjacentHTML(p, s) { this.html += p + s; } }, other = { textContent: '季報', insertAdjacentHTML() { throw 1; } };
++const document = { querySelectorAll: () => [other, h] }, code = '2330';
++for (const E of [%s]) { %s }
++console.log(JSON.stringify(h.html));"""
++    lines = "\n".join(STK[i:].splitlines()[:2])
++    for title, E in (("股利與填息", "false"), ("配息與填息", "true")):
++        o = T._node(js % (title, E, lines))
++        if o is None:
++            return
++        assert o == 'afterend<span class="sp"></span><a class="small dv-go" href="#/tools/dv?c=2330">試算 →</a>', o
++
++
++LOCK = {"tlInfo": "360bb4f2bff7", "tlDtOut": "cc4e8edb6ce4", "tlCpOut": "c6db343e01c3", "tlPlOut": "33b2e3009b0c", "tlDtForm": "d267f7c32afa",
++        "tlCpForm": "5826c3388754", "tlPlForm": "bfdf0335b02c", "tlLimit": "8e0b8894bb56", "tlDraw": "eb9b1465b1a1", "tlTrade": "a1601f39951f", "tlPledge": "08b656bbdbf8"}
++
++
++def test_unchanged_and_wiring():
++    for n, h in LOCK.items():
++        assert hashlib.sha1(T._grab(TOOLS, n).encode()).hexdigest()[:12] == h, n                                 # 第 34、38 輪的函式一字不改
++    for f in ("tools.js", "app.js", "stock.js", "app.css"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
++    assert HTML.count("https://") == 2 and "http" not in TOOLS and "fetch(" not in TOOLS
++    assert "@media (max-width:520px){.tl-odv .tl-kv,.tl-odv .tl-kv tbody{display:block}" in CSS and ".tl-odv .tl-kv td{flex:1 1 auto;white-space:nowrap}}" in CSS   # 驗收 13
++    assert "if (tl && !['dt', 'cp', 'pl', 'dv'].includes(tl[1]))" in APP
++    seg = "".join(T._grab(TOOLS, n) for n in ("tlExRef", "tlBig", "tlDec", "tlDvOut", "tlDvForm", "tlDvLoad", "tlLoad"))
++    for w in (".at(", "??", "?.", "||=", "&&=", "replaceAll", "structuredClone", "Object.hasOwn", "findLast", "Number.parseFloat(", "parseFloat("):
++        assert w not in seg, w                                                                                   # node 14、不用浮點解析
++
++
++def test_no_advice_words():
++    seg = "".join(T._grab(TOOLS, n) for n in ("tlDvOut", "tlDvForm", "tlDvLoad")) + "".join(l for l in STK.splitlines() if "dv-go" in l or "第 39 輪" in l)
++    o = _out([_st(p="50", c="2", cost="40", y1="3"), _st(p="50", c="0", s="100", k="e", mk="o")])
++    seg += "".join(o or [])
++    for w in ADVICE:
++        assert w not in seg, w
++
++
++# ─── 反證（驗收 17）：改壞後上面的檢查要失敗 ─────────────────────
++MUTANTS = [
++    ("參考價一律四捨五入", [("return tw && !S ? num / den :", "return false ? num / den :")], check_answers),
++    ("參考價一律捨去", [("return tw && !S ? num / den :", "return true ? num / den :")], check_answers),
++    ("改用浮點相減", [("  return tw && !S ? num / den : (2n * num + den) / (2n * den);",
++                    "  const f = (Number(P) / 100 - Number(C) / 1e6) / (1 + Number(S) / 1e11) * 100; return BigInt(tw && !S ? Math.floor(f) : Math.round(f));")], check_answers),
++    ("改用浮點相減（全量）", [("  return tw && !S ? num / den : (2n * num + den) / (2n * den);",
++                    "  const f = (Number(P) / 100 - Number(C) / 1e6) / (1 + Number(S) / 1e11) * 100; return BigInt(tw && !S ? Math.floor(f) : Math.round(f));")], check_official),
++    ("配股不除 1,000", [("den = (10n ** 11n + S) * 10000n", "den = (10n ** 8n + S) * 10000n")], check_answers),
++    ("健保門檻改 > 20,000", [("cash >= 20000n ?", "cash > 20000n ?")], check_shares_nhi),
++    ("健保沒有上限", [("(cash < 10000000n ? cash : 10000000n)", "cash")], check_shares_nhi),
++    ("健保改捨去", [("* 211n + 5000n) / 10000n", "* 211n) / 10000n")], check_random),
++    ("可領現金四捨五入", [("cash = n * C / 1000000n", "cash = (n * C + 500000n) / 1000000n")], check_random),
++    ("上市權息合計當現金", [("else if (tw && x.c == null && x.a != null) h.push(", "else if (false) h.push("),
++                        ("o.c = x.c != null ? String(x.c) : '0'", "o.c = String(x.c != null ? x.c : x.a || 0)")], check_load),
++    ("近一年包含純權", [("(v.t === '息' || v.t === '權息')", "v.t")], check_load),
++    ("沒寫最近一次", [("的股利（最近一次），下次請依公司公告修改", "的股利")], check_load),
++    ("帶入持有成本", [("Object.assign(TL.dv, o, { p: c, k: E ? 'e' : 's' });", "Object.assign(TL.dv, o, { p: c, cost: c, k: E ? 'e' : 's' });")], check_load),
++    ("換股票沿用持有成本", [("y1: '', cost: '' }, h = [];", "y1: '' }, h = [];")], check_load),
++    ("拿掉面額說明", [("同一基準日的股票股利以面額一起計入，本頁只算現金股利。", "本頁只算現金股利。")], check_shares_nhi),
++]
++
++
++def test_contrast():
++    if T._node("console.log('1')") is None:
++        return
++    for name, reps, check in MUTANTS:
++        src = TOOLS
++        for a, b in reps:
++            assert src.count(a) == 1, (name, a)
++            src = src.replace(a, b)
++        try:
++            fails = check(src)
++        except Exception as e:                                                                             # 改壞到執行失敗也算擋下
++            fails = [repr(e)]
++        assert fails, "反證沒有擋下：" + name
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")

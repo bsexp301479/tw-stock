@@ -76,7 +76,7 @@ async function route() {
   const share = location.hash.match(/^#\/watch\?add=([^&#]*)/);   // 第 32 輪 F32-2：分享連結先記下代號、網址換回 #/watch（重新整理不會再問）
   if (share) { App.watchAdd = share[1].split(','); history.replaceState(history.state, '', '#/watch'); }
   const tl = location.hash.match(/^#\/tools(?:\/([^?]*))?(\?.*)?$/);   // 第 34 輪：#/tools、#/tools?c=、不認得的分頁補成 #/tools/dt（保留 ?c=）
-  if (tl && !['dt', 'cp', 'pl'].includes(tl[1])) history.replaceState(history.state, '', '#/tools/dt' + (tl[2] || ''));
+  if (tl && !['dt', 'cp', 'pl', 'dv'].includes(tl[1])) history.replaceState(history.state, '', '#/tools/dt' + (tl[2] || ''));
   const [, page = 'today', arg, sub] = location.hash.split('/');
   const k = history.state?.k;
   scrollKey = null;                                                     // 換頁中（內容長度改變）的捲動不記
@@ -120,7 +120,7 @@ function stickHeads() {
 // ─── 搜尋 ───────────────────────────────────────────────
 function setupSearch() {
   const input = $('#q'), list = $('#qList');
-  let hits = [], active = 0;
+  let hits = [], active = -1;
   const go = code => { list.hidden = true; input.value = ''; input.blur(); location.hash = '#/stock/' + code; };
   const draw = () => {
     list.innerHTML = hits.map(([c, s], i) =>
@@ -139,14 +139,20 @@ function setupSearch() {
     const pick = all => { const rest = all.filter(([c]) => !c.toLowerCase().startsWith(q));   // 代號轉小寫：00981A
       return all.filter(([c]) => c.toLowerCase().startsWith(q)).concat(rest.filter(([, s]) => nm(s).startsWith(q)).sort(byTv), rest.filter(([, s]) => !nm(s).startsWith(q) && nm(s).includes(q)).sort(byTv)); };
     hits = pick(Object.entries(App.latest.stocks)).concat(pick(Object.entries(App.latest.etfs?.rows || {}))).slice(0, 12);
-    active = 0;
+    active = -1;                                                        // 第 39 輪：預設不選取；Enter 要先用方向鍵選到，或輸入完整代號
     draw();
   });
   input.addEventListener('keydown', e => {
+    if (e.isComposing || e.keyCode === 229) return;                     // 第 39 輪：注音、倉頡選字中的 Enter 不送出
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      active = (active + (e.key === 'ArrowDown' ? 1 : hits.length - 1)) % Math.max(hits.length, 1);
+      const n = hits.length;
+      if (n) active = e.key === 'ArrowDown' ? (active + 1) % n : (active <= 0 ? n : active) - 1;
       draw(); e.preventDefault();
-    } else if (e.key === 'Enter' && hits[active]) go(hits[active][0]);
+    } else if (e.key === 'Enter') {                                   // 第 39 輪：選到候選，或輸入的就是某檔完整代號，才送出
+      e.preventDefault();
+      const q = input.value.trim().toLowerCase(), h = hits[active] || hits.filter(([c]) => c.toLowerCase() === q)[0];
+      if (h) go(h[0]);
+    }
     else if (e.key === 'Escape') { list.hidden = true; input.blur(); }
   });
   list.addEventListener('click', e => {

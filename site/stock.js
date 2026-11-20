@@ -338,6 +338,8 @@ window.renderStock = async function (code, sub) {
   ptab.insertAdjacentHTML('beforeend', `<span class="pt-nm">${esc(data.name)} <b class="num ${cls(change)}">${pfmt(close)}</b>${noTrade || pct == null ? '' : ` <span class="num ${cls(change)}">${sgn(pct)}%</span>`}</span>`);
   new IntersectionObserver(([e]) => ptab.classList.toggle('stuck', !e.isIntersecting), { rootMargin: `-${topH()}px 0px 0px 0px` }).observe($('#view .s-head'));
   if (App.ptStuck) { App.ptStuck = false; ptab.style.position = 'static'; const y = ptab.getBoundingClientRect().top + scrollY; ptab.style.position = ''; scrollTo(0, y - topH()); }   // 固定狀態換分頁：新分頁從分頁列下方開始
+  const dvh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '配息與填息' : '股利與填息'))[0];   // 第 39 輪 F39-3：連結加在 divHTML 外，卡片字面不變
+  if (dvh) dvh.insertAdjacentHTML('afterend', `<span class="sp"></span><a class="small dv-go" href="#/tools/dv?c=${code}">試算 →</a>`);
   onSeg('stockTabSeg', v => { App.ptStuck = $('#view .s-head').getBoundingClientRect().bottom <= topH(); localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
   $('#hlMore')?.addEventListener('click', e => e.currentTarget.parentElement.classList.add('open'));
   $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });
