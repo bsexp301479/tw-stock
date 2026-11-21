@@ -115,7 +115,8 @@ function renderBand(data, k) {
     T.push(d); C.push(P.c[i]); E.push(B.s[j][1]); });
   const lc = P.c.filter(x => x != null), close = lc[lc.length - 1], V = (data.val || {})[k];
   const pos = !V ? '' : f[k] <= V[1] ? '（近一年最低）' : f[k] >= V[2] ? '（近一年最高）' : `（近一年第 ${V[0]} 百分位）`;   // 和頁首一年位置同一個數字
-  const ex = [B.s.some(x => x[1] == null) ? `線斷開 = 當時${k === 'pe' ? '近 4 季 EPS ≤ 0，官方不計算本益比' : '官方沒有淨值比'}` : '',
+  const ex = [k === 'pe' ? '本卡的 EPS 由官方本益比反推（收盤 ÷ 本益比），和季報卡的近 4 季 EPS（財報累計相減）算法不同，數字可能略有差異。' : '',   // 第 42 輪 F42-6（D109 = A）
+    B.s.some(x => x[1] == null) ? `線斷開 = 當時${k === 'pe' ? '近 4 季 EPS ≤ 0，官方不計算本益比' : '官方沒有淨值比'}` : '',
     data.industry === '金融保險' ? '金融業獲利受利率、匯率影響較大，常搭配淨值比觀察' : '', k === 'pe' && f.pe > 100 ? 'EPS 很小時本益比會很大，倍數線間距很寬' : ''];
   const lg = B.k.map((x, i) => `<span class="lg"><i class="${BAND_STY[i][0] ? 'dash' : BAND_STY[i][1] > 1 ? 'mid' : ''}"></i>第 ${BAND_PCT[i]} 百分位 ${fmt(x, 2)} 倍</span>`).reverse().join('');
   const short = '倍數是用近一年的資料算的，不代表股價會回到某條線';                      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
@@ -158,8 +159,20 @@ const ETF_NOTE = m => { const short = `價格未還原除息：配息 ETF 在除
 // 第 25 輪 D25-05：產業鏈、概念股標籤只顯示前 2 個，其餘收在「+N」（點了展開，展開後按「收合」收回）
 // 第 27 輪 D27-07：融資融券子圖一次只畫一條線（右側刻度就是這條線）；借券只在有資料時可選
 const mgView = G => { const v = localStore('mgv', 'mb'); return v === 'sb' || (v === 'lb' && G?.lb) ? v : 'mb'; };
+// 第 42 輪 F42-3：產業、產業鏈、概念股標籤點了跳泡泡圖並展開該族群；名稱不在 groups 時維持原本不可點的 <span>
+const GRP_NM = { industry: '類股', concept: '概念股' };
+function grpTag(gk, gn, txt, t0 = '') {
+  const c = gk === 'chain' ? 'pill chain' : 'pill';
+  if (!(App.latest.groups && App.latest.groups[gk] || []).some(g => g.name === gn)) return `<span class="${c}"${t0 ? ` title="${t0}"` : ''}>${txt}</span>`;
+  return `<a class="${c} grp" href="#/bubble" data-gk="${gk}" data-gn="${esc(gn)}" title="${gk === 'chain' ? `${t0}（點了看泡泡圖「${esc(gn)}」整條產業鏈）` : `看泡泡圖「${esc(gn)}」${GRP_NM[gk]}`}">${txt}</a>`;
+}
 const tagFold = t => t.slice(0, 2).join('') + (t.length > 2 ? `<span class="tag-rest" hidden>${t.slice(2).join('')}</span><button class="pill more" id="tagMore" data-n="+${t.length - 2}">+${t.length - 2}</button>` : '');
 
+// 第 42 輪 F42-4：ETF 頁頭的配息、成交額卡（數字同 ETF 列表，來源 latest.json 的 etfs.rows；近一年配息為 0 或沒有時不顯示配息三張）
+const etfCards = E => [...E.dvc ? [['近一年配息', E.dvc.toLocaleString('zh-TW', { maximumFractionDigits: 4 }) + ' 元', '', '每單位，近 365 天合計'],
+    ['配息率', E.c > 0 ? fmt(E.dvc / E.c * 100, 2) + '%' : '--', '', E.c > 0 ? '近一年配息 ÷ 今日收盤；股價下跌時會變高' : '今天無成交'],
+    ['最近除息', E.dvd ? md(E.dvd) : '--', '', E.dvd ? (E.dvn != null ? E.dvn + ' 天填息' : E.dvx ? '中斷' : '未填息') : '']] : [],
+  ['成交額', E.tv == null ? '--' : fmt(E.tv, 2) + ' 億', '', '當日']];
 const cardsHTML = a => a.map(([l, v, c, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num ${v === '0億' ? 'flat' : c || ''}" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('');
 // 第 28 輪 D28-01：籌碼分頁的圖表區間（只在這次瀏覽記住，不存 localStorage）；第 29 輪 F29-3：預設改 20 個交易日
 const CHIP_N = [['20', '20 日'], ['60', '60 日'], ['120', '120 日'], ['all', '全部']];
@@ -230,7 +243,7 @@ window.renderStock = async function (code, sub) {
   const SL = data.sbl;
   // 第 12 輪 B11：市值、週轉率（目前股數）
   const MT = data.mt, mcTxt = v => v >= 1e4 ? fmt(v / 1e4, 2) + ' 兆' : fmt(v, v >= 100 ? 0 : 1) + ' 億';
-  const mtCards = E ? [] : [['市值', MT?.mc == null ? '--' : mcTxt(MT.mc), '', MT ? '收盤 × 目前發行股數' : '沒有發行股數資料'],
+  const mtCards = E ? etfCards(E) : [['市值', MT?.mc == null ? '--' : mcTxt(MT.mc), '', MT ? '收盤 × 目前發行股數' : '沒有發行股數資料'],
     ['週轉率', MT?.to == null ? '--' : fmt(MT.to, 2) + '%', '', MT ? `${MT.d !== P.d[last] ? md(MT.d) + '，' : ''}成交股數 ÷ 目前發行股數` : '沒有發行股數資料']];
   const slCards = !SL ? [] : [['借券賣出餘額', fmt(SL.lb) + ' 張', '', subs(`1日 ${sgn(SL.l1, 0)}　5日 ${SL.l5 == null ? '--' : sgn(SL.l5, 0)}`, !E && runTxt(balStreak(data.mg, P.d, 'lb', SL.d), '增', '減'))],
     ...E ? [] : [['借券占股本', SL.lp == null ? '--' : fmt(SL.lp, 2) + '%', '', SL.lx == null ? '' : `融券的 ${fmt(SL.lx, 1)} 倍`]]];
@@ -276,10 +289,11 @@ window.renderStock = async function (code, sub) {
             ${(data.alerts || []).map(a => a.t === 'disposal'
               ? `<span class="pill al-d" title="${esc(`處置期間 ${md(a.s)}～${md(a.e)}（${md(a.a)} 公告）\n原因：${a.r || '--'}\n措施：${a.m || '--'}`)}">${a.s > App.latest.date ? `即將處置（${md(a.s)} 起）` : `處置中（至 ${md(a.e)}）`}</span>`
               : `<span class="pill al-n" title="${esc(`${md(a.a)} 公布注意交易資訊\n${a.r || ''}`)}">注意</span>`).join('')}
-            <span class="pill">${data.market === 'TWSE' ? '上市' : '上櫃'}</span><span class="pill">${E ? 'ETF' : esc(data.industry)}</span>
+            <span class="pill">${data.market === 'TWSE' ? '上市' : '上櫃'}</span>${E ? '<span class="pill">ETF</span>' : grpTag('industry', data.industry, esc(data.industry))}
             ${E && App.latest.holdings?.[code] ? `<a class="pill hold" href="#/etf/${code}">持股 →</a>` : ''}
-            ${tagFold([...(data.chains || []).map(([chain, seg, subs]) => `<span class="pill chain" title="${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}">${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}</span>`),
-            ...(data.concepts || []).map(c => `<span class="pill">${esc(c)}</span>`)])}
+            ${tagFold([...(data.chains || []).map(([chain, seg, subs]) => grpTag('chain', chain, `${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}`,
+              `${esc(chain)} › ${esc(seg)}${subs.length ? '：' + esc(subs.join('、')) : ''}`)),
+            ...(data.concepts || []).map(c => grpTag('concept', c, esc(c)))])}
             <span class="muted small">${noTrade ? `${P.d[last]} 無成交，顯示 ${P.d[lt]} 收盤` : `${P.d[last]} 收盤`}</span>
             ${dvLast ? `<span class="muted small">今天除息，每單位配息 ${dfmt(dvLast.c)} 元，除息前收盤 ${pfmt(dvLast.p)}</span>` : ''}
           </div>
@@ -350,6 +364,8 @@ window.renderStock = async function (code, sub) {
   onSeg('stockTabSeg', v => { App.ptStuck = $('#view .s-head').getBoundingClientRect().bottom <= topH(); localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
   $('#hlMore')?.addEventListener('click', e => e.currentTarget.parentElement.classList.add('open'));
   $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });
+  $('#view .tags').addEventListener('click', e => { const a = e.target.closest('a[data-gk]');   // 第 42 輪 F42-3：切到該分組、展開該族群，再由連結跳 #/bubble
+    if (a) { setGroup(a.dataset.gk); localStore('focus', null, a.dataset.gn); Object.assign(App, { blOpen: a.dataset.gn, blAll: false, blJump: 1 }); } });
   $('#starBtn')?.addEventListener('click', () => {
     App.watch.has(code) ? App.watch.delete(code) : App.watch.add(code);
     saveWatch();
