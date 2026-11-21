@@ -24,7 +24,7 @@ from . import db
 from .analysis.flow import LONG, group_flows, load_concepts, streak
 from .analysis.forecast import build_forecast, load_oi
 from .config import SITE_DATA_DIR, tw_now
-from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, prev_quarter
+from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, load_state, prev_quarter
 from .tradingcal import is_trading_day, load_closed, trading_days
 
 REPLAY = 20                    # 泡泡圖回放天數
@@ -863,6 +863,31 @@ def etf_gaps(d_, c, ch, market):
             and abs(float(c[i]) - float(ch[i]) - float(c[i - 1])) >= 0.005]
 
 
+def _num(v):
+    """DECIMAL → JSON 數字，去掉尾端 0（2.60000000 → 2.6、7.00000000 → 7）。"""
+    x = float(v)
+    return int(x) if x.is_integer() else x
+
+
+def notice_export(rows, on, today) -> tuple:
+    """
+    第 40 輪 F40-2：除權除息預告 → ({股票代號: nx}, {ETF 代號: nx})，nx 依除權息日舊到新。
+    rows = (code, market, is_etf, ex_date, event_type, cash_div, stock_ratio, sub_ratio, sub_price, last_seen)；
+    on = {市場: 最近一次成功的抓取日}（load_state 的 notices）。只取 last_seen = 該市場 on、且除權息日 > today（資料日）的列：
+    某市場這晚失敗就沿用上次快照；預告改日期時舊列的 last_seen 停在舊日，不再匯出；到了除權息日改看 dv／ev。
+    c：每股現金（None = 待公告）；s：每千股配股 = 配股率 × 1,000（> 0 才有）；sr、sp：現增配股率與認購價（sr > 0 才有，sp 可為 None）。
+    """
+    out = ({}, {})
+    for code, market, is_etf, d, t, cash, ratio, sub, price, seen in sorted(rows, key=lambda r: (r[0], r[3])):
+        if d <= today or market not in on or seen != on[market]:
+            continue
+        x = {"d": str(d), "t": t, "c": None if cash is None else _num(cash),
+             **({"s": _num(ratio * 1000)} if ratio else {}),
+             **({"sr": _num(sub), "sp": None if price is None else _num(price)} if sub else {})}
+        out[bool(is_etf)].setdefault(code, []).append(x)
+    return out
+
+
 def etf_export(code, name, market, rows, mrows, srows, mdate, md5, sdate, sd5, events=()):
     """
     etfp/{代號}.json。prices 同個股格式（原始價；量為張；ch = 官方漲跌，推測調整日且官方為 0 → null「不比價」）；
@@ -1624,7 +1649,11 @@ def export_all() -> float:
     # 寬度輸出 BREADTH_DAYS 天，前面多 60 天給 MA60
     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
     p_days = sorted({r[0] for rows in prices.values() for r in rows})   # 第 23 輪 F23-1：完整交易日序列（b_days 只有 120 天，120 日要第 121 天）
-    status = build_status(cur, latest_date, now)
+    state = load_state(cur)
+    status = build_status(cur, latest_date, now, state)
+    nx_stock, nx_etf = notice_export(cur.execute("""
+        SELECT code, market, is_etf, ex_date, event_type, cash_div, stock_ratio, sub_ratio, sub_price, last_seen
+        FROM dividend_notices WHERE ex_date > ?""", latest_date).fetchall(), {m: d for m, (d, _) in state["notices"].items()}, latest_date)   # 第 40 輪 F40-2
     valuation, stock_val, val_date, stock_band = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe；第 37 輪加河流圖
     fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
@@ -1735,6 +1764,7 @@ def export_all() -> float:
             **({"pf": stock_perf(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))], p_days,
                                  idx_close[info["market"]], w52_start)} if d_[-1] == latest_date and any(x is not None for x in c) else {}),
             "dv": dividends(d_, c, ev, events.get(code, [])),      # 第 24 輪 F24-6：股利與填息（沒有紀錄是 []）
+            **({"nx": nx_stock[code]} if code in nx_stock else {}),     # 第 40 輪 F40-2：下一次除權除息預告
         })
         # 市場寬度：還原收盤（無成交日不列入）、成交額
         b_series[info["market"]].append({d_[i]: float(c[i]) * af[i] for i in range(len(d_)) if d_[i] >= b_from and c[i] is not None})
@@ -1845,6 +1875,8 @@ def export_all() -> float:
             p = SITE_DATA_DIR / "etfp" / f"{code}.json"
             E = etf_export(code, name, m, epx[code], emg.get(code, {}), esb.get(code, {}), mlast.get(m), m5.get(m),
                            ds[-1] if ds else None, ds[-6] if len(ds) >= 6 else None, eev.get(code, ()))
+            if code in nx_etf:
+                E["nx"] = nx_etf[code]                         # 第 40 輪 F40-2：下一次除權除息預告（放在最後；沒有就不輸出）
             _write(p, E)
             edv[code] = etf_div_row(E.get("dv", []), latest_date)
             n_etf, kb_etf = n_etf + 1, kb_etf + p.stat().st_size / 1024

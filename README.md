@@ -37,7 +37,7 @@
    - Mac：`bash scripts/mac/setup.sh`
    - Windows：雙擊 `scripts\windows\setup.bat`
 
-更新程式後若有新增資料表（例如第 1 輪的 `market_index`、`stock_alerts`，第 2 輪的 `price_events`、`insti_amount`，第 3 輪的 `collect_runs`、`market_holidays`，第 4 輪的 `etfs`、`etf_daily`、`margin_trades`、`etf_margin`、`margin_market`，第 5 輪的 `etf_holdings`、`etf_holding_summary`、`market_breadth`，第 6 輪的 `etf_holding_gaps`，第 10 輪的 `quarterly_financials`，第 11 輪的 `sbl_trades`、`etf_sbl` 與 `stocks.shares` 欄，第 19 輪的 `price_events.div_ref` 欄，第 24 輪的 `etf_events` 與 `price_events.div_total`、`div_cash`、`stock_div` 欄，第 29 輪的 `foreign_holdings`），請再執行一次 `python -m twstock setup-db`（可重複執行，不影響既有資料），否則 `collect`、`check`、`export` 會失敗。第 9 輪：`insti_amount` 加 `market` 欄（既有列為 `TWSE`），唯一鍵改成 `(trade_date, market, unit)`；`setup-db` 可重複執行，改表前請先 `backup`，改表後不可再執行舊版程式。
+更新程式後若有新增資料表（例如第 1 輪的 `market_index`、`stock_alerts`，第 2 輪的 `price_events`、`insti_amount`，第 3 輪的 `collect_runs`、`market_holidays`，第 4 輪的 `etfs`、`etf_daily`、`margin_trades`、`etf_margin`、`margin_market`，第 5 輪的 `etf_holdings`、`etf_holding_summary`、`market_breadth`，第 6 輪的 `etf_holding_gaps`，第 10 輪的 `quarterly_financials`，第 11 輪的 `sbl_trades`、`etf_sbl` 與 `stocks.shares` 欄，第 19 輪的 `price_events.div_ref` 欄，第 24 輪的 `etf_events` 與 `price_events.div_total`、`div_cash`、`stock_div` 欄，第 29 輪的 `foreign_holdings`，第 40 輪的 `dividend_notices`），請再執行一次 `python -m twstock setup-db`（可重複執行，不影響既有資料），否則 `collect`、`check`、`export` 會失敗。第 9 輪：`insti_amount` 加 `market` 欄（既有列為 `TWSE`），唯一鍵改成 `(trade_date, market, unit)`；`setup-db` 可重複執行，改表前請先 `backup`，改表後不可再執行舊版程式。
 
 ## 日常使用
 
@@ -48,7 +48,7 @@ python -m twstock collect --catch-up             # 補齊最近 10 個交易日�
 python -m twstock collect --catch-up --days 20   # 回溯 20 個交易日（上限 30，更早用 history）
 python -m twstock collect                        # 今天全部重抓覆寫（含指數、台指期、處置／注意股、除權息事件、三大法人金額（上市、上櫃））並匯出網站 JSON
 python -m twstock collect --date 2026-10-28      # 指定日期全部重抓覆寫；也用來復原被誤判的臨時休市
-python -m twstock check                          # 檢查近 20 個交易日各資料集的完整性（唯讀、不連外）；開頭列最後一次收集與排程狀態；有異常時印建議指令並回傳 1（--days 至少 1）。第 24 輪起另列除權息事件最後成功的時間與筆數（股票、ETF）、最後一次收集的警告（只顯示，不算異常）
+python -m twstock check                          # 檢查近 20 個交易日各資料集的完整性（唯讀、不連外）；開頭列最後一次收集與排程狀態；有異常時印建議指令並回傳 1（--days 至少 1）。第 24 輪起另列除權息事件最後成功的時間與筆數（股票、ETF）、最後一次收集的警告（只顯示，不算異常）。第 40 輪起另列除權除息預告最後成功的日期與筆數（上市、上櫃各自；3 個交易日以上沒有更新加 ⚠️，只顯示，不算異常）
 python -m twstock history --start 2026-01-02     # 補抓歷史（行情、本益比、法人、ETF、融資融券），只補缺的，可中斷重跑
 python -m twstock history --start 2025-10-30 --only etf margin   # 只補 ETF 行情與融資融券（同一天 ETF 先於融資融券；一年約 976 個請求、40 分鐘）
 python -m twstock history --start 2025-10-30 --only holdings   # 只補主動型 ETF 持股（統一、群益投信 8 檔；上市日之前自動略過；一年約 1,250 個請求、1～2 小時：群益偶爾逾時重試，第 7 輪實測群益 596 次花 52 分鐘）
@@ -82,6 +82,7 @@ python3 tests/test_iter10.py                     # 第 10 輪測試
 python3 tests/test_iter34.py                     # 第 34 輪測試（試算工具）
 python3 tests/test_iter38.py                     # 第 38 輪測試（工具頁文字、零股提示、複利成長圖）
 python3 tests/test_iter39.py                     # 第 39 輪測試（除權息試算）
+python3 tests/test_iter40.py                     # 第 40 輪測試（除權除息預告）
 ```
 
 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
@@ -140,6 +141,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker 
 - 個股頁河流圖（第 37 輪，「基本面」分頁一年位置說明之下、月營收／季報之前；`stocks/{代號}.json` 的 `band` = `{d, pe|pb: {s: [[起日, 值|null], …], k: [5 個倍數], n}}`）：和 `val` 同一個窗口與查詢。`s` 是「原始收盤 ÷ 官方本益比（淨值比）」反推的近 4 季 EPS（每股淨值）階梯，4 位有效數字；官方值空或 ≤ 0 是 `null` 段（畫面斷線），無成交日沿用前一段，和這一段相差超過 max(0.5%, 0.012 ÷ 官方值) 才開新段，超過 24 段不輸出；`k` = 窗口內官方值的第 10／25／50／75／90 百分位（最近序位法）；有效天數 < 120 不輸出該指標，90 天內股本變動不輸出 `band`。畫面是原始收盤＋5 條倍數線（不塗色），可切換本益比／淨值比，今天沒有本益比時預設淨值比；只描述股價和獲利（淨值）的關係，倍數用近一年資料算，不是股價的評價。
 - 工具頁（第 38 輪）：三個工具的標籤縮短到 1024／375 寬一行放得下（折扣標籤「手續費折扣（折）」，「不打折 = 10」放在 placeholder），說明文字縮短、免責與規則出處用語保留；折扣驗證訊息改成和程式一致（大於 0、最多 10、小數最多 2 位）；非當沖、股數不是 1,000 的倍數且最低手續費 20 元時提示「零股多數券商每筆最低 1 元」，不自動改值；交易成本、複利結果表在 520px 以下整列換行。複利結果加逐年成長圖（純 SVG，第 0～n 年：期末金額實線、累計投入虛線，開股利時加另一種股利處理方式的點線對照；只畫線不塗色，顏色用 CSS 變數，數字都在圖下圖例，和摘要表同一格式）。
 - 除權息試算（第 39 輪）：工具頁第 4 個分頁 `#/tools/dv`，算除權息參考價（上市除息捨去、上市有配股與上櫃四捨五入到 0.01，整數運算；和本站近一年官方參考價全部相同，`k = sc` 現金增資不適用）、下一交易日漲跌停、可領現金（元以下捨去）、配股與不足 1 股、二代健保補充保費（只算現金，2.11%、單次上限 1,000 萬元）、本次現金股利 ÷ 前收、成本殖利率。`?c=代號` 帶入最新收盤與最近一次股利、上次官方參考價、近一年現金股利合計；上市「權息」只有權值＋息值合計，不帶入現金與配股。個股「股利與填息」、ETF「配息與填息」卡標題列有「試算 →」連結（在 `renderStock` 加在卡片外，`divHTML` 輸出不變）。持有成本不帶入、換股票時清空。
+- 除權除息預告（第 40 輪，資料表 `dividend_notices`）：上市取自證交所 `TWT48U`（除權除息預告表）、上櫃取自櫃買 OpenAPI `tpex_exright_prepost`，兩個來源都只有當下快照（不能回補）。`collect --catch-up` 抓除權息事件的那一次（每個新交易日一次）各抓 1 次，每晚多 2 個請求；`collect --date`、`events` 不抓。附屬查詢不重試、不標記主機，失敗只印 ⚠️，不算異常、不通知，該市場沿用上次快照。以（代號, 除權息日）為鍵，記第一次與最近一次看到的抓取日（`first_seen`、`last_seen`），不刪除；現金股利「待公告」存 NULL；無償配股率是每股（× 1,000 = 每千股配股）；認購價「尚未公告」「註4」存 NULL。只收 `stocks`、`etfs` 表已有的代號（ETN、受益證券不收）。預告有變不算新資料、不觸發匯出。個股 `stocks/{代號}.json`、ETF `etfp/{代號}.json` 加 `nx` = `[{d, t, c, s?, sr?, sp?}]`：只取各市場最近一次成功快照、除權息日在資料日之後的列（到了除權息日改看 `dv`／`ev`）；`c` = null 是待公告，`s` = 每千股配股、`sr`／`sp` = 現增配股率與認購價，只在大於 0 時出現；沒有預告時不輸出鍵。個股「股利與填息」、ETF「配息與填息」卡標題列下加一行「即將除息 MM/DD：…（預告，以公司／發行人公告為準）」；工具頁 `?c=` 有預告金額時帶入下一次預告股利（含現增、待公告、超過 6 位小數時照舊帶最近一次並提示），交易成本頁的「MM/DD 除權息，參考價另計」改用預告日。官方註明預告僅供參考，以公司公告為準。
 - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
 - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
 - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。

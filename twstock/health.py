@@ -232,9 +232,10 @@ def load_state(cur) -> dict:
     與最後一次收集（last_run：時間、指令、有無新資料）。
     第 24 輪：events_at、events_n（事件最後成功那次的完成時間與 {"stocks", "etfs"} 筆數，舊紀錄沒有筆數為 None）、
     warnings（最後一次收集的警告）、export_failed（最近一筆「有新資料或有匯出」的紀錄是 abnormal 且沒有匯出耗時 = 匯出失敗）。
+    第 40 輪：notices = {市場: (最近一次成功的抓取日, 筆數)}，兩個市場各自取最新一筆；從沒成功的市場沒有鍵。
     """
     state = {"alerts_at": None, "events_to": None, "revenue_on": None, "financials_on": None, "collected_at": None, "last_run": None,
-             "events_at": None, "events_n": None, "warnings": [], "export_failed": None}
+             "events_at": None, "events_n": None, "warnings": [], "export_failed": None, "notices": {}}
     for finished, new_data, detail, *extra in cur.execute(
             "SELECT TOP 200 finished_at, new_data, detail, command, outcome, export_seconds FROM collect_runs ORDER BY run_id DESC").fetchall():
         d = json.loads(detail)
@@ -255,6 +256,8 @@ def load_state(cur) -> dict:
             state["revenue_on"] = date.fromisoformat(und["revenue"])
         if und.get("financials") and state["financials_on"] is None:
             state["financials_on"] = date.fromisoformat(und["financials"])
+        for mk, v in (und.get("notices") or {}).items():
+            state["notices"].setdefault(mk, (date.fromisoformat(v["on"]), v["n"]))
     return state
 
 
@@ -457,6 +460,7 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
                (f"，股票 {ev_n.get('stocks', 0):,} 筆、ETF {ev_n.get('etfs', 0):,} 筆（含往回 7 天重查）" if ev_n else "")
                if ev_to else "除權息事件最後成功：尚無執行紀錄")
     out += [f"⚠️  最後一次收集的警告：{w}" for w in state.get("warnings") or []]
+    out.append(notices_line(state.get("notices"), days[-1], closed))         # 第 40 輪 F40-1：放在警告之後，事件與警告兩行相鄰不變
     rev = revenue_status(now.date(), revenue, state.get("revenue_on"), closed) if revenue is not None else None
     if rev:
         out.append(rev[1] if rev[0] != ABNORMAL else f"{rev[1]}，❌ 異常")
@@ -478,6 +482,19 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
     if abnormal:
         out.append(suggest(items, days, bool(stale) or bool(rev and rev[0] == ABNORMAL) or bool(fin and fin[0] == ABNORMAL)))
     return "\n".join(out), (1 if abnormal else 0)
+
+
+def notices_line(notices, last_day: date, closed) -> str:
+    """第 40 輪 F40-1：check 的預告表一行（只顯示，不算異常）。距 last_day 已 ≥ 3 個交易日沒有成功的市場加 ⚠️。"""
+    if not notices:
+        return "除權除息預告最後成功：尚無執行紀錄"
+    def one(mk, label):
+        if mk not in notices:
+            return f"{label} 尚無紀錄"
+        on, n = notices[mk]
+        lag = len(trading_days(on + timedelta(days=1), last_day, closed))
+        return f"{label} {on}（{n:,} 筆" + (f"，⚠️ 已 {lag} 個交易日沒有更新）" if lag >= 3 else "）")
+    return f"除權除息預告最後成功：{one('TWSE', '上市')}、{one('TPEx', '上櫃')}"
 
 
 def revenue_counts(cur) -> dict:
@@ -555,8 +572,9 @@ def site_closed(closed, data_date: date) -> list:
     return sorted(str(d) for d in closed if d.weekday() < 5 and d >= data_date - timedelta(days=45))
 
 
-def build_status(cur, data_date: date, now: datetime) -> dict:
-    closed, state = load_closed(cur), load_state(cur)
+def build_status(cur, data_date: date, now: datetime, state=None) -> dict:
+    """state：呼叫端已讀的 load_state（第 40 輪匯出共用，不再查一次）；None = 這裡讀。"""
+    closed, state = load_closed(cur), state or load_state(cur)
     at, src = collected_at(cur, state)
     snap = load_snapshot(cur, data_date - timedelta(days=45), data_date)
     return {"collected_at": at, "collected_src": src, "exported_at": now.isoformat(timespec="seconds"),

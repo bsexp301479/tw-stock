@@ -1,0 +1,1025 @@
+diff --git a/README.md b/README.md
+index 06278fa..8a80bb3 100644
+--- a/README.md
++++ b/README.md
+@@ -37,7 +37,7 @@
+    - Mac：`bash scripts/mac/setup.sh`
+    - Windows：雙擊 `scripts\windows\setup.bat`
+ 
+-更新程式後若有新增資料表（例如第 1 輪的 `market_index`、`stock_alerts`，第 2 輪的 `price_events`、`insti_amount`，第 3 輪的 `collect_runs`、`market_holidays`，第 4 輪的 `etfs`、`etf_daily`、`margin_trades`、`etf_margin`、`margin_market`，第 5 輪的 `etf_holdings`、`etf_holding_summary`、`market_breadth`，第 6 輪的 `etf_holding_gaps`，第 10 輪的 `quarterly_financials`，第 11 輪的 `sbl_trades`、`etf_sbl` 與 `stocks.shares` 欄，第 19 輪的 `price_events.div_ref` 欄，第 24 輪的 `etf_events` 與 `price_events.div_total`、`div_cash`、`stock_div` 欄，第 29 輪的 `foreign_holdings`），請再執行一次 `python -m twstock setup-db`（可重複執行，不影響既有資料），否則 `collect`、`check`、`export` 會失敗。第 9 輪：`insti_amount` 加 `market` 欄（既有列為 `TWSE`），唯一鍵改成 `(trade_date, market, unit)`；`setup-db` 可重複執行，改表前請先 `backup`，改表後不可再執行舊版程式。
++更新程式後若有新增資料表（例如第 1 輪的 `market_index`、`stock_alerts`，第 2 輪的 `price_events`、`insti_amount`，第 3 輪的 `collect_runs`、`market_holidays`，第 4 輪的 `etfs`、`etf_daily`、`margin_trades`、`etf_margin`、`margin_market`，第 5 輪的 `etf_holdings`、`etf_holding_summary`、`market_breadth`，第 6 輪的 `etf_holding_gaps`，第 10 輪的 `quarterly_financials`，第 11 輪的 `sbl_trades`、`etf_sbl` 與 `stocks.shares` 欄，第 19 輪的 `price_events.div_ref` 欄，第 24 輪的 `etf_events` 與 `price_events.div_total`、`div_cash`、`stock_div` 欄，第 29 輪的 `foreign_holdings`，第 40 輪的 `dividend_notices`），請再執行一次 `python -m twstock setup-db`（可重複執行，不影響既有資料），否則 `collect`、`check`、`export` 會失敗。第 9 輪：`insti_amount` 加 `market` 欄（既有列為 `TWSE`），唯一鍵改成 `(trade_date, market, unit)`；`setup-db` 可重複執行，改表前請先 `backup`，改表後不可再執行舊版程式。
+ 
+ ## 日常使用
+ 
+@@ -48,7 +48,7 @@ python -m twstock collect --catch-up             # 補齊最近 10 個交易日
+ python -m twstock collect --catch-up --days 20   # 回溯 20 個交易日（上限 30，更早用 history）
+ python -m twstock collect                        # 今天全部重抓覆寫（含指數、台指期、處置／注意股、除權息事件、三大法人金額（上市、上櫃））並匯出網站 JSON
+ python -m twstock collect --date 2026-10-28      # 指定日期全部重抓覆寫；也用來復原被誤判的臨時休市
+-python -m twstock check                          # 檢查近 20 個交易日各資料集的完整性（唯讀、不連外）；開頭列最後一次收集與排程狀態；有異常時印建議指令並回傳 1（--days 至少 1）。第 24 輪起另列除權息事件最後成功的時間與筆數（股票、ETF）、最後一次收集的警告（只顯示，不算異常）
++python -m twstock check                          # 檢查近 20 個交易日各資料集的完整性（唯讀、不連外）；開頭列最後一次收集與排程狀態；有異常時印建議指令並回傳 1（--days 至少 1）。第 24 輪起另列除權息事件最後成功的時間與筆數（股票、ETF）、最後一次收集的警告（只顯示，不算異常）。第 40 輪起另列除權除息預告最後成功的日期與筆數（上市、上櫃各自；3 個交易日以上沒有更新加 ⚠️，只顯示，不算異常）
+ python -m twstock history --start 2026-01-02     # 補抓歷史（行情、本益比、法人、ETF、融資融券），只補缺的，可中斷重跑
+ python -m twstock history --start 2025-10-30 --only etf margin   # 只補 ETF 行情與融資融券（同一天 ETF 先於融資融券；一年約 976 個請求、40 分鐘）
+ python -m twstock history --start 2025-10-30 --only holdings   # 只補主動型 ETF 持股（統一、群益投信 8 檔；上市日之前自動略過；一年約 1,250 個請求、1～2 小時：群益偶爾逾時重試，第 7 輪實測群益 596 次花 52 分鐘）
+@@ -82,6 +82,7 @@ python3 tests/test_iter10.py                     # 第 10 輪測試
+ python3 tests/test_iter34.py                     # 第 34 輪測試（試算工具）
+ python3 tests/test_iter38.py                     # 第 38 輪測試（工具頁文字、零股提示、複利成長圖）
+ python3 tests/test_iter39.py                     # 第 39 輪測試（除權息試算）
++python3 tests/test_iter40.py                     # 第 40 輪測試（除權除息預告）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -140,6 +141,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker
+ - 個股頁河流圖（第 37 輪，「基本面」分頁一年位置說明之下、月營收／季報之前；`stocks/{代號}.json` 的 `band` = `{d, pe|pb: {s: [[起日, 值|null], …], k: [5 個倍數], n}}`）：和 `val` 同一個窗口與查詢。`s` 是「原始收盤 ÷ 官方本益比（淨值比）」反推的近 4 季 EPS（每股淨值）階梯，4 位有效數字；官方值空或 ≤ 0 是 `null` 段（畫面斷線），無成交日沿用前一段，和這一段相差超過 max(0.5%, 0.012 ÷ 官方值) 才開新段，超過 24 段不輸出；`k` = 窗口內官方值的第 10／25／50／75／90 百分位（最近序位法）；有效天數 < 120 不輸出該指標，90 天內股本變動不輸出 `band`。畫面是原始收盤＋5 條倍數線（不塗色），可切換本益比／淨值比，今天沒有本益比時預設淨值比；只描述股價和獲利（淨值）的關係，倍數用近一年資料算，不是股價的評價。
+ - 工具頁（第 38 輪）：三個工具的標籤縮短到 1024／375 寬一行放得下（折扣標籤「手續費折扣（折）」，「不打折 = 10」放在 placeholder），說明文字縮短、免責與規則出處用語保留；折扣驗證訊息改成和程式一致（大於 0、最多 10、小數最多 2 位）；非當沖、股數不是 1,000 的倍數且最低手續費 20 元時提示「零股多數券商每筆最低 1 元」，不自動改值；交易成本、複利結果表在 520px 以下整列換行。複利結果加逐年成長圖（純 SVG，第 0～n 年：期末金額實線、累計投入虛線，開股利時加另一種股利處理方式的點線對照；只畫線不塗色，顏色用 CSS 變數，數字都在圖下圖例，和摘要表同一格式）。
+ - 除權息試算（第 39 輪）：工具頁第 4 個分頁 `#/tools/dv`，算除權息參考價（上市除息捨去、上市有配股與上櫃四捨五入到 0.01，整數運算；和本站近一年官方參考價全部相同，`k = sc` 現金增資不適用）、下一交易日漲跌停、可領現金（元以下捨去）、配股與不足 1 股、二代健保補充保費（只算現金，2.11%、單次上限 1,000 萬元）、本次現金股利 ÷ 前收、成本殖利率。`?c=代號` 帶入最新收盤與最近一次股利、上次官方參考價、近一年現金股利合計；上市「權息」只有權值＋息值合計，不帶入現金與配股。個股「股利與填息」、ETF「配息與填息」卡標題列有「試算 →」連結（在 `renderStock` 加在卡片外，`divHTML` 輸出不變）。持有成本不帶入、換股票時清空。
++- 除權除息預告（第 40 輪，資料表 `dividend_notices`）：上市取自證交所 `TWT48U`（除權除息預告表）、上櫃取自櫃買 OpenAPI `tpex_exright_prepost`，兩個來源都只有當下快照（不能回補）。`collect --catch-up` 抓除權息事件的那一次（每個新交易日一次）各抓 1 次，每晚多 2 個請求；`collect --date`、`events` 不抓。附屬查詢不重試、不標記主機，失敗只印 ⚠️，不算異常、不通知，該市場沿用上次快照。以（代號, 除權息日）為鍵，記第一次與最近一次看到的抓取日（`first_seen`、`last_seen`），不刪除；現金股利「待公告」存 NULL；無償配股率是每股（× 1,000 = 每千股配股）；認購價「尚未公告」「註4」存 NULL。只收 `stocks`、`etfs` 表已有的代號（ETN、受益證券不收）。預告有變不算新資料、不觸發匯出。個股 `stocks/{代號}.json`、ETF `etfp/{代號}.json` 加 `nx` = `[{d, t, c, s?, sr?, sp?}]`：只取各市場最近一次成功快照、除權息日在資料日之後的列（到了除權息日改看 `dv`／`ev`）；`c` = null 是待公告，`s` = 每千股配股、`sr`／`sp` = 現增配股率與認購價，只在大於 0 時出現；沒有預告時不輸出鍵。個股「股利與填息」、ETF「配息與填息」卡標題列下加一行「即將除息 MM/DD：…（預告，以公司／發行人公告為準）」；工具頁 `?c=` 有預告金額時帶入下一次預告股利（含現增、待公告、超過 6 位小數時照舊帶最近一次並提示），交易成本頁的「MM/DD 除權息，參考價另計」改用預告日。官方註明預告僅供參考，以公司公告為準。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+diff --git a/docs/iterations/README.md b/docs/iterations/README.md
+index 47c8c9a..3204c25 100644
+--- a/docs/iterations/README.md
++++ b/docs/iterations/README.md
+@@ -29,4 +29,5 @@
+ - 第 37 輪（2026-11-20 使用者決定：F32-5 本益比河流圖，五角色、每次交接等確認）：個股基本面分頁新增本益比／淨值比河流圖（`37/01`～`05`）。D66=A（本益比＋淨值比）、D66-1=A（收盤 ÷ 官方本益比／淨值比反推，無前視偏誤）、D66-2=A（近一年 10／25／50／75／90 百分位，窗口同 `val`）、D66-3=A（原始收盤獨立小圖）、D66-4=B（90 天內股本變動不畫）、D66-5=A（只畫線不塗色）、D67=A（PG 直接 export）、D68=A（刻度含 5 條線）。個股 JSON 新增 `band`（階梯序列＋5 倍數），`stocks/` +0.559 MB、匯出約 +0.7 秒、拿掉 `band` 後逐位元組相同；舊測試 0 行改動。QA 通過（程式缺陷 0），QA37-01～05 測試補強（`logs/iter37_qa_fix.diff`）已套用。待辦：今天無成交時卡片「收盤」實為最後成交價，用詞之後再議；F37-延伸a 固定倍數、F37-延伸b 多年河流圖、F37-延伸c `stock_fundamentals.eps` 空欄。
+ - 第 38 輪（2026-11-21 使用者要求：工具頁斷行與文字、更多小工具，五角色、每次交接等確認）。分析師 `38/01-analyst.md`：F38-1 手續費選單、F38-2 文字簡化、新工具候選。使用者：手續費維持自行輸入（D69～D71 不做）、D73 = A（全部文字簡化、同意改 `test_iter34`）、D78 = A（複利逐年成長圖）。PM `38/02-pm.md`：F38-2、F38-2z 零股提示、F38-3a 成長圖，驗收 21 條。設計 `38/03-design.md`（＋`03-design.diff`）：`tools.js` ＋43／−25、`app.css` ＋2，純 SVG 三線不塗色；D79 = A（`test_iter34` 多改 3 行，共 15 行）、D80 = A、D81 = A（對照線點線）；新測試 `test_iter38`（13 個）。PG `38/04-dev.md`：原樣套用，38 個測試全過。QA `38/05-qa.md` 通過，缺陷 0（成長圖 300 組 Decimal 獨立驗算 0 差異、1024／375／320 × 淺深 × 12 情境無橫向捲動、反證設計 11＋QA 18 種全擋）。
+ - 第 39 輪（2026-11-21 使用者選 F38-3 除權息試算，五角色、每次交接等確認）。分析師 `39/01-analyst.md`：本站官方參考價驗出上市除息捨去、上櫃四捨五入到 0.01；上市權息只有合計；D82～D82-4 = A。PM `39/02-pm.md`：F39-1 工具頁 `#/tools/dv`、F39-2 `?c=` 帶入、F39-3 股利卡「試算 →」，驗收 18 條；D83 = A（二代健保四捨五入）、D83-1 = A（成本不帶入）。設計 `39/03-design.md`（＋`03-design.diff`）：BigInt 整數運算（1110 15.95 − 0.3 浮點會錯，本站 114 筆）、二代健保查健保署手冊（單次上限 1,000 萬）、卡片連結在 `renderStock` 以 DOM 插入（`divHTML` 不改）；D84～D84-2 = A；舊測試 0 行改動，新測試 `test_iter39`。PG `39/04-dev.md`：原樣套用；使用者加修 F39-5 搜尋框（Enter 要選到候選或輸入完整代號才送出、選字中的 Enter 不送出）。QA `39/05-qa.md` 通過，缺陷 0（官方參考價 2,707 筆畫面比對 0 差異、2,367 檔帶入獨立驗算、隨機 500 組 Decimal、42 種版面組合；QA 反證 23 種，D85 = A 補 2 筆測試資料後全擋）。
++- 第 40 輪（2026-11-21 使用者選 F39-4 除權除息預告表，五角色、每次交接等確認）。分析師 `40/01-analyst.md`：上市 `TWT48U`、上櫃 `tpex_exright_prepost` 各 1 次請求拿到全部快照，已過除權息日 54／54 列現金股利和本站實際事件相同；D86 = A（F40-1～F40-3）、D86-1～D86-7 = A。PM `40/02-pm.md`：新表 `dividend_notices`、`nx`、工具頁帶入與股利卡一行，驗收 21 條；D87 = A（不加子命令）。設計 `40/03-design.md`（＋`03-design.diff`）：新檔 `collectors/notices.py`（純函式解析、MERGE 只收 `stocks`／`etfs` 已有代號、`first_seen` 只在新增時寫），`make_plan` 和 `events` 同一個條件排 `notices`、`execute_plan` 用 `plan.get`、失敗只 ⚠️；`check` 一行放在警告之後（D88）；匯出 `notice_export` 純函式、`etfp` 的 `nx` 在 `etf_export` 之外附加；工具頁 `tlNx`、股利卡 `nxText`（DOM 插入，`divHTML` 不改）；舊測試 0 行改動（排了 `events` 的舊收集測試 33 個多 2 次請求，假 World 回「沒有資料」解析成 0 筆成功），新測試 `test_iter40`。
+ - 規範：回應與文件用繁體中文；程式風格比照既有程式碼；只改必要的地方；外部網站請求要經過 `twstock/fetch.py` 的 `request`（有節流）；不要 commit 或 push；不要動 `.env`（建立專案副本時也不要複製 `.env`）；不要安裝排程或改系統設定（launchd、crontab、pmset、docker 設定），這些由使用者自行執行；埠 8000 是使用者自己的伺服器，測試用 8001 並在結束時關掉。改了 `site/` 的 js 或 css 要同步更新 `index.html` 的 `?v=`（sha1 前 8 碼，`test_iter23` 失敗時會印出正確的 3 行）。
+diff --git a/site/index.html b/site/index.html
+index 95a3298..3d158bc 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -11,8 +11,8 @@
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+ <script src="app.js?v=5ebf1056" defer></script>
+-<script src="stock.js?v=a88a6b25" defer></script>
+-<script src="tools.js?v=2a957b9a" defer></script>
++<script src="stock.js?v=00d41238" defer></script>
++<script src="tools.js?v=bc6f8d2c" defer></script>
+ </head>
+ <body>
+ <header class="top">
+diff --git a/site/stock.js b/site/stock.js
+index 82ea4d1..86c0410 100644
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -71,6 +71,12 @@ function divHTML(dv, mkt, P, etf = false) {
+     `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
+ }
+ 
++// 第 40 輪 F40-3：股利卡「即將除權息」一行（nx 一筆；數字照預告值，不另外四捨五入）
++function nxText(n, etf) {
++  const p = [n.c > 0 ? `${etf ? '配息' : '現金股利'} ${dfmt(n.c, 8)} 元` : '', n.s > 0 ? `每千股配股 ${dfmt(n.s, 8)} 股` : '',
++    n.sr ? `含現金增資，認購價${n.sp == null ? '尚未公告' : ` ${dfmt(n.sp, 2)} 元`}` : '', n.c == null ? '金額待公告' : ''].filter(Boolean);
++  return `即將${n.t === '息' ? '除息' : n.t === '權' ? '除權' : '除權息'} ${md(n.d)}：${p.join('、')}（預告，以${etf ? '發行人' : '公司'}公告為準）`;
++}
+ const ETF_DIV_FULL = '填息日 = 除息日起（含當天）第一個收盤大於或等於除息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除息日當天算第 1 天，無成交日也算。' +
+   '除息日、配息與除息前收盤來自證交所、櫃買中心的除息表。上市 ETF 還沒填息就遇到推測的其他價格調整（多為分割）時，寫「不再比較」；上櫃 ETF 無法辨識分割，照常比較。' +
+   '還差 = 除息前收盤 − 最新收盤，% 以最新收盤計算。ETF 的配息來源可能含收益平準金、資本利得，不等於獲利。';
+@@ -340,6 +346,7 @@ window.renderStock = async function (code, sub) {
+   if (App.ptStuck) { App.ptStuck = false; ptab.style.position = 'static'; const y = ptab.getBoundingClientRect().top + scrollY; ptab.style.position = ''; scrollTo(0, y - topH()); }   // 固定狀態換分頁：新分頁從分頁列下方開始
+   const dvh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '配息與填息' : '股利與填息'))[0];   // 第 39 輪 F39-3：連結加在 divHTML 外，卡片字面不變
+   if (dvh) dvh.insertAdjacentHTML('afterend', `<span class="sp"></span><a class="small dv-go" href="#/tools/dv?c=${code}">試算 →</a>`);
++  if (dvh && data.nx) dvh.parentElement.insertAdjacentHTML('afterend', data.nx.map(n => `<div class="small dv-nx">${esc(nxText(n, E))}</div>`).join(''));   // 第 40 輪 F40-3：卡片標題列下一行
+   onSeg('stockTabSeg', v => { App.ptStuck = $('#view .s-head').getBoundingClientRect().bottom <= topH(); localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
+   $('#hlMore')?.addEventListener('click', e => e.currentTarget.parentElement.classList.add('open'));
+   $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });
+diff --git a/site/tools.js b/site/tools.js
+index 5eab959..41048b7 100644
+--- a/site/tools.js
++++ b/site/tools.js
+@@ -276,18 +276,29 @@ function tlDvForm(st) {
+     tlIn('p', '除權息前收盤（元）', st.p) + tlIn('c', '現金股利（元／股）', st.c, '空白 = 0') + tlIn('s', '每千股配股（股）', st.s, '空白 = 0') +
+     tlIn('n', '持有股數', st.n) + tlIn('cost', '持有成本（元／股）', st.cost, '選填') + tlIn('y1', '近一年現金股利（元／股）', st.y1, '選填');
+ }
+-// 第 39 輪 F39-2：帶入最近一次股利（D82-3 = A：前收用最新收盤）與近一年現金股利合計；回傳要帶入的欄位與提示
+-function tlDvLoad(d) {
+-  const V = d.dv || [], x = V[V.length - 1], tw = d.market !== 'TPEx', D = d.prices.d;
++// 第 40 輪 F40-3：下一次除權除息預告（nx 第一筆）→ [帶入？, 提示]；含現增、待公告、超過 6 位小數不帶入（D86-3、D86-4 = A）
++function tlNx(n, tw, e) {
++  const w = `${md(n.d)} ${n.t === '息' ? '除息' : n.t === '權' ? '除權' : '除權息'}`;
++  if (n.sr) return [false, `${w}含現金增資，參考價請看官方公告`];
++  if (n.c == null) return [false, `${w}，金額待公告`];
++  if (tlBig(String(n.c), 6) === null) return [false, `${w}的預告現金股利 ${n.c} 元超過 6 位小數，請依公告填寫`];
++  return [true, `已帶入 ${w}的預告股利（${tw ? '證交所' : '櫃買中心'}預告表，僅供參考，以${e ? '發行人' : '公司'}公告為準）`];
++}
++// 第 39 輪 F39-2：帶入最近一次股利（D82-3 = A：前收用最新收盤）與近一年現金股利合計；回傳要帶入的欄位與提示。第 40 輪：有預告金額時改帶預告
++function tlDvLoad(d, e) {
++  const V = d.dv || [], x = V[V.length - 1], tw = d.market !== 'TPEx', D = d.prices.d, n = (d.nx || [])[0], N = n ? tlNx(n, tw, e) : [false, ''];
+   const o = { mk: tw ? 'l' : 'o', c: '', s: '0', y1: '', cost: '' }, h = [];   // 換股票時清掉上一檔的持有成本
+-  if (!x || !x.t) return [o, [`${D[0]} 起沒有除權息紀錄，請依公司公告填寫`]];
++  if (N[0]) { o.c = String(n.c); o.s = n.s != null ? String(n.s) : '0'; h.push(N[1]); }
++  if (!x || !x.t) return [o, h.concat(`${D[0]} 起沒有除權息紀錄，請依公司公告填寫`, n && !N[0] ? N[1] : [])];
+   const from = new Date(Date.parse(D[D.length - 1]) - 365 * 864e5).toISOString().slice(0, 10);
+   let y = 0n, k = 0, miss = false;
+   V.forEach(v => { if (v.d > from && (v.t === '息' || v.t === '權息')) { const c = v.c == null ? null : tlBig(String(v.c), 6); if (c === null) miss = true; else { y += c; k++; } } });
+   if (k) o.y1 = tlDec(y, 6);
+-  if (x.k === 'sc') h.push(`最近一次（${md(x.d)}）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入`);
++  if (N[0]) { /* 已帶入預告 */ }
++  else if (x.k === 'sc') h.push(`最近一次（${md(x.d)}）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入`);
+   else if (tw && x.c == null && x.a != null) h.push(`上市官方表只有 ${md(x.d)} 的權值＋息值合計 ${x.a} 元，請依公告填現金股利與配股`);
+   else { o.c = x.c != null ? String(x.c) : '0'; o.s = x.s != null ? String(x.s) : '0'; h.push(`已帶入 ${md(x.d)} 的股利（最近一次），下次請依公司公告修改`); }
++  if (n && !N[0]) h.push(N[1]);
+   const ev = (d.ev || []).filter(v => v.d === x.d && v.t === x.t)[0], R = x.r != null ? x.r : ev && ev.r;
+   if (R != null && x.p != null) h.push(`上次官方參考價 ${pfmt(R)}（${md(x.d)}，前收 ${pfmt(x.p)}）；前收改成 ${pfmt(x.p)} 可對照`);
+   h.push(k ? `近一年現金股利 = ${md(from)} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${md(from)} 以後的現金股利官方表沒有分項，請自行確認` : `${md(from)} 以後沒有現金股利`);
+@@ -306,11 +317,11 @@ async function tlLoad(code) {
+   const P = d && d.prices, i = P ? P.c.map(c => c != null).lastIndexOf(true) : -1;
+   if (i < 0) { TL.info = { miss: code }; return; }
+   const c = String(P.c[i]), last = P.d[P.d.length - 1];
+-  TL.info = { code, name: d.name, e: !!E, c: P.c[i], d: P.d[i], al: d.alerts || [], dy: d.fund && d.fund.dy, ex: (d.dv || []).map(x => x.d).filter(x => x > last).sort()[0] };
++  TL.info = { code, name: d.name, e: !!E, c: P.c[i], d: P.d[i], al: d.alerts || [], dy: d.fund && d.fund.dy, ex: d.nx ? d.nx[0].d : (d.dv || []).map(x => x.d).filter(x => x > last).sort()[0] };   // 第 40 輪：ex = 下一次預告日
+   Object.assign(TL.dt, { b: c, s: '', ref: c, k: E ? 'e' : 's' });
+   Object.assign(TL.pl, { p1: c, p2: '' });
+   TL.cp.y = TL.info.dy != null ? String(TL.info.dy) : '';
+-  const [o, h] = tlDvLoad(d);                                                          // 第 39 輪 F39-2
++  const [o, h] = tlDvLoad(d, !!E);                                                     // 第 39 輪 F39-2；第 40 輪傳 ETF 旗標
+   TL.info.dvh = h;
+   Object.assign(TL.dv, o, { p: c, k: E ? 'e' : 's' });
+ }
+diff --git a/tests/test_iter40.py b/tests/test_iter40.py
+new file mode 100644
+index 0000000..12281df
+--- /dev/null
++++ b/tests/test_iter40.py
+@@ -0,0 +1,555 @@
++"""第 40 輪（不連網、不連資料庫）：F40-1 除權除息預告表收集、F40-2 匯出 nx、F40-3 工具頁帶入與股利卡一行。
++上市 TWT48U、上櫃 tpex_exright_prepost 的回應是 2026-11-21 分析師實測的原始回應節錄（欄位與內容不變，只留幾列）；標「假資料」的列不是官方資料。
++收集流程沿用 test_iter03 的 World、env、run_world；有 node 時逐字取出 app.js、stock.js、tools.js 的程式執行（node 14 可跑）。
++檢查函式都接受要檢查的函式或原始碼，test_contrast 把程式改壞後重跑，確認會失敗。"""
++import contextlib
++import hashlib
++import inspect
++import io
++import json
++import re
++import sys
++from datetime import date, datetime
++from decimal import Decimal
++from pathlib import Path
++from unittest import mock
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tests"))
++import test_iter03 as t3  # noqa: E402
++import test_iter34 as T  # noqa: E402
++from twstock import db, export, fetch, health, tradingcal  # noqa: E402
++from twstock.collectors import catchup, notices  # noqa: E402
++from twstock.fetch import SchemaError  # noqa: E402
++
++D, TM, CLOSED = t3.D, t3.T, t3.CLOSED
++SITE, HTML, TOOLS, APP, STK = T.SITE, T.HTML, T.TOOLS, T.APP, T.STK
++TW_FIELDS = ["除權除息日期", "股票代號", "名稱", "除權息", "無償配股率", "現金增資配股率", "現金增資認購價", "現金股利", "詳細資料", "參考價<br>試算",
++             "最近一次申報資料 季別/日期", "最近一次申報每股 (單位)淨值", "最近一次申報每股 (單位)盈餘"]
++TW_ROWS = [  # TWT48U 節錄：待公告 ETF、ETF、受益證券、ETN、股票息、現增（認購價尚未公告）、現增、股票息
++    ["115年12月02日", "00406A", "主動中信台灣收益", "息", "0.00000000", "0.00000000", "0.00000000", "<p style= text-align:center;>待公告實際收益分配金額</p>", "00406A,20261202", "", "", "0.00", ""],
++    ["115年11月24日", "00901", "永豐智能車供應鏈", "息", "0.00000000", "0.00000000", "0.00000000", "7.00000000", "00901,20261124", ",7.00000000,0.00000000,0.00000000,0.00000000", "115年11月20日(https://mops.twse.com.tw/mops/web/t78sb35)", "32.64", "N/A"],
++    ["115年11月19日", "01007T", "兆豐國泰R2", "息", "0.00000000", "0.00000000", "0.00000000", "0.21531300", "01007T,20261119", ",0.21531300,0.00000000,0.00000000,0.00000000", "115年11月20日(https://mops.twse.com.tw/mops/web/t112sb01_q5)", "23.70", "N/A"],
++    ["115年12月03日", "020038", "元大ESG配息N", "息", "0.00000000", "0.00000000", "0.00000000", "0.49100000", "020038,20261203", ",0.49100000,0.00000000,0.00000000,0.00000000", "", "0.00", ""],
++    ["115年12月03日", "1437", "勤益控", "息", "0.00000000", "0.00000000", "0.00000000", "0.62465200", "1437,20261203", ",0.62465200,0.00000000,0.00000000,0.00000000", "115年第3季(https://mops.twse.com.tw/mops/web/t163sb01)", "43.61", "2.87"],
++    ["115年12月04日", "2345", "智邦", "權", "0.00000000", "0.01782156", "尚未公告", "0.00000000", "2345,20261204", "", "115年第3季(https://mops.twse.com.tw/mops/web/t163sb01)", "146.74", "58.09"],
++    ["115年11月27日", "3706", "神達", "權", "0.00000000", "0.08219551", "52.00000000", "0.00000000", "3706,20261127", ",0.00000000,0.00000000,0.08219551,52.00000000", "115年第3季(https://mops.twse.com.tw/mops/web/t163sb01)", "53.84", "3.77"],
++    ["115年11月24日", "6655", "科定", "息", "0.00000000", "0.00000000", "0.00000000", "2.60000000", "6655,20261124", ",2.60000000,0.00000000,0.00000000,0.00000000", "115年第3季(https://mops.twse.com.tw/mops/web/t163sb01)", "42.87", "4.26"]]
++TWSE = {"stat": "OK", "title": "除權除息預告表", "fields": TW_FIELDS, "data": TW_ROWS}
++_O = ("AllocatedForPublicUnderwriting", "SubscribedByEmployees", "SubscribedByExistingShareholders", "SubscribedProRataInThousandShares")
++
++
++def _tp(d, code, name, kind, stock, sub, price, cash, other=("0", "0", "0", "0.00000000")):
++    return {"ExRrightsExDividendDate": d, "SecuritiesCompanyCode": code, "CompanyName": name, "ExRrightsExDividend": kind, "StockDividendRatio": stock,
++            "SubscriptionRatioToNewSharesIssued": sub, "SubscriptionPricePerShare": price, "CashDividend": cash, **dict(zip(_O, other))}
++
++
++TPEX = [  # tpex_exright_prepost 節錄：現增、股票息（8 位小數）、債券 ETF 尚未公告、股票息、現增（認購價「註4」）、跨年
++    _tp("1151111", "8390", "金益鼎", "除權", "0.00000000", "0.08323265", "62.00", "0.00000000", ("800000", "1200000", "6000000", "62.42448718")),
++    _tp("1151112", "3680", "家登", "除息", "0.00000000", "0.00000000", "0.00", "9.91474560"),
++    _tp("1151124", "00958B", "永豐ESG銀行債15+", "除息", "0.00000000", "0.00000000", "0.00", "尚未公告"),
++    _tp("1151126", "6523", "達爾膚", "除息", "0.00000000", "0.00000000", "0.00", "4.00000000"),
++    _tp("1151203", "6160", "欣技", "除權", "0.00000000", "0.16060945", "註4", "0.00000000", ("1100000", "1650000", "8250000", "120.45708866")),
++    _tp("1160105", "5483", "中美晶", "除息", "0.00000000", "0.00000000", "0.00", "2.80000000")]
++FAKE_TP = _tp("1151210", "8942", "假資料", "除權息", "0.05000000", "0.00000000", "0.00", "1.00000000")   # 假資料：這份快照沒有「除權息」與配股的樣本
++Z = Decimal(0)
++
++
++def N(code, d, kind, cash, stock=Z, sub=Z, price=None):
++    return {"code": code, "ex_date": d, "event_type": kind, "cash_div": cash, "stock_ratio": stock, "sub_ratio": sub, "sub_price": price}
++
++
++# ─── 解析（驗收 1～3）──────────────────────────────────────
++def check_parse(parse=notices.parse_notices):
++    bad = []
++    want_tw = [N("00406A", D(12, 2), "息", None), N("00901", D(11, 24), "息", Decimal(7)), N("1437", D(12, 3), "息", Decimal("0.624652")),
++               N("2345", D(12, 4), "權", Z, sub=Decimal("0.01782156")), N("3706", D(11, 27), "權", Z, sub=Decimal("0.08219551"), price=Decimal(52)),
++               N("6655", D(11, 24), "息", Decimal("2.6"))]                                                   # 01007T 受益證券、020038 ETN 不收
++    want_tp = [N("8390", D(11, 11), "權", Z, sub=Decimal("0.08323265"), price=Decimal(62)), N("3680", D(11, 12), "息", Decimal("9.9147456")),
++               N("00958B", D(11, 24), "息", None), N("6523", D(11, 26), "息", Decimal(4)), N("6160", D(12, 3), "權", Z, sub=Decimal("0.16060945")),
++               N("5483", date(2027, 1, 5), "息", Decimal("2.8")), N("8942", D(12, 10), "權息", Decimal(1), stock=Decimal("0.05"))]
++    for got, want in ((parse("TWSE", TWSE), want_tw), (parse("TPEx", TPEX + [FAKE_TP]), want_tp)):
++        if got != want:
++            bad.append((got, want))
++    if not bad and (parse("TPEx", TPEX)[2]["cash_div"] is not None or parse("TWSE", TWSE)[0]["cash_div"] is not None):
++        bad.append("待公告要是 None")
++    # 沒有資料 = 0 筆成功；欄位不符 = SchemaError
++    for mk, data in (("TWSE", {"stat": "很抱歉，沒有符合條件的資料!"}), ("TWSE", {"stat": "沒有資料", "tables": []}), ("TWSE", dict(TWSE, data=[])), ("TPEx", [])):
++        if parse(mk, data) != []:
++            bad.append(("沒有資料", mk, data))
++    for mk, data in (("TWSE", dict(TWSE, fields=TW_FIELDS[:7])), ("TPEx", [{"Date": "1151203"}]), ("TPEx", {"x": 1}), ("TWSE", [])):
++        try:
++            parse(mk, data)
++            bad.append(("欄位不符", mk))
++        except SchemaError:
++            pass
++    # 同鍵只留最後一筆；配股率解析不了 = 0；沒有現增時認購價 = None
++    dup = parse("TPEx", [_tp("1151203", "6523", "x", "除息", "--", "0.00000000", "62.00", "3.00000000"), _tp("1151203", "6523", "x", "除息", "", "", "", "4.00000000")])
++    if dup != [N("6523", D(12, 3), "息", Decimal(4))]:
++        bad.append(("同鍵", dup))
++    if parse("TPEx", [_tp("1151203", "6523", "x", "除息", "--", "0.00000000", "62.00", "3.00000000")])[0]["sub_price"] is not None:
++        bad.append("sub_ratio = 0 時 sub_price 要是 None")
++    if parse("TWSE", dict(TWSE, data=[["11512", "1437", "x", "息"] + ["0"] * 9, ["115年12月03日", "1437", "x", "減"] + ["0"] * 9])) != []:
++        bad.append("日期、類型不明要略過")
++    return bad
++
++
++def test_parse():
++    assert check_parse() == []
++
++
++# ─── 寫入（驗收 4）──────────────────────────────────────────
++class Conn:
++    def __init__(self):
++        self.sql = []
++
++    def cursor(self):
++        return self
++
++    def execute(self, sql, *p):
++        self.sql.append((sql, p))
++
++    def commit(self):
++        pass
++
++    def close(self):
++        pass
++
++
++def check_write(collect=notices.collect_notices):
++    bad, conns = [], []
++
++    def connect():
++        conns.append(Conn())
++        return conns[-1]
++    rows = notices.parse_notices("TWSE", TWSE) + [N("9999", D(12, 9), "息", Decimal("0.00000001"))]   # 假資料：最小單位
++    buf = io.StringIO()
++    with mock.patch.object(notices, "fetch_notices", lambda m: rows), mock.patch.object(db, "connect", connect), contextlib.redirect_stdout(buf):
++        n = collect("TWSE", D(11, 23))
++    if n != 7 or len(conns) != 1 or len(conns[0].sql) != 1:
++        return ["筆數或連線次數", n, len(conns)]
++    sql, p = conns[0].sql[0]
++    upd = sql[sql.index("WHEN MATCHED"):sql.index("WHEN NOT MATCHED")]
++    ins = sql[sql.index("WHEN NOT MATCHED"):]
++    j = json.loads(p[0])
++    if "first_seen" in upd or "last_seen = ?" not in upd or "first_seen, last_seen" not in ins or "DELETE" in sql.upper():
++        bad.append("first_seen 只在新增時寫、更新 last_seen、不刪除")
++    if "JOIN stocks st ON st.stock_code = j.code" not in sql or "JOIN etfs et ON et.etf_code = j.code" not in sql or \
++            "WHERE st.stock_id IS NOT NULL OR et.etf_id IS NOT NULL" not in sql or "THEN 0 ELSE 1 END AS BIT) AS is_etf" not in sql:
++        bad.append("只收 stocks、etfs 已有的代號，is_etf 由命中的表決定")
++    if p[1:] != ("TWSE", D(11, 23), "TWSE", D(11, 23), D(11, 23)):
++        bad.append(("參數", p[1:]))
++    if j[-1]["cash_div"] != "0.00000001" or "E-" in p[0] or j[2]["cash_div"] != "0.62465200" or j[0]["cash_div"] is not None or j[2]["ex_date"] != "2026-12-03":
++        bad.append(("JSON", p[0][:200]))
++    if "📅 上市除權除息預告 7 筆（除權息日 2026-11-24 ～ 2026-12-09）" not in buf.getvalue():
++        bad.append(buf.getvalue())
++    conns.clear()
++    with mock.patch.object(notices, "fetch_notices", lambda m: []), mock.patch.object(db, "connect", connect), contextlib.redirect_stdout(buf):
++        if collect("TPEx", D(11, 23)) != 0 or conns:
++            bad.append("0 筆不連資料庫")
++    if "📅 上櫃除權除息預告 0 筆\n" not in buf.getvalue():
++        bad.append("0 筆的輸出")
++    return bad
++
++
++def test_write():
++    assert check_write() == []
++
++
++# ─── 收集時機與失敗隔離（驗收 5～7）───────────────────────────
++class NxWorld(t3.World):
++    """預告表回真實節錄（其他端點同 test_iter03）。"""
++
++    def http(self, method, url, timeout=30, params=None, data=None, json=None):
++        if "TWT48U" in url and "TWT48U" not in self.down:
++            self.requests.append(("/rwd/zh/exRight/TWT48U", params or {}))
++            return t3.Resp(TWSE)
++        if "tpex_exright_prepost" in url and "prepost" not in self.down:
++            self.requests.append(("/openapi/v1/tpex_exright_prepost", params or {}))
++            return t3.Resp(TPEX)
++        return super().http(method, url, timeout, params, data, json)
++
++
++def _nx_hits(w):
++    return t3._hit(w, "TWT48U", "tpex_exright_prepost")
++
++
++def check_timing():
++    bad = []
++    w = NxWorld(D(10, 30))
++    w.publish(t3.FIRST_DAY)
++    rc, out = t3.run_world(w, TM(11, 2, 18, 0))
++    und = json.loads(w.runs[-1][2])["undated"]
++    if rc != 0 or _nx_hits(w) != ["/rwd/zh/exRight/TWT48U", "/openapi/v1/tpex_exright_prepost"] or w.merges.count("dividend_notices") != 2:
++        bad.append(("新交易日抓一次", rc, _nx_hits(w), w.merges.count("dividend_notices")))
++    if [f for p, f in w.requests if "TWT48U" in p] != [{"response": "json"}]:
++        bad.append("TWT48U 參數")
++    if und.get("notices") != {"TWSE": {"on": "2026-11-02", "n": 6}, "TPEx": {"on": "2026-11-02", "n": 6}}:
++        bad.append(("undated", und.get("notices")))
++    if "📅 上市除權除息預告 6 筆（除權息日 2026-11-24 ～ 2026-12-04）" not in out or "📅 上櫃除權除息預告 6 筆（除權息日 2026-11-11 ～ 2027-01-05）" not in out:
++        bad.append(out[-600:])
++    w.requests.clear()
++    t3.run_world(w, TM(11, 2, 18, 30))                                                    # 同一晚重跑
++    if _nx_hits(w):
++        bad.append("同一晚重跑")
++    w = NxWorld(D(10, 30))
++    t3.run_world(w, TM(10, 31, 18))                                                       # 週六（休市）
++    if _nx_hits(w):
++        bad.append("休市日")
++    w = NxWorld(D(10, 30))
++    w.publish(t3.FIRST_DAY)
++    t3.run_world(w, TM(11, 2, 18, 0), date_=t3.FIRST_DAY)                                 # collect --date
++    if _nx_hits(w) or not t3._hit(w, "TWT49U"):
++        bad.append("collect --date 不抓預告（事件照抓）")
++    p = catchup.make_plan(TM(11, 2, 18, 30), 10, t3._full_snapshot(health.due_days(TM(11, 2, 18, 30), 10, CLOSED)),
++                          {"alerts_at": None, "events_to": D(11, 2), "revenue_on": None}, CLOSED, {})
++    if p["notices"] or p["events"]:
++        bad.append("make_plan：沒有排 events 就沒有 notices")
++    p = catchup.make_plan(TM(11, 2, 18, 30), 10, t3._full_snapshot(health.due_days(TM(11, 2, 18, 30), 10, CLOSED)),
++                          {"alerts_at": None, "events_to": D(10, 30), "revenue_on": None}, CLOSED, {})
++    if p["notices"] is not True or not p["events"]:
++        bad.append("make_plan：排了 events 就排 notices")
++    return bad
++
++
++def test_timing():
++    assert check_timing() == []
++    main = (ROOT / "twstock" / "__main__.py").read_text(encoding="utf-8") + (ROOT / "twstock" / "collectors" / "events.py").read_text(encoding="utf-8")
++    assert "notice" not in main                                                           # cli events 不抓預告
++
++
++def check_isolation():
++    base = NxWorld(D(10, 30))
++    base.publish(t3.FIRST_DAY)
++    rc0, _ = t3.run_world(base, TM(11, 2, 18, 0))
++    w = NxWorld(D(10, 30))
++    w.publish(t3.FIRST_DAY)
++    w.down.add("TWT48U")
++    rc, out = t3.run_world(w, TM(11, 2, 18, 0))
++    d, d0 = json.loads(w.runs[-1][2]), json.loads(base.runs[-1][2])
++    bad = []
++    if (rc, w.runs[-1][1], d["items"], w.notices, w.exports) != (rc0, base.runs[-1][1], d0["items"], base.notices, base.exports):
++        bad.append(("回傳碼、結果、通知、匯出要和沒有失敗時相同", rc, rc0, w.notices))
++    if len(t3._hit(w, "TWT48U")) != 1 or "www.twse.com.tw" in fetch._dead_hosts or "  ⚠️  notices.TWSE 失敗" not in out:
++        bad.append(("只打一次、不標記主機", t3._hit(w, "TWT48U"), fetch._dead_hosts))
++    if list(d["undated"].get("notices", {})) != ["TPEx"] or "notices.TWSE" not in d["errors"] or "❌ notices" in out:
++        bad.append(("上櫃照抓、只記錄", d["undated"].get("notices")))
++    return bad
++
++
++def test_isolation():
++    assert check_isolation() == []
++
++
++def check_counts(fn=catchup._undated_counts):
++    tables = []
++
++    class Cur:
++        def execute(self, sql):
++            tables.append(sql.split()[-1])
++            return self
++
++        def fetchone(self):
++            return (0,)
++    fn(Cur())
++    return [] if tables == ["stock_alerts", "price_events", "monthly_revenue", "quarterly_financials"] else [tables]   # D86-5：預告有變不觸發匯出
++
++
++def test_counts():
++    assert check_counts() == []
++
++
++# ─── load_state、check（驗收 8、9）──────────────────────────────
++class Rows:
++    def __init__(self, rows):
++        self.rows = rows
++
++    def execute(self, *a):
++        return self
++
++    def fetchall(self):
++        return self.rows
++
++
++def check_state(fn=health.load_state):
++    j = lambda **k: json.dumps(k)
++    rows = [(datetime(2026, 11, 24, 22), 1, j(undated={"notices": {"TPEx": {"on": "2026-11-24", "n": 60}}}), "catch-up", "ok", 20.0),
++            (datetime(2026, 11, 23, 22), 1, j(undated={"notices": {"TWSE": {"on": "2026-11-23", "n": 25}, "TPEx": {"on": "2026-11-23", "n": 66}}}), "catch-up", "ok", 20.0),
++            (datetime(2026, 11, 20, 22), 1, j(undated={"events_to": "2026-11-20"}), "catch-up", "ok", 20.0)]
++    got = [fn(Rows(r))["notices"] for r in (rows, rows[2:], [])]
++    want = [{"TPEx": (D(11, 24), 60), "TWSE": (D(11, 23), 25)}, {}, {}]
++    return [] if got == want else [got]
++
++
++def test_state():
++    assert check_state() == []
++
++
++def check_lines(fn=health.check_report):
++    now = TM(11, 25, 10)
++    days = health.due_days(now, 20, CLOSED)
++    td = tradingcal.trading_days(D(10, 1), days[-1], CLOSED)
++    snap, bad = t3._full_snapshot(days), []
++    base = {"alerts_at": datetime.combine(days[-1], datetime.min.time()).replace(hour=19), "events_to": days[-1]}
++    cases = [({}, "除權除息預告最後成功：尚無執行紀錄"),
++             ({"TWSE": (td[-1], 25), "TPEx": (td[-1], 1066)}, f"除權除息預告最後成功：上市 {td[-1]}（25 筆）、上櫃 {td[-1]}（1,066 筆）"),
++             ({"TWSE": (td[-3], 25)}, f"除權除息預告最後成功：上市 {td[-3]}（25 筆）、上櫃 尚無紀錄"),                     # 2 個交易日：不提醒
++             ({"TWSE": (td[-1], 25), "TPEx": (td[-4], 66)}, f"除權除息預告最後成功：上市 {td[-1]}（25 筆）、上櫃 {td[-4]}（66 筆，⚠️ 已 3 個交易日沒有更新）")]
++    t0, rc0 = fn(days, snap, now, base, CLOSED)
++    for nt, line in cases:
++        text, rc = fn(days, snap, now, dict(base, notices=nt), CLOSED)
++        L, L0 = text.splitlines(), t0.splitlines()
++        i = L.index(line) if line in L else -1
++        if i < 0 or rc != rc0 or not L[i - 1].startswith("除權息事件最後成功") or L[:i] + L[i + 1:] != [x for x in L0 if not x.startswith("除權除息預告")]:
++            bad.append((nt, line, text))
++    if "除權除息預告最後成功：尚無執行紀錄" not in fn(days, snap, now, {}, CLOSED)[0]:
++        bad.append("state = {}")
++    return bad
++
++
++def test_lines():
++    assert check_lines() == []
++
++
++# ─── 匯出（驗收 10～12）──────────────────────────────────────
++def _r(code, mk, etf, d, t, cash, stock="0", sub="0", price=None, seen=D(11, 23)):
++    return (code, mk, int(etf), d, t, None if cash is None else Decimal(cash), Decimal(stock), Decimal(sub), None if price is None else Decimal(price), seen)
++
++
++ROWS = [_r("1437", "TWSE", 0, D(12, 3), "息", "0.62465200"), _r("2543", "TWSE", 0, D(11, 23), "息", "0.50000000"),   # 除權息日 = 資料日：不匯出
++        _r("2345", "TWSE", 0, D(12, 4), "權", "0.00000000", sub="0.01782156"), _r("3706", "TWSE", 0, D(11, 27), "權", "0E-8", sub="0.08219551", price="52.00"),
++        _r("1817", "TWSE", 0, D(12, 21), "息", "1.80000000", seen=D(11, 20)), _r("1817", "TWSE", 0, D(12, 28), "息", "1.80000000"),   # 改日期
++        _r("1707", "TWSE", 0, D(12, 30), "息", "1.90000000"), _r("1707", "TWSE", 0, D(12, 10), "息", "0.10000000"),
++        _r("8942", "TPEx", 0, D(12, 10), "權息", "1.00000000", stock="0.05000000"), _r("6523", "TPEx", 0, D(11, 26), "息", "4.00000000"),
++        _r("00406A", "TWSE", 1, D(12, 2), "息", None), _r("00901", "TWSE", 1, D(11, 24), "息", "7.00000000"), _r("00958B", "TPEx", 1, D(11, 24), "息", None)]
++
++
++def check_export(fn=export.notice_export):
++    bad, on = [], {"TWSE": D(11, 23), "TPEx": D(11, 23)}
++    s, e = fn(ROWS, on, D(11, 23))
++    want_s = {"1437": [{"d": "2026-12-03", "t": "息", "c": 0.624652}], "2345": [{"d": "2026-12-04", "t": "權", "c": 0, "sr": 0.01782156, "sp": None}],
++              "3706": [{"d": "2026-11-27", "t": "權", "c": 0, "sr": 0.08219551, "sp": 52}], "1817": [{"d": "2026-12-28", "t": "息", "c": 1.8}],
++              "1707": [{"d": "2026-12-10", "t": "息", "c": 0.1}, {"d": "2026-12-30", "t": "息", "c": 1.9}],
++              "8942": [{"d": "2026-12-10", "t": "權息", "c": 1, "s": 50}], "6523": [{"d": "2026-11-26", "t": "息", "c": 4}]}
++    want_e = {"00406A": [{"d": "2026-12-02", "t": "息", "c": None}], "00901": [{"d": "2026-11-24", "t": "息", "c": 7}], "00958B": [{"d": "2026-11-24", "t": "息", "c": None}]}
++    if (s, e) != (want_s, want_e):
++        bad.append(("全部成功", s, e))
++    txt = json.dumps(s, ensure_ascii=False, separators=(",", ":"))
++    if '"c":0.624652}' not in txt or '"c":4}' not in txt or '"s":50}' not in txt or "0000" in txt:
++        bad.append(("去尾 0", txt))
++    s, e = fn(ROWS, {"TWSE": D(11, 20), "TPEx": D(11, 23)}, D(11, 23))                    # 上市這晚失敗：沿用 11/20 的快照
++    if set(s) != {"1817", "8942", "6523"} or s["1817"] != [{"d": "2026-12-21", "t": "息", "c": 1.8}] or set(e) != {"00958B"}:
++        bad.append(("沿用上次快照", s, e))
++    s, e = fn(ROWS, {"TWSE": D(11, 24)}, D(11, 23))                                       # 上市 11/24 成功但 0 筆、上櫃從沒成功
++    if s or e:
++        bad.append(("0 筆、沒有紀錄", s, e))
++    s, _ = fn(ROWS, on, D(11, 27))
++    if "3706" in s or "1437" not in s:
++        bad.append("到了除權息日改看 dv")
++    return bad
++
++
++def test_export():
++    assert check_export() == []
++
++
++def test_export_wiring():
++    src = (ROOT / "twstock" / "export.py").read_text(encoding="utf-8")
++    assert 'state = load_state(cur)\n    status = build_status(cur, latest_date, now, state)' in src                  # 和 build_status 共用，不多查
++    assert "FROM dividend_notices WHERE ex_date > ?\"\"\", latest_date).fetchall(), {m: d for m, (d, _) in state[\"notices\"].items()}, latest_date)" in src
++    i = src.index('"dv": dividends(d_, c, ev, events.get(code, [])),      # 第 24 輪 F24-6')
++    assert src.index('**({"nx": nx_stock[code]} if code in nx_stock else {}),') > i                                # 沒有 nx 不輸出鍵，舊檔不變
++    assert "            _write(p, E)" in src and src.index('                E["nx"] = nx_etf[code]') < src.index("            _write(p, E)")
++    assert hashlib.sha1(inspect.getsource(export.etf_export).encode()).hexdigest()[:12] == "711fa2b7790c"          # etf_export 一字不改
++    status = health.build_status.__code__.co_varnames[:4]
++    assert status == ("cur", "data_date", "now", "state")
++    assert "dividend_notices" not in (ROOT / "twstock" / "collectors" / "catchup.py").read_text(encoding="utf-8")
++
++
++def test_setup_db():
++    ddl = "\n".join(db.DDL)
++    for s in ("IF OBJECT_ID('dividend_notices') IS NULL", "CONSTRAINT UQ_dividend_notices UNIQUE (code, ex_date)", "cash_div     DECIMAL(16,8) NULL",
++              "CHECK (event_type IN (N'息', N'權', N'權息'))", "first_seen   DATE          NOT NULL", "last_seen    DATE          NOT NULL"):
++        assert s in ddl, s
++    readme = (ROOT / "README.md").read_text(encoding="utf-8")
++    for s in ("dividend_notices", "test_iter40", "除權除息預告"):
++        assert s in readme, s
++
++
++# ─── 前端（驗收 13～17）──────────────────────────────────────
++DAYS = ["2026-11-19", "2026-11-20"]
++FIX = {
++    "1437": {"name": "勤益控", "market": "TWSE", "prices": {"d": DAYS, "c": [43.0, 43.5]},
++             "dv": [{"d": "2025-12-05", "t": "息", "c": 0.5, "p": 40.0, "r": 39.5}], "nx": [{"d": "2026-12-03", "t": "息", "c": 0.624652}]},
++    "6523": {"name": "達爾膚", "market": "TPEx", "prices": {"d": DAYS, "c": [60.0, 61.0]}, "nx": [{"d": "2026-11-26", "t": "息", "c": 4}]},
++    "3706": {"name": "神達", "market": "TWSE", "prices": {"d": DAYS, "c": [52.0, 53.0]},
++             "dv": [{"d": "2026-07-01", "t": "息", "c": 2.0, "p": 55.0, "r": 53.0}], "nx": [{"d": "2026-11-27", "t": "權", "c": 0, "sr": 0.08219551, "sp": 52}]},
++    "6655": {"name": "科定", "market": "TWSE", "prices": {"d": DAYS, "c": [80.0, 81.0]},
++             "dv": [{"d": "2026-05-01", "t": "息", "c": 2.0, "p": 82.0}], "nx": [{"d": "2026-11-24", "t": "息", "c": 2.12345678}]},   # 假資料：8 位小數
++    "8942": {"name": "森鉅", "market": "TPEx", "prices": {"d": DAYS, "c": [20.0, 20.5]}, "dv": [{"d": "2026-03-02", "t": "息", "c": 1.0, "p": 21.0}],
++             "nx": [{"d": "2026-12-10", "t": "權息", "c": 1, "s": 50}]},                                                      # 假資料：配股
++    "00901": {"name": "永豐智能車供應鏈", "market": "TWSE", "prices": {"d": DAYS, "c": [33.0, 33.2]}, "nx": [{"d": "2026-11-24", "t": "息", "c": 7}]},
++    "00958B": {"name": "永豐ESG銀行債15+", "market": "TPEx", "prices": {"d": DAYS, "c": [9.0, 9.1]},
++               "dv": [{"d": "2026-08-20", "t": "息", "c": 0.15, "p": 9.3, "r": 9.15}], "nx": [{"d": "2026-11-24", "t": "息", "c": None}]},
++}
++LATEST40 = {"date": "2026-11-20", "stocks": {k: {"n": v["name"]} for k, v in FIX.items() if not k.startswith("00")},
++            "etfs": {"rows": {k: {"n": v["name"]} for k, v in FIX.items() if k.startswith("00")}}}
++WANT = {   # 代號：帶入值、要出現的提示（依序）、TL.info.ex
++    "1437": ({"c": "0.624652", "s": "0"}, ["已帶入 12/03 除息的預告股利（證交所預告表，僅供參考，以公司公告為準）", "上次官方參考價 39.5（12/05，前收 40）",
++                                           "近一年現金股利 = 11/20 以後 1 次合計"], "2026-12-03"),
++    "6523": ({"c": "4", "s": "0", "mk": "o"}, ["已帶入 11/26 除息的預告股利（櫃買中心預告表，僅供參考，以公司公告為準）", "2026-11-19 起沒有除權息紀錄，請依公司公告填寫"], "2026-11-26"),
++    "3706": ({"c": "2", "s": "0"}, ["已帶入 07/01 的股利（最近一次），下次請依公司公告修改", "11/27 除權含現金增資，參考價請看官方公告", "上次官方參考價 53"], "2026-11-27"),
++    "6655": ({"c": "2", "s": "0"}, ["已帶入 05/01 的股利（最近一次），下次請依公司公告修改", "11/24 除息的預告現金股利 2.12345678 元超過 6 位小數，請依公告填寫"], "2026-11-24"),
++    "8942": ({"c": "1", "s": "50", "mk": "o"}, ["已帶入 12/10 除權息的預告股利（櫃買中心預告表，僅供參考，以公司公告為準）", "近一年現金股利 = 11/20 以後 1 次合計"], "2026-12-10"),
++    "00901": ({"c": "7", "s": "0", "k": "e"}, ["已帶入 11/24 除息的預告股利（證交所預告表，僅供參考，以發行人公告為準）", "2026-11-19 起沒有除權息紀錄"], "2026-11-24"),
++    "00958B": ({"c": "0.15", "k": "e", "mk": "o"}, ["已帶入 08/20 的股利（最近一次），下次請依公司公告修改", "11/24 除息，金額待公告", "上次官方參考價 9.15"], "2026-11-24"),
++}
++
++
++def check_load(src=TOOLS):
++    js = """
++const view = { innerHTML: '' }, els = {};
++const $ = s => s === '#view' ? view : (els[s] = els[s] || { innerHTML: '', classList: { add() {} }, addEventListener(t, f) { this[t] = f; } });
++const history = { replaceState() {} }, localStore = (k, f) => f, FIX = %s;
++const loadStock = async c => JSON.parse(JSON.stringify(FIX[c]));
++(async () => {
++  const r = {};
++  for (const c of Object.keys(FIX)) { await window.renderTools('dv?c=' + c); const dv = view.innerHTML; await window.renderTools('dt?c=' + c);
++    r[c] = { html: dv, dt: view.innerHTML, dv: Object.assign({}, TL.dv), ex: TL.info.ex }; }
++  console.log(JSON.stringify(r));
++})();""" % json.dumps(FIX, ensure_ascii=False)
++    o = T._node(T.HELPERS + "\nconst window = {};\nconst App = { latest: %s, stockCache: {} };\n" % json.dumps(LATEST40, ensure_ascii=False) + src + "\n" + js)
++    if o is None:
++        return []
++    bad = []
++    for c, (st, hs, ex) in WANT.items():
++        x = o[c]
++        bad += [(c, k, x["dv"][k]) for k, v in st.items() if x["dv"][k] != v]
++        pos = [x["html"].find(h) for h in hs]
++        if -1 in pos or pos != sorted(pos):
++            bad.append((c, hs, pos))
++        if x.get("ex") != ex or f"{ex[5:7]}/{ex[8:]} 除權息，參考價另計" not in x["dt"]:
++            bad.append((c, "ex", x.get("ex")))
++        if re.search(r"NaN|undefined|Infinity", x["html"] + x["dt"]):
++            bad.append((c, "畫面"))
++    return bad
++
++
++def test_load():
++    assert check_load() == []
++
++
++CARD = [({"d": "2026-12-03", "t": "息", "c": 0.624652}, False, "即將除息 12/03：現金股利 0.624652 元（預告，以公司公告為準）"),
++        ({"d": "2026-11-24", "t": "息", "c": 7}, True, "即將除息 11/24：配息 7 元（預告，以發行人公告為準）"),
++        ({"d": "2026-12-02", "t": "息", "c": None}, True, "即將除息 12/02：金額待公告（預告，以發行人公告為準）"),
++        ({"d": "2026-11-27", "t": "權", "c": 0, "sr": 0.08219551, "sp": 52}, False, "即將除權 11/27：含現金增資，認購價 52 元（預告，以公司公告為準）"),
++        ({"d": "2026-12-03", "t": "權", "c": 0, "sr": 0.16060945, "sp": None}, False, "即將除權 12/03：含現金增資，認購價尚未公告（預告，以公司公告為準）"),
++        ({"d": "2026-12-10", "t": "權息", "c": 1, "s": 50}, False, "即將除權息 12/10：現金股利 1 元、每千股配股 50 股（預告，以公司公告為準）"),
++        ({"d": "2026-12-09", "t": "息", "c": 1e-8}, False, "即將除息 12/09：現金股利 0.00000001 元（預告，以公司公告為準）")]   # 不出現科學記號
++
++
++def check_card(src=STK):
++    js = T.HELPERS + "\n" + "\n".join(T._grab(src, n) for n in ("dfmt", "nxText")) + "\nconsole.log(JSON.stringify(%s.map(([n, e]) => nxText(n, e))));" % \
++        json.dumps([[n, e] for n, e, _ in CARD], ensure_ascii=False)
++    o = T._node(js)
++    if o is None:
++        return []
++    bad = [(w, g) for (_, _, w), g in zip(CARD, o) if g != w]
++    line = next((x for x in src.splitlines() if "dv-nx" in x), "")
++    dom = """
++const h = { parentElement: { html: '', insertAdjacentHTML(p, s) { this.html += p + s; } } }, code = '1437';
++for (const [E, data] of [[null, { nx: [%s] }], [{}, { nx: [%s] }], [null, {}]]) { const dvh = h;
++%s
++}
++console.log(JSON.stringify(h.parentElement.html));""" % (json.dumps(CARD[0][0]), json.dumps(CARD[2][0]), line)
++    o = T._node(T.HELPERS + "\n" + "\n".join(T._grab(src, n) for n in ("dfmt", "nxText")) + dom)
++    if o != 'afterend<div class="small dv-nx">%s</div>afterend<div class="small dv-nx">%s</div>' % (CARD[0][2], CARD[2][2]):
++        bad.append(("DOM", o))
++    return bad
++
++
++def test_card():
++    assert check_card() == []
++    i = STK.index("if (dvh) dvh.insertAdjacentHTML('afterend', `<span class=\"sp\"></span><a class=\"small dv-go\"")
++    j = STK.index("if (dvh && data.nx) dvh.parentElement.insertAdjacentHTML('afterend'")
++    assert STK.index("const dvh = [...document.querySelectorAll") < i < j < STK.index("onSeg('stockTabSeg'")          # 第 39 輪的兩行不動、接在後面
++    assert hashlib.sha1(T._grab(STK, "divHTML").encode()).hexdigest()[:12] == "ce48816af767"                     # 卡片字面不變
++
++
++def test_wiring_and_words():
++    for f in ("tools.js", "app.js", "stock.js", "app.css"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
++    seg = "".join(T._grab(TOOLS, n) for n in ("tlNx", "tlDvLoad", "tlLoad")) + T._grab(STK, "nxText")
++    for w in (".at(", "??", "?.", "||=", "&&=", "replaceAll", "structuredClone", "Object.hasOwn", "findLast", "parseFloat("):
++        assert w not in seg, w                                                                                    # node 14、不用浮點解析
++    src = seg + inspect.getsource(notices) + "".join(w for _, _, w in CARD) + "".join(h for _, hs, _ in WANT.values() for h in hs)
++    for w in ("買進", "賣出", "反彈", "見底", "買點", "超賣", "超買", "推薦", "強勢股", "飆股", "勝率", "保證", "穩賺", "建議", "搶息", "參加除息", "值得",
++              "划算", "高息", "必填息", "確定配發"):
++        assert w not in src, w
++
++
++# ─── 反證（驗收 19）：改壞後上面的檢查要失敗 ─────────────────────
++@contextlib.contextmanager
++def _mutate(mod, name, a, b):
++    """把 mod.name 函式的原始碼換掉一段後在 mod 的命名空間重新定義（流程測試會用到），結束時換回原函式。"""
++    fn = getattr(mod, name)
++    src = inspect.getsource(fn)
++    assert src.count(a) == 1, (name, a)
++    exec(compile(src.replace(a, b), mod.__file__, "exec"), mod.__dict__)
++    try:
++        yield getattr(mod, name)
++    finally:
++        setattr(mod, name, fn)
++
++
++PY_MUTANTS = [
++    ("匯出不比 last_seen", export, "notice_export", " or seen != on[market]", "", lambda f: check_export(f)),
++    ("配股率不乘 1,000", export, "notice_export", "_num(ratio * 1000)", "_num(ratio)", lambda f: check_export(f)),
++    ("除權息日 = 資料日也匯出", export, "notice_export", "if d <= today", "if d < today", lambda f: check_export(f)),
++    ("待公告存成 0", notices, "parse_notices", '"cash_div": num(3),', '"cash_div": num(3) or Decimal(0),', lambda f: check_parse(f)),
++    ("認購價不看現增", notices, "parse_notices", '"sub_price": num(6) if sub else None', '"sub_price": num(6)', lambda f: check_parse(f)),
++    ("MERGE 更新 first_seen", notices, "collect_notices", "sub_price = s.sub_price, last_seen = ?", "sub_price = s.sub_price, first_seen = ?, last_seen = ?",
++     lambda f: check_write(f)),
++    ("不是 isolated", notices, "fetch_notices", "isolated=True", "isolated=False", lambda f: check_isolation()),
++    ("notices 失敗算異常", catchup, "_run_locked", '("alerts", "events", "revenue", "financials", "industry", "chains")',
++     '("alerts", "events", "revenue", "financials", "industry", "chains", "notices.TWSE")', lambda f: check_isolation()),
++    ("_undated_counts 加入新表", catchup, "_undated_counts", '"quarterly_financials")', '"quarterly_financials", "dividend_notices")', lambda f: check_counts(f)),
++    ("每次都排預告", catchup, "make_plan", '"financials": None, "notices": False}', '"financials": None, "notices": True}', lambda f: check_timing()),
++    ("collect --date 也抓", catchup, "execute_plan", 'if plan.get("notices")', 'if plan.get("events")', lambda f: check_timing()),
++    ("load_state 取最舊", health, "load_state", 'state["notices"].setdefault(mk, (date.fromisoformat(v["on"]), v["n"]))',
++     'state["notices"][mk] = (date.fromisoformat(v["on"]), v["n"])', lambda f: check_state(f)),
++    ("過期門檻 2 個交易日", health, "notices_line", "if lag >= 3", "if lag >= 2", lambda f: check_lines()),
++]
++JS_MUTANTS = [
++    ("現增也帶入", TOOLS, "  if (n.sr) return [false,", "  if (0) return [false,", check_load),
++    ("待公告也帶入", TOOLS, "  if (n.c == null) return [false,", "  if (0) return [false,", check_load),
++    ("超過 6 位也帶入", TOOLS, "tlBig(String(n.c), 6) === null", "tlBig(String(n.c), 8) === null", check_load),
++    ("ETF 也寫公司", TOOLS, "以${e ? '發行人' : '公司'}公告為準", "以公司公告為準", check_load),
++    ("ex 不看 nx", TOOLS, "ex: d.nx ? d.nx[0].d : (d.dv", "ex: (d.dv", check_load),
++    ("卡片 ETF 也寫公司", STK, "（預告，以${etf ? '發行人' : '公司'}公告為準）", "（預告，以公司公告為準）", check_card),
++    ("卡片四捨五入到 2 位", STK, "dfmt(n.c, 8)", "dfmt(n.c, 2)", check_card),
++]
++
++
++def test_contrast():
++    for name, mod, fn, a, b, check in PY_MUTANTS:
++        with _mutate(mod, fn, a, b) as f, contextlib.redirect_stdout(io.StringIO()):
++            try:
++                fails = check(f)
++            except Exception as e:                                                                             # 改壞到執行失敗也算擋下
++                fails = [repr(e)]
++        assert fails, "反證沒有擋下：" + name
++    if T._node("console.log('1')") is None:
++        return
++    for name, src, a, b, check in JS_MUTANTS:
++        assert src.count(a) == 1, (name, a)
++        assert check(src.replace(a, b)), "反證沒有擋下：" + name
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")
+diff --git a/twstock/collectors/catchup.py b/twstock/collectors/catchup.py
+index e3b7866..4d2c6ef 100644
+--- a/twstock/collectors/catchup.py
++++ b/twstock/collectors/catchup.py
+@@ -25,6 +25,7 @@ from .events import LOOKBACK_DAYS, collect_events
+ from .financials import collect_financials
+ from .futures import collect_futures, collect_futures_institutional
+ from .industry import update_industry
++from .notices import collect_notices
+ from .revenue import collect_monthly_revenue, revenue_month_for
+ 
+ DEFAULT_DAYS, MAX_DAYS = 10, 30
+@@ -41,10 +42,11 @@ def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, reven
+     純函式：輸入現在時間、資料現況、執行紀錄、日曆；輸出待抓清單（不連網、不連資料庫）。
+     days：評估範圍；by_date：[(日期, 鍵)]；tpex_months；futures、futures_oi：(起, 迄)；alerts：bool；
+     events：(起, 迄)；revenue：[(年, 月)]；financials：(年, 季) 或 None（第 10 輪：今天在季報窗口內、今天還沒收過、還沒收齊）。
++    notices：bool（第 40 輪 F40-1：除權除息預告表，和 events 同一個條件，每個新交易日一次；collect --date 不抓）。
+     """
+     days = due_days(now, n, closed)
+     plan = {"days": days, "by_date": [], "tpex_months": [], "futures": None, "futures_oi": None,
+-            "alerts": False, "events": None, "revenue": [], "financials": None}
++            "alerts": False, "events": None, "revenue": [], "financials": None, "notices": False}
+     if not days:
+         return plan
+     med = medians(snap)
+@@ -68,6 +70,7 @@ def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, reven
+         oldest = plan["by_date"][0][0] if plan["by_date"] else anchor
+         since = min(oldest, state["events_to"] or anchor)
+         plan["events"] = (since - timedelta(days=LOOKBACK_DAYS), anchor)
++        plan["notices"] = True
+     if state["revenue_on"] != now.date() and revenue_counts is not None:
+         for y, m in sorted({x for x in map(revenue_month_for, days) if x}):
+             prev = (y - 1, 12) if m == 1 else (y, m - 1)
+@@ -133,6 +136,11 @@ def execute_plan(plan: dict, now: datetime, no_revenue=False) -> tuple:
+     if plan["events"] and _guard("events", errors, lambda: got.update(collect_events(*plan["events"]))):
+         undated["events_to"] = str(plan["events"][1])
+         undated["events"] = got                 # 第 24 輪 F24-7a：{"stocks": 筆數, "etfs": 筆數}
++    # 第 40 輪 F40-1：預告表兩個市場各抓各的（isolated，不重試）；失敗只印 ⚠️，不列入 undated_errors（不算異常、不通知）
++    for mk in ("TWSE", "TPEx") if plan.get("notices") else ():
++        n = []
++        if _guard(f"notices.{mk}", errors, lambda: n.append(collect_notices(mk, now.date()))):
++            undated.setdefault("notices", {})[mk] = {"on": str(now.date()), "n": n[0]}
+     if plan["revenue"] and not no_revenue:
+         if all([_guard("revenue", errors, collect_monthly_revenue, y, m) for y, m in plan["revenue"]]):
+             undated["revenue"] = str(now.date())
+diff --git a/twstock/collectors/notices.py b/twstock/collectors/notices.py
+new file mode 100644
+index 0000000..5f9baf6
+--- /dev/null
++++ b/twstock/collectors/notices.py
+@@ -0,0 +1,95 @@
++"""
++第 40 輪 F40-1：除權除息預告表（上市證交所 TWT48U、上櫃櫃買 OpenAPI tpex_exright_prepost）。
++兩個來源都只有當下快照（不能回補）；collect --catch-up 每個新交易日抓一次（和除權息事件同一個條件），寫入 dividend_notices。
++鍵 = (代號, 除權息日)；不刪除，改日期或消失的舊列靠 last_seen 停在舊日自然失效（匯出只取最近一次成功快照）。
++"""
++from decimal import Decimal
++
++from .. import db
++from ..fetch import SchemaError, clean_number, is_etf_code, is_valid_stock_code, request
++from .alerts import roc_date
++
++NOTICE_TYPES = ("息", "權", "權息")
++_URLS = {"TWSE": ("https://www.twse.com.tw/rwd/zh/exRight/TWT48U", {"response": "json"}),
++         "TPEx": ("https://www.tpex.org.tw/openapi/v1/tpex_exright_prepost", None)}
++# (除權除息日, 代號, 類型, 現金股利, 無償配股率, 現增配股率, 現增認購價)；上櫃欄名照官方拼法 ExRrights
++_FIELDS = {"TWSE": ("除權除息日期", "股票代號", "除權息", "現金股利", "無償配股率", "現金增資配股率", "現金增資認購價"),
++           "TPEx": ("ExRrightsExDividendDate", "SecuritiesCompanyCode", "ExRrightsExDividend", "CashDividend", "StockDividendRatio",
++                    "SubscriptionRatioToNewSharesIssued", "SubscriptionPricePerShare")}
++_LABEL = {"TWSE": "上市", "TPEx": "上櫃"}
++
++
++def parse_notices(market: str, data) -> list:
++    """官方回應 → [{code, ex_date, event_type, cash_div, stock_ratio, sub_ratio, sub_price}]（Decimal；cash_div、sub_price 可為 None）。
++    沒有資料（上市 stat 不是 OK 且沒有 fields/data、上櫃空陣列）→ []；有資料但欄位不符 → SchemaError。
++    只收一般股票與 ETF（ETN、受益證券等不收）；日期或類型無法解析的列略過；同鍵只留最後一筆。"""
++    names = _FIELDS[market]
++    if market == "TWSE":
++        if not isinstance(data, dict):
++            raise SchemaError("TWT48U 回應不是 JSON 物件")
++        fields, rows = data.get("fields"), data.get("data")
++        if data.get("stat") != "OK" and not fields and not rows:
++            return []
++        idx = {f: i for i, f in enumerate(fields or [])}
++        if not all(n in idx for n in names):
++            raise SchemaError(f"TWT48U 欄位不符：{fields}")
++        rows = [dict(zip(names, (r[idx[n]] if idx[n] < len(r) else None for n in names))) for r in rows or []]
++    else:
++        if not isinstance(data, list):
++            raise SchemaError("tpex_exright_prepost 回應不是陣列")
++        if data and not (isinstance(data[0], dict) and all(n in data[0] for n in names)):
++            raise SchemaError(f"tpex_exright_prepost 欄位不符：{list(data[0]) if isinstance(data[0], dict) else data[0]}")
++        rows = [r for r in data if isinstance(r, dict)]
++    out = {}
++    for r in rows:
++        code, d = str(r[names[1]] or "").strip(), roc_date(r[names[0]])
++        kind = str(r[names[2]] or "").strip().lstrip("除")       # 櫃買「除息／除權／除權息」→ 去掉「除」
++        if d is None or kind not in NOTICE_TYPES or not (is_valid_stock_code(code) or is_etf_code(code)):
++            continue
++        num = lambda k: clean_number(r[names[k]], Decimal)
++        sub = num(5) or Decimal(0)
++        out[(code, d)] = {"code": code, "ex_date": d, "event_type": kind, "cash_div": num(3), "stock_ratio": num(4) or Decimal(0),
++                          "sub_ratio": sub, "sub_price": num(6) if sub else None}     # 「待公告」「尚未公告」「註4」→ None
++    return list(out.values())
++
++
++def fetch_notices(market: str) -> list:
++    url, params = _URLS[market]
++    return parse_notices(market, request("GET", url, isolated=True, **({"params": params} if params else {})))
++
++
++def collect_notices(market: str, seen) -> int:
++    """抓一個市場的預告表並 MERGE（只寫 stocks、etfs 表已有的代號；first_seen 只在新增時寫）。seen = 抓取日（台灣日期）。回傳解析後的筆數。"""
++    rows = fetch_notices(market)
++    if rows:
++        conn = db.connect()
++        try:
++            # 小數轉成不帶指數的字串，OPENJSON 轉 DECIMAL 不會遇到 1E-8 這種寫法
++            j = db.to_json([{**{k: format(v, "f") if isinstance(v, Decimal) else v for k, v in r.items()},
++                             "ex_date": r["ex_date"].isoformat()} for r in rows])
++            conn.cursor().execute("""
++                MERGE dividend_notices AS t
++                USING (
++                    SELECT j.*, CAST(CASE WHEN et.etf_id IS NULL THEN 0 ELSE 1 END AS BIT) AS is_etf
++                    FROM OPENJSON(?) WITH (
++                        code NVARCHAR(10), ex_date DATE, event_type NVARCHAR(4), cash_div DECIMAL(16,8),
++                        stock_ratio DECIMAL(16,8), sub_ratio DECIMAL(16,8), sub_price DECIMAL(10,2)
++                    ) AS j
++                    LEFT JOIN stocks st ON st.stock_code = j.code
++                    LEFT JOIN etfs et ON et.etf_code = j.code
++                    WHERE st.stock_id IS NOT NULL OR et.etf_id IS NOT NULL
++                ) AS s
++                ON t.code = s.code AND t.ex_date = s.ex_date
++                WHEN MATCHED THEN UPDATE SET
++                    market = ?, is_etf = s.is_etf, event_type = s.event_type, cash_div = s.cash_div, stock_ratio = s.stock_ratio,
++                    sub_ratio = s.sub_ratio, sub_price = s.sub_price, last_seen = ?, updated_at = GETDATE()
++                WHEN NOT MATCHED THEN
++                    INSERT (code, market, is_etf, ex_date, event_type, cash_div, stock_ratio, sub_ratio, sub_price, first_seen, last_seen)
++                    VALUES (s.code, ?, s.is_etf, s.ex_date, s.event_type, s.cash_div, s.stock_ratio, s.sub_ratio, s.sub_price, ?, ?);
++            """, j, market, seen, market, seen, seen)
++            conn.commit()
++        finally:
++            conn.close()
++    span = f"（除權息日 {min(r['ex_date'] for r in rows)} ～ {max(r['ex_date'] for r in rows)}）" if rows else ""
++    print(f"  📅 {_LABEL[market]}除權除息預告 {len(rows)} 筆{span}")
++    return len(rows)
+diff --git a/twstock/db.py b/twstock/db.py
+index 6a34582..cd1cb12 100644
+--- a/twstock/db.py
++++ b/twstock/db.py
+@@ -538,6 +538,26 @@ DDL = [
+         CONSTRAINT UQ_foreign_holdings UNIQUE (stock_id, trade_date)
+     )
+     """,
++    # 第 40 輪 F40-1：除權除息預告表（上市 TWT48U、上櫃 tpex_exright_prepost 的快照；股票、ETF 同表，不用外鍵）
++    """
++    IF OBJECT_ID('dividend_notices') IS NULL
++    CREATE TABLE dividend_notices (
++        id           INT IDENTITY(1,1) PRIMARY KEY,
++        code         NVARCHAR(10)  NOT NULL,   -- 股票或 ETF 代號（寫入時只收 stocks、etfs 表已有的）
++        market       NVARCHAR(4)   NOT NULL CHECK (market IN ('TWSE', 'TPEx')),
++        is_etf       BIT           NOT NULL,
++        ex_date      DATE          NOT NULL,   -- 除權除息日
++        event_type   NVARCHAR(4)   NOT NULL CHECK (event_type IN (N'息', N'權', N'權息')),
++        cash_div     DECIMAL(16,8) NULL,       -- 每股現金股利；NULL = 待公告
++        stock_ratio  DECIMAL(16,8) NOT NULL DEFAULT 0,   -- 每股無償配股率（× 1,000 = 每千股配股）
++        sub_ratio    DECIMAL(16,8) NOT NULL DEFAULT 0,   -- 現金增資配股率
++        sub_price    DECIMAL(10,2) NULL,       -- 現金增資認購價；尚未公告或沒有現增 = NULL
++        first_seen   DATE          NOT NULL,   -- 第一次在預告表看到的抓取日（台灣日期）
++        last_seen    DATE          NOT NULL,   -- 最近一次在預告表看到的抓取日
++        updated_at   DATETIME      NOT NULL DEFAULT GETDATE(),
++        CONSTRAINT UQ_dividend_notices UNIQUE (code, ex_date)
++    )
++    """,
+     # 第 11 輪：發行股數（update_industry 一併寫入；目前股數，不保留歷史）
+     "IF COL_LENGTH('stocks', 'shares') IS NULL ALTER TABLE stocks ADD shares BIGINT NULL",
+     # 第 19 輪：減除股利參考價（只扣股利、不扣現金增資；TWT49U、TPEX_EX 才有，其他來源 NULL），分辨配股與現金增資
+@@ -588,4 +608,4 @@ def setup_database():
+           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
+           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
+           "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
+-          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、etf_holding_gaps")
++          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、etf_holding_gaps")
+diff --git a/twstock/export.py b/twstock/export.py
+index d0a5227..296a383 100644
+--- a/twstock/export.py
++++ b/twstock/export.py
+@@ -24,7 +24,7 @@ from . import db
+ from .analysis.flow import LONG, group_flows, load_concepts, streak
+ from .analysis.forecast import build_forecast, load_oi
+ from .config import SITE_DATA_DIR, tw_now
+-from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, prev_quarter
++from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, load_state, prev_quarter
+ from .tradingcal import is_trading_day, load_closed, trading_days
+ 
+ REPLAY = 20                    # 泡泡圖回放天數
+@@ -863,6 +863,31 @@ def etf_gaps(d_, c, ch, market):
+             and abs(float(c[i]) - float(ch[i]) - float(c[i - 1])) >= 0.005]
+ 
+ 
++def _num(v):
++    """DECIMAL → JSON 數字，去掉尾端 0（2.60000000 → 2.6、7.00000000 → 7）。"""
++    x = float(v)
++    return int(x) if x.is_integer() else x
++
++
++def notice_export(rows, on, today) -> tuple:
++    """
++    第 40 輪 F40-2：除權除息預告 → ({股票代號: nx}, {ETF 代號: nx})，nx 依除權息日舊到新。
++    rows = (code, market, is_etf, ex_date, event_type, cash_div, stock_ratio, sub_ratio, sub_price, last_seen)；
++    on = {市場: 最近一次成功的抓取日}（load_state 的 notices）。只取 last_seen = 該市場 on、且除權息日 > today（資料日）的列：
++    某市場這晚失敗就沿用上次快照；預告改日期時舊列的 last_seen 停在舊日，不再匯出；到了除權息日改看 dv／ev。
++    c：每股現金（None = 待公告）；s：每千股配股 = 配股率 × 1,000（> 0 才有）；sr、sp：現增配股率與認購價（sr > 0 才有，sp 可為 None）。
++    """
++    out = ({}, {})
++    for code, market, is_etf, d, t, cash, ratio, sub, price, seen in sorted(rows, key=lambda r: (r[0], r[3])):
++        if d <= today or market not in on or seen != on[market]:
++            continue
++        x = {"d": str(d), "t": t, "c": None if cash is None else _num(cash),
++             **({"s": _num(ratio * 1000)} if ratio else {}),
++             **({"sr": _num(sub), "sp": None if price is None else _num(price)} if sub else {})}
++        out[bool(is_etf)].setdefault(code, []).append(x)
++    return out
++
++
+ def etf_export(code, name, market, rows, mrows, srows, mdate, md5, sdate, sd5, events=()):
+     """
+     etfp/{代號}.json。prices 同個股格式（原始價；量為張；ch = 官方漲跌，推測調整日且官方為 0 → null「不比價」）；
+@@ -1624,7 +1649,11 @@ def export_all() -> float:
+     # 寬度輸出 BREADTH_DAYS 天，前面多 60 天給 MA60
+     b_days = [r[0] for r in cur.execute(f"SELECT DISTINCT TOP {BREADTH_DAYS + 60} trade_date FROM daily_prices ORDER BY trade_date DESC")][::-1]
+     p_days = sorted({r[0] for rows in prices.values() for r in rows})   # 第 23 輪 F23-1：完整交易日序列（b_days 只有 120 天，120 日要第 121 天）
+-    status = build_status(cur, latest_date, now)
++    state = load_state(cur)
++    status = build_status(cur, latest_date, now, state)
++    nx_stock, nx_etf = notice_export(cur.execute("""
++        SELECT code, market, is_etf, ex_date, event_type, cash_div, stock_ratio, sub_ratio, sub_price, last_seen
++        FROM dividend_notices WHERE ex_date > ?""", latest_date).fetchall(), {m: d for m, (d, _) in state["notices"].items()}, latest_date)   # 第 40 輪 F40-2
+     valuation, stock_val, val_date, stock_band = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe；第 37 輪加河流圖
+     fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
+     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
+@@ -1735,6 +1764,7 @@ def export_all() -> float:
+             **({"pf": stock_perf(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))], p_days,
+                                  idx_close[info["market"]], w52_start)} if d_[-1] == latest_date and any(x is not None for x in c) else {}),
+             "dv": dividends(d_, c, ev, events.get(code, [])),      # 第 24 輪 F24-6：股利與填息（沒有紀錄是 []）
++            **({"nx": nx_stock[code]} if code in nx_stock else {}),     # 第 40 輪 F40-2：下一次除權除息預告
+         })
+         # 市場寬度：還原收盤（無成交日不列入）、成交額
+         b_series[info["market"]].append({d_[i]: float(c[i]) * af[i] for i in range(len(d_)) if d_[i] >= b_from and c[i] is not None})
+@@ -1845,6 +1875,8 @@ def export_all() -> float:
+             p = SITE_DATA_DIR / "etfp" / f"{code}.json"
+             E = etf_export(code, name, m, epx[code], emg.get(code, {}), esb.get(code, {}), mlast.get(m), m5.get(m),
+                            ds[-1] if ds else None, ds[-6] if len(ds) >= 6 else None, eev.get(code, ()))
++            if code in nx_etf:
++                E["nx"] = nx_etf[code]                         # 第 40 輪 F40-2：下一次除權除息預告（放在最後；沒有就不輸出）
+             _write(p, E)
+             edv[code] = etf_div_row(E.get("dv", []), latest_date)
+             n_etf, kb_etf = n_etf + 1, kb_etf + p.stat().st_size / 1024
+diff --git a/twstock/health.py b/twstock/health.py
+index 93c1eb6..621f81e 100644
+--- a/twstock/health.py
++++ b/twstock/health.py
+@@ -232,9 +232,10 @@ def load_state(cur) -> dict:
+     與最後一次收集（last_run：時間、指令、有無新資料）。
+     第 24 輪：events_at、events_n（事件最後成功那次的完成時間與 {"stocks", "etfs"} 筆數，舊紀錄沒有筆數為 None）、
+     warnings（最後一次收集的警告）、export_failed（最近一筆「有新資料或有匯出」的紀錄是 abnormal 且沒有匯出耗時 = 匯出失敗）。
++    第 40 輪：notices = {市場: (最近一次成功的抓取日, 筆數)}，兩個市場各自取最新一筆；從沒成功的市場沒有鍵。
+     """
+     state = {"alerts_at": None, "events_to": None, "revenue_on": None, "financials_on": None, "collected_at": None, "last_run": None,
+-             "events_at": None, "events_n": None, "warnings": [], "export_failed": None}
++             "events_at": None, "events_n": None, "warnings": [], "export_failed": None, "notices": {}}
+     for finished, new_data, detail, *extra in cur.execute(
+             "SELECT TOP 200 finished_at, new_data, detail, command, outcome, export_seconds FROM collect_runs ORDER BY run_id DESC").fetchall():
+         d = json.loads(detail)
+@@ -255,6 +256,8 @@ def load_state(cur) -> dict:
+             state["revenue_on"] = date.fromisoformat(und["revenue"])
+         if und.get("financials") and state["financials_on"] is None:
+             state["financials_on"] = date.fromisoformat(und["financials"])
++        for mk, v in (und.get("notices") or {}).items():
++            state["notices"].setdefault(mk, (date.fromisoformat(v["on"]), v["n"]))
+     return state
+ 
+ 
+@@ -457,6 +460,7 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
+                (f"，股票 {ev_n.get('stocks', 0):,} 筆、ETF {ev_n.get('etfs', 0):,} 筆（含往回 7 天重查）" if ev_n else "")
+                if ev_to else "除權息事件最後成功：尚無執行紀錄")
+     out += [f"⚠️  最後一次收集的警告：{w}" for w in state.get("warnings") or []]
++    out.append(notices_line(state.get("notices"), days[-1], closed))         # 第 40 輪 F40-1：放在警告之後，事件與警告兩行相鄰不變
+     rev = revenue_status(now.date(), revenue, state.get("revenue_on"), closed) if revenue is not None else None
+     if rev:
+         out.append(rev[1] if rev[0] != ABNORMAL else f"{rev[1]}，❌ 異常")
+@@ -480,6 +484,19 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
+     return "\n".join(out), (1 if abnormal else 0)
+ 
+ 
++def notices_line(notices, last_day: date, closed) -> str:
++    """第 40 輪 F40-1：check 的預告表一行（只顯示，不算異常）。距 last_day 已 ≥ 3 個交易日沒有成功的市場加 ⚠️。"""
++    if not notices:
++        return "除權除息預告最後成功：尚無執行紀錄"
++    def one(mk, label):
++        if mk not in notices:
++            return f"{label} 尚無紀錄"
++        on, n = notices[mk]
++        lag = len(trading_days(on + timedelta(days=1), last_day, closed))
++        return f"{label} {on}（{n:,} 筆" + (f"，⚠️ 已 {lag} 個交易日沒有更新）" if lag >= 3 else "）")
++    return f"除權除息預告最後成功：{one('TWSE', '上市')}、{one('TPEx', '上櫃')}"
++
++
+ def revenue_counts(cur) -> dict:
+     """{(年, 月): 家數}；SQL 與 collectors.catchup._revenue_counts 相同。"""
+     return {(y, m): n for y, m, n in cur.execute(
+@@ -555,8 +572,9 @@ def site_closed(closed, data_date: date) -> list:
+     return sorted(str(d) for d in closed if d.weekday() < 5 and d >= data_date - timedelta(days=45))
+ 
+ 
+-def build_status(cur, data_date: date, now: datetime) -> dict:
+-    closed, state = load_closed(cur), load_state(cur)
++def build_status(cur, data_date: date, now: datetime, state=None) -> dict:
++    """state：呼叫端已讀的 load_state（第 40 輪匯出共用，不再查一次）；None = 這裡讀。"""
++    closed, state = load_closed(cur), state or load_state(cur)
+     at, src = collected_at(cur, state)
+     snap = load_snapshot(cur, data_date - timedelta(days=45), data_date)
+     return {"collected_at": at, "collected_src": src, "exported_at": now.isoformat(timespec="seconds"),

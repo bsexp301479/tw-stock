@@ -71,6 +71,12 @@ function divHTML(dv, mkt, P, etf = false) {
     `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
 }
 
+// 第 40 輪 F40-3：股利卡「即將除權息」一行（nx 一筆；數字照預告值，不另外四捨五入）
+function nxText(n, etf) {
+  const p = [n.c > 0 ? `${etf ? '配息' : '現金股利'} ${dfmt(n.c, 8)} 元` : '', n.s > 0 ? `每千股配股 ${dfmt(n.s, 8)} 股` : '',
+    n.sr ? `含現金增資，認購價${n.sp == null ? '尚未公告' : ` ${dfmt(n.sp, 2)} 元`}` : '', n.c == null ? '金額待公告' : ''].filter(Boolean);
+  return `即將${n.t === '息' ? '除息' : n.t === '權' ? '除權' : '除權息'} ${md(n.d)}：${p.join('、')}（預告，以${etf ? '發行人' : '公司'}公告為準）`;
+}
 const ETF_DIV_FULL = '填息日 = 除息日起（含當天）第一個收盤大於或等於除息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除息日當天算第 1 天，無成交日也算。' +
   '除息日、配息與除息前收盤來自證交所、櫃買中心的除息表。上市 ETF 還沒填息就遇到推測的其他價格調整（多為分割）時，寫「不再比較」；上櫃 ETF 無法辨識分割，照常比較。' +
   '還差 = 除息前收盤 − 最新收盤，% 以最新收盤計算。ETF 的配息來源可能含收益平準金、資本利得，不等於獲利。';
@@ -340,6 +346,7 @@ window.renderStock = async function (code, sub) {
   if (App.ptStuck) { App.ptStuck = false; ptab.style.position = 'static'; const y = ptab.getBoundingClientRect().top + scrollY; ptab.style.position = ''; scrollTo(0, y - topH()); }   // 固定狀態換分頁：新分頁從分頁列下方開始
   const dvh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '配息與填息' : '股利與填息'))[0];   // 第 39 輪 F39-3：連結加在 divHTML 外，卡片字面不變
   if (dvh) dvh.insertAdjacentHTML('afterend', `<span class="sp"></span><a class="small dv-go" href="#/tools/dv?c=${code}">試算 →</a>`);
+  if (dvh && data.nx) dvh.parentElement.insertAdjacentHTML('afterend', data.nx.map(n => `<div class="small dv-nx">${esc(nxText(n, E))}</div>`).join(''));   // 第 40 輪 F40-3：卡片標題列下一行
   onSeg('stockTabSeg', v => { App.ptStuck = $('#view .s-head').getBoundingClientRect().bottom <= topH(); localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
   $('#hlMore')?.addEventListener('click', e => e.currentTarget.parentElement.classList.add('open'));
   $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });

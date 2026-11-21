@@ -25,6 +25,7 @@ from .events import LOOKBACK_DAYS, collect_events
 from .financials import collect_financials
 from .futures import collect_futures, collect_futures_institutional
 from .industry import update_industry
+from .notices import collect_notices
 from .revenue import collect_monthly_revenue, revenue_month_for
 
 DEFAULT_DAYS, MAX_DAYS = 10, 30
@@ -41,10 +42,11 @@ def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, reven
     純函式：輸入現在時間、資料現況、執行紀錄、日曆；輸出待抓清單（不連網、不連資料庫）。
     days：評估範圍；by_date：[(日期, 鍵)]；tpex_months；futures、futures_oi：(起, 迄)；alerts：bool；
     events：(起, 迄)；revenue：[(年, 月)]；financials：(年, 季) 或 None（第 10 輪：今天在季報窗口內、今天還沒收過、還沒收齊）。
+    notices：bool（第 40 輪 F40-1：除權除息預告表，和 events 同一個條件，每個新交易日一次；collect --date 不抓）。
     """
     days = due_days(now, n, closed)
     plan = {"days": days, "by_date": [], "tpex_months": [], "futures": None, "futures_oi": None,
-            "alerts": False, "events": None, "revenue": [], "financials": None}
+            "alerts": False, "events": None, "revenue": [], "financials": None, "notices": False}
     if not days:
         return plan
     med = medians(snap)
@@ -68,6 +70,7 @@ def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, reven
         oldest = plan["by_date"][0][0] if plan["by_date"] else anchor
         since = min(oldest, state["events_to"] or anchor)
         plan["events"] = (since - timedelta(days=LOOKBACK_DAYS), anchor)
+        plan["notices"] = True
     if state["revenue_on"] != now.date() and revenue_counts is not None:
         for y, m in sorted({x for x in map(revenue_month_for, days) if x}):
             prev = (y - 1, 12) if m == 1 else (y, m - 1)
@@ -133,6 +136,11 @@ def execute_plan(plan: dict, now: datetime, no_revenue=False) -> tuple:
     if plan["events"] and _guard("events", errors, lambda: got.update(collect_events(*plan["events"]))):
         undated["events_to"] = str(plan["events"][1])
         undated["events"] = got                 # 第 24 輪 F24-7a：{"stocks": 筆數, "etfs": 筆數}
+    # 第 40 輪 F40-1：預告表兩個市場各抓各的（isolated，不重試）；失敗只印 ⚠️，不列入 undated_errors（不算異常、不通知）
+    for mk in ("TWSE", "TPEx") if plan.get("notices") else ():
+        n = []
+        if _guard(f"notices.{mk}", errors, lambda: n.append(collect_notices(mk, now.date()))):
+            undated.setdefault("notices", {})[mk] = {"on": str(now.date()), "n": n[0]}
     if plan["revenue"] and not no_revenue:
         if all([_guard("revenue", errors, collect_monthly_revenue, y, m) for y, m in plan["revenue"]]):
             undated["revenue"] = str(now.date())

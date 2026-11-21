@@ -276,18 +276,29 @@ function tlDvForm(st) {
     tlIn('p', '除權息前收盤（元）', st.p) + tlIn('c', '現金股利（元／股）', st.c, '空白 = 0') + tlIn('s', '每千股配股（股）', st.s, '空白 = 0') +
     tlIn('n', '持有股數', st.n) + tlIn('cost', '持有成本（元／股）', st.cost, '選填') + tlIn('y1', '近一年現金股利（元／股）', st.y1, '選填');
 }
-// 第 39 輪 F39-2：帶入最近一次股利（D82-3 = A：前收用最新收盤）與近一年現金股利合計；回傳要帶入的欄位與提示
-function tlDvLoad(d) {
-  const V = d.dv || [], x = V[V.length - 1], tw = d.market !== 'TPEx', D = d.prices.d;
+// 第 40 輪 F40-3：下一次除權除息預告（nx 第一筆）→ [帶入？, 提示]；含現增、待公告、超過 6 位小數不帶入（D86-3、D86-4 = A）
+function tlNx(n, tw, e) {
+  const w = `${md(n.d)} ${n.t === '息' ? '除息' : n.t === '權' ? '除權' : '除權息'}`;
+  if (n.sr) return [false, `${w}含現金增資，參考價請看官方公告`];
+  if (n.c == null) return [false, `${w}，金額待公告`];
+  if (tlBig(String(n.c), 6) === null) return [false, `${w}的預告現金股利 ${n.c} 元超過 6 位小數，請依公告填寫`];
+  return [true, `已帶入 ${w}的預告股利（${tw ? '證交所' : '櫃買中心'}預告表，僅供參考，以${e ? '發行人' : '公司'}公告為準）`];
+}
+// 第 39 輪 F39-2：帶入最近一次股利（D82-3 = A：前收用最新收盤）與近一年現金股利合計；回傳要帶入的欄位與提示。第 40 輪：有預告金額時改帶預告
+function tlDvLoad(d, e) {
+  const V = d.dv || [], x = V[V.length - 1], tw = d.market !== 'TPEx', D = d.prices.d, n = (d.nx || [])[0], N = n ? tlNx(n, tw, e) : [false, ''];
   const o = { mk: tw ? 'l' : 'o', c: '', s: '0', y1: '', cost: '' }, h = [];   // 換股票時清掉上一檔的持有成本
-  if (!x || !x.t) return [o, [`${D[0]} 起沒有除權息紀錄，請依公司公告填寫`]];
+  if (N[0]) { o.c = String(n.c); o.s = n.s != null ? String(n.s) : '0'; h.push(N[1]); }
+  if (!x || !x.t) return [o, h.concat(`${D[0]} 起沒有除權息紀錄，請依公司公告填寫`, n && !N[0] ? N[1] : [])];
   const from = new Date(Date.parse(D[D.length - 1]) - 365 * 864e5).toISOString().slice(0, 10);
   let y = 0n, k = 0, miss = false;
   V.forEach(v => { if (v.d > from && (v.t === '息' || v.t === '權息')) { const c = v.c == null ? null : tlBig(String(v.c), 6); if (c === null) miss = true; else { y += c; k++; } } });
   if (k) o.y1 = tlDec(y, 6);
-  if (x.k === 'sc') h.push(`最近一次（${md(x.d)}）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入`);
+  if (N[0]) { /* 已帶入預告 */ }
+  else if (x.k === 'sc') h.push(`最近一次（${md(x.d)}）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入`);
   else if (tw && x.c == null && x.a != null) h.push(`上市官方表只有 ${md(x.d)} 的權值＋息值合計 ${x.a} 元，請依公告填現金股利與配股`);
   else { o.c = x.c != null ? String(x.c) : '0'; o.s = x.s != null ? String(x.s) : '0'; h.push(`已帶入 ${md(x.d)} 的股利（最近一次），下次請依公司公告修改`); }
+  if (n && !N[0]) h.push(N[1]);
   const ev = (d.ev || []).filter(v => v.d === x.d && v.t === x.t)[0], R = x.r != null ? x.r : ev && ev.r;
   if (R != null && x.p != null) h.push(`上次官方參考價 ${pfmt(R)}（${md(x.d)}，前收 ${pfmt(x.p)}）；前收改成 ${pfmt(x.p)} 可對照`);
   h.push(k ? `近一年現金股利 = ${md(from)} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${md(from)} 以後的現金股利官方表沒有分項，請自行確認` : `${md(from)} 以後沒有現金股利`);
@@ -306,11 +317,11 @@ async function tlLoad(code) {
   const P = d && d.prices, i = P ? P.c.map(c => c != null).lastIndexOf(true) : -1;
   if (i < 0) { TL.info = { miss: code }; return; }
   const c = String(P.c[i]), last = P.d[P.d.length - 1];
-  TL.info = { code, name: d.name, e: !!E, c: P.c[i], d: P.d[i], al: d.alerts || [], dy: d.fund && d.fund.dy, ex: (d.dv || []).map(x => x.d).filter(x => x > last).sort()[0] };
+  TL.info = { code, name: d.name, e: !!E, c: P.c[i], d: P.d[i], al: d.alerts || [], dy: d.fund && d.fund.dy, ex: d.nx ? d.nx[0].d : (d.dv || []).map(x => x.d).filter(x => x > last).sort()[0] };   // 第 40 輪：ex = 下一次預告日
   Object.assign(TL.dt, { b: c, s: '', ref: c, k: E ? 'e' : 's' });
   Object.assign(TL.pl, { p1: c, p2: '' });
   TL.cp.y = TL.info.dy != null ? String(TL.info.dy) : '';
-  const [o, h] = tlDvLoad(d);                                                          // 第 39 輪 F39-2
+  const [o, h] = tlDvLoad(d, !!E);                                                     // 第 39 輪 F39-2；第 40 輪傳 ETF 旗標
   TL.info.dvh = h;
   Object.assign(TL.dv, o, { p: c, k: E ? 'e' : 's' });
 }

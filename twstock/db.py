@@ -538,6 +538,26 @@ DDL = [
         CONSTRAINT UQ_foreign_holdings UNIQUE (stock_id, trade_date)
     )
     """,
+    # 第 40 輪 F40-1：除權除息預告表（上市 TWT48U、上櫃 tpex_exright_prepost 的快照；股票、ETF 同表，不用外鍵）
+    """
+    IF OBJECT_ID('dividend_notices') IS NULL
+    CREATE TABLE dividend_notices (
+        id           INT IDENTITY(1,1) PRIMARY KEY,
+        code         NVARCHAR(10)  NOT NULL,   -- 股票或 ETF 代號（寫入時只收 stocks、etfs 表已有的）
+        market       NVARCHAR(4)   NOT NULL CHECK (market IN ('TWSE', 'TPEx')),
+        is_etf       BIT           NOT NULL,
+        ex_date      DATE          NOT NULL,   -- 除權除息日
+        event_type   NVARCHAR(4)   NOT NULL CHECK (event_type IN (N'息', N'權', N'權息')),
+        cash_div     DECIMAL(16,8) NULL,       -- 每股現金股利；NULL = 待公告
+        stock_ratio  DECIMAL(16,8) NOT NULL DEFAULT 0,   -- 每股無償配股率（× 1,000 = 每千股配股）
+        sub_ratio    DECIMAL(16,8) NOT NULL DEFAULT 0,   -- 現金增資配股率
+        sub_price    DECIMAL(10,2) NULL,       -- 現金增資認購價；尚未公告或沒有現增 = NULL
+        first_seen   DATE          NOT NULL,   -- 第一次在預告表看到的抓取日（台灣日期）
+        last_seen    DATE          NOT NULL,   -- 最近一次在預告表看到的抓取日
+        updated_at   DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_dividend_notices UNIQUE (code, ex_date)
+    )
+    """,
     # 第 11 輪：發行股數（update_industry 一併寫入；目前股數，不保留歷史）
     "IF COL_LENGTH('stocks', 'shares') IS NULL ALTER TABLE stocks ADD shares BIGINT NULL",
     # 第 19 輪：減除股利參考價（只扣股利、不扣現金增資；TWT49U、TPEX_EX 才有，其他來源 NULL），分辨配股與現金增資
@@ -588,4 +608,4 @@ def setup_database():
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
           "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
-          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、etf_holding_gaps")
+          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、etf_holding_gaps")
