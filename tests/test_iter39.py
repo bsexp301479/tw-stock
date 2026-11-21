@@ -341,7 +341,7 @@ def test_unchanged_and_wiring():
         assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
     assert HTML.count("https://") == 2 and "http" not in TOOLS and "fetch(" not in TOOLS
     assert "@media (max-width:520px){.tl-odv .tl-kv,.tl-odv .tl-kv tbody{display:block}" in CSS and ".tl-odv .tl-kv td{flex:1 1 auto;white-space:nowrap}}" in CSS   # 驗收 13
-    assert "if (tl && !['dt', 'cp', 'pl', 'dv'].includes(tl[1]))" in APP
+    assert "if (tl && !['dt', 'ac', 'cp', 'pl', 'dv'].includes(tl[1]))" in APP
     seg = "".join(T._grab(TOOLS, n) for n in ("tlExRef", "tlBig", "tlDec", "tlDvOut", "tlDvForm", "tlDvLoad", "tlLoad"))
     for w in (".at(", "??", "?.", "||=", "&&=", "replaceAll", "structuredClone", "Object.hasOwn", "findLast", "Number.parseFloat(", "parseFloat("):
         assert w not in seg, w                                                                                   # node 14、不用浮點解析

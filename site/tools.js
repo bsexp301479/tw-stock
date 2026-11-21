@@ -1,4 +1,4 @@
-// 台股資金流 第 34 輪：試算工具 #/tools/dt 交易成本（含當沖、漲跌停）、#/tools/cp 複利、#/tools/pl 股票質借；第 39 輪 #/tools/dv 除權息。
+// 台股資金流 第 34 輪：試算工具 #/tools/dt 交易成本（含當沖、漲跌停）、#/tools/cp 複利、#/tools/pl 股票質借；第 39 輪 #/tools/dv 除權息；第 41 輪 #/tools/ac 平均成本。
 // 只在瀏覽器計算；網址帶 ?c=代號 時只讀同站 data/（loadStock，個股頁看過的不再請求）。
 // 共用 app.js 的 $、esc、fmt、pfmt、md、segHTML、onSeg、pageTabsHTML、localStore、loadStock
 'use strict';
@@ -11,7 +11,7 @@ const TL_RULES = {
   limit: 10,                                                       // R9 漲跌幅 10%
   pl: { cap: 60, call: 130, back: 166, term: 183, max: 548 },      // P3 成數上限、P9 追繳 130%／補繳至 166%、P2 每次 6 個月（續借 2 次）
 };
-const TL_TABS = [['dt', '交易成本'], ['cp', '複利'], ['pl', '股票質借'], ['dv', '除權息']];
+const TL_TABS = [['dt', '交易成本'], ['ac', '平均成本'], ['cp', '複利'], ['pl', '股票質借'], ['dv', '除權息']];
 
 // R7 升降單位（分）：股票六級、ETF 二級（e 為 true）。≥ 1,000 元改 1 元的新制尚未生效（D49 = A）
 const tlTick = (p, e) => e ? (p < 5000 ? 1 : 5) : p < 1000 ? 1 : p < 5000 ? 5 : p < 10000 ? 10 : p < 50000 ? 50 : p < 100000 ? 100 : 500;
@@ -106,7 +106,8 @@ const TL = { code: undefined, info: null,
   dt: { mode: 'dt', dir: 'b', k: 's', b: '', s: '', n: '1000', ref: '' },
   cp: { P: '0', M: '5000', at: 'end', r: '', n: '10', dv: '0', y: '' },
   pl: { p1: '', p2: '', q: '1', u: 'lot', cap: '60', loan: '', rate: '', days: '180', base: '365', fee: '0', call: '130' },
-  dv: { mk: 'l', k: 's', p: '', c: '', s: '0', n: '1000', cost: '', y1: '' } };   // 第 39 輪：持有成本不帶入（D83-1 = A）
+  dv: { mk: 'l', k: 's', p: '', c: '', s: '0', n: '1000', cost: '', y1: '' },   // 第 39 輪：持有成本不帶入（D83-1 = A）
+  ac: { k: 's', r: '3', p0: '', n0: '', p1: '', n1: '', p2: '', n2: '', mo: '1', cur: '' } };   // 第 41 輪：列內容不存（D98 = A）；d、m 第一次顯示時取交易成本頁的值（D97 = A）
 
 function tlTaxTxt(k, dt, t) {
   const s = k === 'b' ? '債券 ETF 停徵（至 2026/12/31）' : k === 'e' ? 'ETF 0.1%（當沖不減半）' : dt ? '股票現股當沖 0.15%（至 2027/12/31）' : '股票 0.3%';
@@ -304,12 +305,116 @@ function tlDvLoad(d, e) {
   h.push(k ? `近一年現金股利 = ${md(from)} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${md(from)} 以後的現金股利官方表沒有分項，請自行確認` : `${md(from)} 以後沒有現金股利`);
   return [o, h];
 }
-const TL_VIEW = { dt: ['交易成本與損益兩平', tlDtForm, tlDtOut], cp: ['複利', tlCpForm, tlCpOut], pl: ['股票質借（單檔擔保品）', tlPlForm, tlPlOut], dv: ['除權息試算', tlDvForm, tlDvOut] };
+// 第 41 輪 F41-1：平均成本（多筆合計）。金額 BigInt（分）、手續費與證交稅為元（Number），o = { dz 折扣千分之, m 整股最低, mo 零股最低, r 證交稅萬分之 }
+// R36、D93 = A：股數拆成整股、零股兩份，各自套最低手續費；股數 0 的那份不計
+const tlLot = (q, m, mo) => [[q - q % 1000, m], [q % 1000, mo]].filter(x => x[0] > 0);
+// R35 買入合計：rows = [[筆, 價格（分）, 股數]]；avg、cost = 平均成交價、平均成本（分，整數四捨五入，D100 = A）
+function tlAvg(rows, o) {
+  let A = 0n, F = 0, N = 0;
+  const fee = rows.map(([, p, q]) => {
+    const f = tlLot(q, o.m, o.mo).map(([k, mn]) => tlFee(BigInt(p) * BigInt(k), o.dz, mn));
+    A += BigInt(p) * BigInt(q); N += q; F += f.reduce((a, b) => a + b, 0);
+    return f;
+  });
+  const T = A + BigInt(F) * 100n, n = BigInt(N), half = X => Number((2n * X + n) / (2n * n));
+  return { fee, A, F, T, N, avg: half(A), cost: half(T) };
+}
+// R38 全部 N 股以 p（分）出售：整股、零股各自計手續費與證交稅（各自捨去）；net = 出售淨額（分）
+function tlSell(p, N, o) {
+  const L = tlLot(N, o.m, o.mo), a = L.map(([k]) => BigInt(p) * BigInt(k));
+  const f = L.map(([, mn], i) => tlFee(a[i], o.dz, mn)), x = a.map(v => Number(v * BigInt(o.r) / 1000000n)), sa = BigInt(p) * BigInt(N);
+  return { sa, f, x, net: sa - BigInt(f.reduce((s, v) => s + v, 0) + x.reduce((s, v) => s + v, 0)) * 100n };
+}
+// 損益兩平賣價：th 理論值（分，不計最低值與捨去）；可成交值從平均成本無條件進位到分、再進位到升降單位的 p0 起逐檔往上，
+// 第一個出售後淨損益 ≥ 0 的價位，最多 2,000 檔（含 p0）；k = 上漲檔數
+function tlAcBreak(B, o, e) {
+  const n = BigInt(B.N), c = Number((B.T + n - 1n) / n), u = tlTick(c, e), p0 = c % u ? c + u - c % u : c;
+  const th = Number(B.T) / B.N / (1 - TL_RULES.fee * o.dz / 1e9 - o.r / 1e4);
+  let p = p0;
+  for (let k = 0; k < 2000; k++) {
+    const net = tlSell(p, B.N, o).net - B.T;
+    if (net >= 0n) return { th, p0, p, k, net };
+    p = tlNext(p, e);
+  }
+  return { th, p0, p: null };
+}
+const tlAcN = st => { const r = tlNum(st.r, 0); return r > 10 ? 10 : r >= 1 ? r : 3; };   // 列數 1～10（D96 = A），讀不到 = 3
+const tlAcV = (st, k) => String(st[k] == null ? '' : st[k]);
+function tlAcOut(st, I, today) {
+  const r = tlAcN(st), rows = [], msg = [];
+  let any = false;
+  for (let i = 0; i < r; i++) {
+    const ps = tlAcV(st, 'p' + i).trim(), ns = tlAcV(st, 'n' + i).trim(), p = tlC(ps), q = tlNum(ns, 0);
+    if (!ps && !ns) continue;
+    any = true;
+    if (!ps) msg.push(`第 ${i + 1} 筆請填價格`); else if (!(p > 0)) msg.push(`第 ${i + 1} 筆價格請填大於 0 的數字，小數最多 2 位`);
+    if (!ns) msg.push(`第 ${i + 1} 筆請填股數`); else if (!(q > 0)) msg.push(`第 ${i + 1} 筆股數請填正整數`);
+    if (p > 0 && q > 0) rows.push([i + 1, p, q]);
+  }
+  if (!any) msg.push('請至少填一筆價格與股數');
+  const d = tlNum(st.d, 2), m = tlNum(st.m, 0), mo = tlNum(st.mo, 0), hc = tlAcV(st, 'cur').trim() !== '', cur = tlC(st.cur), okd = d > 0 && d <= 10;
+  if (!okd) msg.push('手續費折扣請填大於 0、最多 10 的折數（不打折為 10），小數最多 2 位');
+  if (!(m >= 0)) msg.push('整股最低手續費請輸入 0 以上的整數');
+  if (!(mo >= 0)) msg.push('零股最低手續費請輸入 0 以上的整數');
+  if (hc && !(cur > 0)) msg.push('目前價格請填大於 0 的數字（小數最多 2 位），或留空');
+  const t = tlTax(st.k, false, today), note = tlNote([
+    `手續費：成交金額 × 0.1425% × ${okd ? pfmt(d) : '--'} 折${okd && d < 10 ? '（以退還後計）' : ''}，元以下捨去；整股每筆最低 ${m >= 0 ? fmt(m) : '--'} 元、零股每筆最低 ${mo >= 0 ? fmt(mo) : '--'} 元（各券商不同，零股多數 1 元、部分 20 元）。股數不是 1,000 的倍數時，拆成整股與零股兩筆計算。`,
+    tlTaxTxt(st.k, false, t), '平均成本含買入手續費，不含出售成本；兩平賣價與未實現損益已扣出售手續費與證交稅。',
+    '本頁以全部持股一次出售計算，不含部分出售、當沖與融資；除權息後的現金股利與配股不調整成本，可到「除權息」分頁試算。',
+    '各券商手續費計算方式不同（逐筆或合併計算），請以對帳單為準；交易成本分頁以一筆計算，和本頁拆成整股與零股的結果可能差幾元。',
+    I && I.ex ? `${md(I.ex)} 除權息，參考價另計` : '']);
+  if (msg.length) return tlMsg(msg) + note;
+  const e = st.k !== 's', o = { dz: Math.round(d * 100), m, mo, r: t.r }, B = tlAvg(rows, o), be = tlAcBreak(B, o, e);
+  const yen = v => tlS(Number(v) / 100, v % 100n ? 2 : 0) + ' 元', sum = a => a.reduce((s, v) => s + v, 0);
+  const two = a => a.length > 1 ? `<br><span class="small">整股 ${fmt(a[0])}＋零股 ${fmt(a[1])}</span>` : '';
+  const lots = [B.N >= 1000 ? `整股 ${fmt(Math.floor(B.N / 1000))} 張` : '', B.N % 1000 ? `零股 ${fmt(B.N % 1000)} 股` : ''].filter(Boolean).join('＋');
+  let out = tlRow('總股數', `${fmt(B.N)} 股<br><span class="small">${lots}</span>`) + tlRow('成交金額合計', tlY(Number(B.A)) + ' 元') +
+    tlRow('買入手續費合計', fmt(B.F) + ' 元') + tlRow('總成本（含手續費）', tlY(Number(B.T)) + ' 元') +
+    tlRow('平均成交價', fmt(B.avg / 100, 2) + '<br><span class="small">不含手續費</span>') + tlRow('平均成本（含手續費）', `<b class="tl-big">${fmt(B.cost / 100, 2)}</b>`) +
+    tlRow('損益兩平賣價（理論）', fmt(be.th / 100, 2));
+  out += be.p == null ? tlRow('損益兩平賣價（可成交）', '2,000 檔內仍未打平') :
+    tlRow('損益兩平賣價（可成交）', `<b class="tl-big">${tlPx(be.p, e)}</b><br><span class="small">平均成本進位到 ${tlPx(be.p0, e)}${be.k ? `，再上漲 ${be.k} 檔` : ' 即打平'}</span>`) +
+    tlRow('以此價出售淨損益', yen(be.net), cls(Number(be.net)));
+  if (hc) {
+    const S = tlSell(cur, B.N, o), U = S.net - B.T;
+    out += tlRow('目前價格', pfmt(cur / 100) + (I && I.c != null && cur === tlC(String(I.c)) ? `<br><span class="small">${md(I.d)} 收盤，不是即時價</span>` : '')) +
+      tlRow('出售金額', tlY(Number(S.sa)) + ' 元') + tlRow('出售手續費', fmt(sum(S.f)) + ' 元' + two(S.f)) + tlRow('證交稅', fmt(sum(S.x)) + ' 元' + two(S.x)) +
+      tlRow('未實現損益', yen(U), cls(Number(U))) + tlRow('報酬率（÷ 總成本）', tlS(Number(U) / Number(B.T) * 100, 2) + '%', cls(Number(U)));
+  }
+  return `<table class="tl-kv">${out}</table>` + tlNote(['每筆明細']) + '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>筆</th><th>價格</th><th>股數</th><th>手續費</th></tr></thead><tbody>' +
+    rows.map(([i, p, q], j) => `<tr><td>${i}</td><td class="num">${pfmt(p / 100)}</td><td class="num">${fmt(q)}</td><td class="num">${B.fee[j].map(v => fmt(v)).join('＋')}</td></tr>`).join('') +
+    '</tbody></table></div>' + note;
+}
+// 增刪列（不改 tlDraw）：tlDraw 的模板先呼叫本函式、再呼叫 tlAcOut，所以在這裡處理刪除（st.x）後，結果區用的是移動後的資料
+function tlAcForm(st) {
+  if (st.d == null) Object.assign(st, { d: TL.dt.d, m: TL.dt.m });                    // D97 = A：第一次顯示時取交易成本頁的值，本頁修改不存
+  let r = tlAcN(st);
+  const x = tlNum(st.x, 0);
+  if (st.x != null && r >= 2 && x >= 0 && x < r) {
+    for (let i = x; i < r - 1; i++) { st['p' + i] = tlAcV(st, 'p' + (i + 1)); st['n' + i] = tlAcV(st, 'n' + (i + 1)); }
+    r--;
+  }
+  delete st.x;
+  st.r = String(r);
+  for (let i = r; i < 10; i++) st['p' + i] = st['n' + i] = '';                          // 列數以外清空：新增的列一定是空白
+  let g = '<span></span><span>價格（元）</span><span>股數</span><span></span>';
+  for (let i = 0; i < r; i++) {
+    const a = `inputmode="decimal" autocomplete="off" aria-label="第 ${i + 1} 筆`;
+    g += `<span>${i + 1}</span><input data-k="p${i}" ${a}價格" value="${esc(st['p' + i])}"><input data-k="n${i}" ${a.replace('decimal', 'numeric')}股數" value="${esc(st['n' + i])}">` +
+      (r > 1 ? `<button class="chip" data-v="${i}" aria-label="刪除第 ${i + 1} 筆">刪除</button>` : '<span></span>');
+  }
+  return `<div class="tl-segs">${tlSeg('k', [['s', '股票'], ['e', 'ETF'], ['b', '債券 ETF']], st.k)}</div><div class="tl-f tl-rows" data-g="x">${g}</div>` +
+    (r < 10 ? `<div class="tl-segs" data-g="r"><button class="chip" data-v="${r + 1}">＋ 新增一筆</button></div>` : '') +
+    tlIn('d', '手續費折扣（折）', st.d, '不打折 = 10') + tlIn('m', '整股最低手續費（元）', st.m) + tlIn('mo', '零股最低手續費（元）', st.mo) + tlIn('cur', '目前價格（元）', st.cur, '選填');
+}
+const TL_VIEW = { dt: ['交易成本與損益兩平', tlDtForm, tlDtOut], cp: ['複利', tlCpForm, tlCpOut], pl: ['股票質借（單檔擔保品）', tlPlForm, tlPlOut], dv: ['除權息試算', tlDvForm, tlDvOut], ac: ['平均成本（多筆合計）', tlAcForm, tlAcOut] };
 const TL_FOOT = '試算僅供參考，不代表實際成交、扣款或核貸金額；費率、稅率、折扣與規則以券商與主管機關公告為準。';
 
 // 網址帶代號時讀最新收盤（股票 data/stocks、ETF data/etfp）；不在 latest.json 的代號不發請求
 async function tlLoad(code) {
   TL.code = code; TL.info = null;
+  for (let i = 0; i < 10; i++) TL.ac['p' + i] = TL.ac['n' + i] = '';                   // 第 41 輪 F41-2：換代號清空平均成本各列與目前價格（D98 = A）
+  Object.assign(TL.ac, { r: '3', cur: '' });
   if (!code) return;
   const L = App.latest, E = !L.stocks[code] && L.etfs && L.etfs.rows && L.etfs.rows[code];
   let d = null;
@@ -320,6 +425,7 @@ async function tlLoad(code) {
   TL.info = { code, name: d.name, e: !!E, c: P.c[i], d: P.d[i], al: d.alerts || [], dy: d.fund && d.fund.dy, ex: d.nx ? d.nx[0].d : (d.dv || []).map(x => x.d).filter(x => x > last).sort()[0] };   // 第 40 輪：ex = 下一次預告日
   Object.assign(TL.dt, { b: c, s: '', ref: c, k: E ? 'e' : 's' });
   Object.assign(TL.pl, { p1: c, p2: '' });
+  Object.assign(TL.ac, { cur: c, k: E ? 'e' : 's' });                                // 第 41 輪：目前價格 = 最新收盤
   TL.cp.y = TL.info.dy != null ? String(TL.info.dy) : '';
   const [o, h] = tlDvLoad(d, !!E);                                                     // 第 39 輪 F39-2；第 40 輪傳 ETF 旗標
   TL.info.dvh = h;

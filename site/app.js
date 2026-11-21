@@ -76,7 +76,7 @@ async function route() {
   const share = location.hash.match(/^#\/watch\?add=([^&#]*)/);   // 第 32 輪 F32-2：分享連結先記下代號、網址換回 #/watch（重新整理不會再問）
   if (share) { App.watchAdd = share[1].split(','); history.replaceState(history.state, '', '#/watch'); }
   const tl = location.hash.match(/^#\/tools(?:\/([^?]*))?(\?.*)?$/);   // 第 34 輪：#/tools、#/tools?c=、不認得的分頁補成 #/tools/dt（保留 ?c=）
-  if (tl && !['dt', 'cp', 'pl', 'dv'].includes(tl[1])) history.replaceState(history.state, '', '#/tools/dt' + (tl[2] || ''));
+  if (tl && !['dt', 'ac', 'cp', 'pl', 'dv'].includes(tl[1])) history.replaceState(history.state, '', '#/tools/dt' + (tl[2] || ''));
   const [, page = 'today', arg, sub] = location.hash.split('/');
   const k = history.state?.k;
   scrollKey = null;                                                     // 換頁中（內容長度改變）的捲動不記
