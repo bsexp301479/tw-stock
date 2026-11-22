@@ -14,7 +14,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from .config import LOG_DIR
-from .tradingcal import load_closed, trading_days
+from .tradingcal import load_closed, trading_days, weeks_behind
 
 COLLECT_FROM = time(15, 0)      # 當天資料最早的收集時間；之前「今天」不列入
 DEADLINE = time(22, 0)          # 之前算尚未公布，之後算異常
@@ -233,9 +233,10 @@ def load_state(cur) -> dict:
     第 24 輪：events_at、events_n（事件最後成功那次的完成時間與 {"stocks", "etfs"} 筆數，舊紀錄沒有筆數為 None）、
     warnings（最後一次收集的警告）、export_failed（最近一筆「有新資料或有匯出」的紀錄是 abnormal 且沒有匯出耗時 = 匯出失敗）。
     第 40 輪：notices = {市場: (最近一次成功的抓取日, 筆數)}，兩個市場各自取最新一筆；從沒成功的市場沒有鍵。
+    第 43 輪：tdcc_on = 最近一次抓到集保股權分散的抓取日（不論官方有沒有更新），同一天不再抓。
     """
     state = {"alerts_at": None, "events_to": None, "revenue_on": None, "financials_on": None, "collected_at": None, "last_run": None,
-             "events_at": None, "events_n": None, "warnings": [], "export_failed": None, "notices": {}}
+             "events_at": None, "events_n": None, "warnings": [], "export_failed": None, "notices": {}, "tdcc_on": None}
     for finished, new_data, detail, *extra in cur.execute(
             "SELECT TOP 200 finished_at, new_data, detail, command, outcome, export_seconds FROM collect_runs ORDER BY run_id DESC").fetchall():
         d = json.loads(detail)
@@ -258,6 +259,8 @@ def load_state(cur) -> dict:
             state["financials_on"] = date.fromisoformat(und["financials"])
         for mk, v in (und.get("notices") or {}).items():
             state["notices"].setdefault(mk, (date.fromisoformat(v["on"]), v["n"]))
+        if und.get("tdcc") and state["tdcc_on"] is None:
+            state["tdcc_on"] = date.fromisoformat(und["tdcc"]["on"])
     return state
 
 
@@ -422,9 +425,9 @@ def financials_status(today: date, counts: dict, fin_on, closed) -> tuple:
     return ABNORMAL, f"{head}，最後一次收集季報 {fin_on or '尚無紀錄'}"
 
 
-def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None, financials=None) -> tuple:
+def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None, financials=None, *, share=None) -> tuple:
     """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求；schedule 由呼叫端傳入（schedule_status()）；revenue = 各月營收家數（None 不印營收一行）；
-    financials = 各季季報家數 {(年, 季): (總家數, 金融業家數)}（None 不印季報一行）。"""
+    financials = 各季季報家數 {(年, 季): (總家數, 金融業家數)}（None 不印季報一行）；share = share_state 的結果（None 不印集保股權分散一行）。"""
     items, med = evaluate(days, snap, now), medians(snap)
     out = [f"📋 資料完整性檢查：近 {len(days)} 個交易日 {days[0]} ～ {days[-1]}（現在 {now:%Y-%m-%d %H:%M}，台灣時間）",
            f"🕘 最後一次收集：{last_run_line(state.get('last_run'))}"]
@@ -461,6 +464,8 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
                if ev_to else "除權息事件最後成功：尚無執行紀錄")
     out += [f"⚠️  最後一次收集的警告：{w}" for w in state.get("warnings") or []]
     out.append(notices_line(state.get("notices"), days[-1], closed))         # 第 40 輪 F40-1：放在警告之後，事件與警告兩行相鄰不變
+    if share is not None:
+        out.append(share_line(share, now.date(), closed))                      # 第 43 輪 F43-1：只顯示，不算異常
     rev = revenue_status(now.date(), revenue, state.get("revenue_on"), closed) if revenue is not None else None
     if rev:
         out.append(rev[1] if rev[0] != ABNORMAL else f"{rev[1]}，❌ 異常")
@@ -497,6 +502,32 @@ def notices_line(notices, last_day: date, closed) -> str:
     return f"除權除息預告最後成功：{one('TWSE', '上市')}、{one('TPEx', '上櫃')}"
 
 
+def share_line(share, today: date, closed) -> str:
+    """第 43 輪 F43-1：check 的集保股權分散一行（只顯示，不算異常）。漏收 2 週以上（有交易日的週才算）加 ⚠️。"""
+    ok, latest, ns, ne = share
+    if not ok:
+        return "集保股權分散：尚未建立資料表，請執行一次 python -m twstock setup-db"
+    if latest is None:
+        return "集保股權分散最新一週：尚無資料"
+    lag = weeks_behind(latest, today, closed)
+    return f"集保股權分散最新一週：{latest}（股票 {ns:,} 檔、ETF {ne:,} 檔）" + (f"，⚠️ 已落後 {lag} 週，漏收的週無法回補" if lag >= 2 else "")
+
+
+def share_exists(cur) -> bool:
+    """第 43 輪：share_distribution 是否已建立（setup-db 之前收集、匯出、check 都不查這張表）。"""
+    row = cur.execute("SELECT OBJECT_ID('share_distribution')").fetchone()
+    return bool(row and row[0] is not None)
+
+
+def share_state(cur) -> tuple:
+    """第 43 輪：(表是否存在, 最新資料日, 該週股票檔數, ETF 檔數)；catchup（只用前兩項）與 check 共用。"""
+    if not share_exists(cur):
+        return False, None, 0, 0
+    latest = cur.execute("SELECT MAX(data_date) FROM share_distribution").fetchone()[0]
+    n = dict(cur.execute("SELECT is_etf, COUNT(*) FROM share_distribution WHERE data_date = ? GROUP BY is_etf", latest).fetchall()) if latest else {}
+    return True, latest, n.get(False, 0), n.get(True, 0)
+
+
 def revenue_counts(cur) -> dict:
     """{(年, 月): 家數}；SQL 與 collectors.catchup._revenue_counts 相同。"""
     return {(y, m): n for y, m, n in cur.execute(
@@ -522,11 +553,12 @@ def run_check(n: int, now: datetime) -> int:
         snap, state = load_snapshot(cur, start, days[-1]), load_state(cur)
         revenue = revenue_counts(cur)
         financials = financial_counts(cur)
+        share = share_state(cur)                                    # 第 43 輪 F43-1
         adhoc = [r[0] for r in cur.execute("SELECT holiday_date FROM market_holidays WHERE source = 'adhoc' AND holiday_date BETWEEN ? AND ? "
                                            "ORDER BY holiday_date", start, days[-1]).fetchall()]
     finally:
         conn.close()
-    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue, financials)
+    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue, financials, share=share)
     print(text)
     return rc
 

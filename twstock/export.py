@@ -24,7 +24,7 @@ from . import db
 from .analysis.flow import LONG, group_flows, load_concepts, streak
 from .analysis.forecast import build_forecast, load_oi
 from .config import SITE_DATA_DIR, tw_now
-from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, load_state, prev_quarter
+from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, load_state, prev_quarter, share_exists
 from .tradingcal import is_trading_day, load_closed, trading_days
 
 REPLAY = 20                    # 泡泡圖回放天數
@@ -61,6 +61,7 @@ BAND_PCT = (10, 25, 50, 75, 90)  # 第 37 輪 F37-1：河流圖倍數 = 窗口�
 BAND_TOL = (0.005, 0.012)       # 反推值和這一段的值相差超過 max(0.5%, 0.012 ÷ 當天官方值) 才開新段（官方值只有 2 位小數）
 BAND_SEG_MAX = 24               # 段數超過此值（反推雜訊）→ 不輸出該指標
 FIN_QUARTERS = 8                # 第 10 輪 B5：個股季報卡的季數
+SH_WEEKS = 52                   # 第 43 輪 F43-2：集保股權分散匯出最近幾個資料日（D114-4）
 _TICKS = ((Decimal(10), Decimal("0.01")), (Decimal(50), Decimal("0.05")), (Decimal(100), Decimal("0.1")),
           (Decimal(500), Decimal("0.5")), (Decimal(1000), Decimal(1)), (Decimal("Infinity"), Decimal(5)))
 
@@ -888,6 +889,39 @@ def notice_export(rows, on, today) -> tuple:
     return out
 
 
+def share_pct(x: int, t: int):
+    """第 43 輪：x ÷ t × 100 四捨五入到 2 位（整數運算，不經過浮點）；整數去掉小數點（100.0 → 100）。"""
+    q = (2 * x * 10000 + t) // (2 * t)
+    return q // 100 if q % 100 == 0 else q / 100
+
+
+def _load_share(cur):
+    """第 43 輪 F43-2：集保股權分散最近 SH_WEEKS 個資料日的列；表不存在 → []（setup-db 之前匯出不失敗）。只有 SELECT。"""
+    if not share_exists(cur):
+        return []
+    return cur.execute(f"""
+        SELECT code, is_etf, data_date, {", ".join(f"s{i}" for i in range(1, 16))}, s_total, n1, n12, n13, n14, n15, n_total
+        FROM share_distribution
+        WHERE data_date IN (SELECT DISTINCT TOP {SH_WEEKS} data_date FROM share_distribution ORDER BY data_date DESC)""").fetchall()
+
+
+def share_export(rows) -> tuple:
+    """
+    第 43 輪 F43-2：集保股權分散 → ({股票代號: sh}, {ETF 代號: sh})，週由舊到新，只取最近 SH_WEEKS 個資料日；某代號某週沒有列就不列那週（不補 null）。
+    rows = (code, is_etf, data_date, s1..s15, s_total, n1, n12..n15, n_total)。比例 % = 該組股數 ÷ 17 級股數 × 100（R48，自算，不用官方比例）：
+    b = 12～15 級（超過 400 張）、k = 15 級（超過 1,000 張）、m = 9～11 級（超過 50 至 400 張）、r = 1～8 級（50 張以下）；
+    n = 總人數、bn = 12～15 級人數、z = 1 級（未滿 1 張）人數。
+    """
+    keep, out = set(sorted({r[2] for r in rows})[-SH_WEEKS:]), ({}, {})
+    for code, etf, d, *v in sorted((r for r in rows if r[2] in keep), key=lambda r: (r[0], r[2])):
+        s, t, (z, *nb, n) = v[:15], v[15], v[16:]
+        x = out[bool(etf)].setdefault(code, {k: [] for k in ("d", "b", "k", "m", "r", "n", "bn", "z")})
+        for k, val in (("d", str(d)), ("b", share_pct(sum(s[11:15]), t)), ("k", share_pct(s[14], t)), ("m", share_pct(sum(s[8:11]), t)),
+                       ("r", share_pct(sum(s[:8]), t)), ("n", n), ("bn", sum(nb)), ("z", z)):
+            x[k].append(val)
+    return out
+
+
 def etf_export(code, name, market, rows, mrows, srows, mdate, md5, sdate, sd5, events=()):
     """
     etfp/{代號}.json。prices 同個股格式（原始價；量為張；ch = 官方漲跌，推測調整日且官方為 0 → null「不比價」）；
@@ -1662,6 +1696,7 @@ def export_all() -> float:
     closed = load_closed(cur)                                  # 第 14 輪 F14-3：結算日推算用的休市日
     epx, emg, esb, esd = _load_etf_hist(cur)                   # 第 15 輪 F15-2：ETF 個股頁
     eev = _load_etf_events(cur)                                # 第 36 輪 F36-1：ETF 官方除息
+    sh_stock, sh_etf = share_export(_load_share(cur))          # 第 43 輪 F43-2：集保股權分散（表不存在時兩者皆空）
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
@@ -1759,6 +1794,7 @@ def export_all() -> float:
             **({"mt": {"d": str(latest_date), "mc": mc, "to": to}} if mc is not None else {}),   # 第 12 輪 B11
             **({"mg": mg} if mg else {}),
             **({"fh": [fhr.get(x) for x in d_]} if (fhr := fh.get(code)) else {}),   # 第 29 輪 F29-4：外資持股比率 %，對齊 prices.d；沒有資料的股票不輸出
+            **({"sh": sh_stock[code]} if code in sh_stock else {}),     # 第 43 輪 F43-2：集保股權分散（近 52 週）；沒有資料不輸出
             **({"act": act} if act else {}),
             # 第 23 輪 F23-1：近期表現；最後一列不是資料日（停牌、下市）或從沒成交 → 不輸出（同 latest.stocks）
             **({"pf": stock_perf(d_, [float(c[i]) * af[i] if c[i] is not None else None for i in range(len(d_))], p_days,
@@ -1877,6 +1913,8 @@ def export_all() -> float:
                            ds[-1] if ds else None, ds[-6] if len(ds) >= 6 else None, eev.get(code, ()))
             if code in nx_etf:
                 E["nx"] = nx_etf[code]                         # 第 40 輪 F40-2：下一次除權除息預告（放在最後；沒有就不輸出）
+            if code in sh_etf:
+                E["sh"] = sh_etf[code]                         # 第 43 輪 F43-2：集保股權分散（放在最後；沒有就不輸出）
             _write(p, E)
             edv[code] = etf_div_row(E.get("dv", []), latest_date)
             n_etf, kb_etf = n_etf + 1, kb_etf + p.stat().st_size / 1024

@@ -50,6 +50,30 @@ def trading_days(start: date, end: date, closed=None) -> list:
             if is_trading_day(start + timedelta(n), closed)]
 
 
+def week_of(d: date) -> date:
+    """d 所在週的週一。"""
+    return d - timedelta(days=d.weekday())
+
+
+def last_full_week(today: date, closed) -> date:
+    """
+    第 43 輪 F43-1：最近一個「已經過完、而且有交易日」的週（週一日期）。集保股權分散的抓取時機與 check 共用。
+    今天到這週五之間還有交易日（含今天）→ 這週還沒過完，從這週一往前找；否則從今天往前找最後一個交易日，取它那一週。
+    """
+    wk = week_of(today)
+    end = wk if trading_days(today, wk + timedelta(days=4), closed) else today
+    return week_of(next(end - timedelta(n) for n in range(1, 60) if is_trading_day(end - timedelta(n), closed)))
+
+
+def weeks_behind(d: date, today: date, closed) -> int:
+    """第 43 輪：d 那週之後、到 last_full_week(today) 為止，有交易日的週數（整週休市的週不算）。"""
+    target, w, n = last_full_week(today, closed), week_of(d) + timedelta(days=7), 0
+    while w <= target:
+        n += bool(trading_days(w, w + timedelta(days=4), closed))
+        w += timedelta(days=7)
+    return n
+
+
 def parse_holidays(data: dict) -> list:
     """官方休市表 → [(日期, 名稱)]；過濾「開始交易日」「最後交易日」等仍有交易的列。"""
     idx = {f: i for i, f in enumerate(data.get("fields") or [])}

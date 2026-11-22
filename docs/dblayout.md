@@ -2,7 +2,7 @@
 
 - 資料庫：`TwStock`（Docker 容器 `MySqlServer`，Azure SQL Edge）
 - 依據：實際資料庫的 `sys.tables`／`sys.columns`／`sys.indexes`／`sys.foreign_keys`（唯讀查詢），欄位說明取自 `twstock/db.py` 的 DDL 註解
-- 產生日期：2026-11-21（第 40 輪之後）；筆數是當天的概數，只供參考
+- 產生日期：2026-11-21（第 40 輪之後）；筆數是當天的概數，只供參考。第 43 輪的 `share_distribution` 依 DDL 補寫
 - 建表／遷移：`python3 -u -m twstock setup-db`（可重複執行）
 
 ## 共通慣例
@@ -35,6 +35,7 @@
 | 籌碼 | [`sbl_trades`](#sbl_trades) | 借券賣出（股票，股） | 11 | 474,753 |
 | 籌碼 | [`etf_sbl`](#etf_sbl) | 借券賣出（ETF，股） | 11 | 85,165 |
 | 籌碼 | [`foreign_holdings`](#foreign_holdings) | 外資及陸資持股（股票） | 29 | 504,077 |
+| 籌碼 | [`share_distribution`](#share_distribution) | 集保股權分散（股票與 ETF，每週） | 43 | 0 |
 | 基本面 | [`monthly_revenue`](#monthly_revenue) | 月營收 | 第 4 輪前 | 89,641 |
 | 基本面 | [`stock_fundamentals`](#stock_fundamentals) | 本益比、淨值比、殖利率（每日） | 第 4 輪前 | 502,097 |
 | 基本面 | [`quarterly_financials`](#quarterly_financials) | 季報（年初至今累計） | 10 | 21,498 |
@@ -72,7 +73,7 @@ etfs.etf_id
   └─ etf_sbl
 ```
 
-沒有外鍵、以代號字串關聯的表：`industry_chains.stock_code`（含興櫃）、`dividend_notices.code`（股票與 ETF 同表，寫入時只收 `stocks`／`etfs` 已有代號）。
+沒有外鍵、以代號字串關聯的表：`industry_chains.stock_code`（含興櫃）、`dividend_notices.code`、`share_distribution.code`（股票與 ETF 同表，寫入時只收 `stocks`／`etfs` 已有代號）。
 
 ## 一、基本資料
 
@@ -492,6 +493,60 @@ ETF 日成交。約 86,623 筆。
 - PK `PK__foreign___3213E83FDA9F8085`：(id)
 - UNIQUE `UQ_foreign_holdings`：(stock_id,trade_date)
 - INDEX `IX_foreign_holdings_date`：(trade_date)
+
+### share_distribution
+
+集保股權分散（第 43 輪；股票與 ETF 同表，每週一次，一檔一週一列）。套用 `setup-db` 前資料庫還沒有這張表，欄位依 `db.py` 的 DDL 補寫。
+
+| # | 欄位 | 型別 | NULL | 預設 | 說明 |
+|---:|---|---|:---:|---|---|
+| 1 | `id` | BIGINT |  |  | 自動編號主鍵 |
+| 2 | `code` | NVARCHAR(10) |  |  | 股票或 ETF 代號（寫入時只收 stocks、etfs 表已有的） |
+| 3 | `is_etf` | BIT |  |  | 1 = ETF，0 = 股票（依寫入時命中的表） |
+| 4 | `data_date` | DATE |  |  | 官方資料日期（每週最後一個營業日），不是抓取日 |
+| 5 | `n1` | INT |  |  | 第 1 級人數 |
+| 6 | `n2` | INT |  |  | 第 2 級人數 |
+| 7 | `n3` | INT |  |  | 第 3 級人數 |
+| 8 | `n4` | INT |  |  | 第 4 級人數 |
+| 9 | `n5` | INT |  |  | 第 5 級人數 |
+| 10 | `n6` | INT |  |  | 第 6 級人數 |
+| 11 | `n7` | INT |  |  | 第 7 級人數 |
+| 12 | `n8` | INT |  |  | 第 8 級人數 |
+| 13 | `n9` | INT |  |  | 第 9 級人數 |
+| 14 | `n10` | INT |  |  | 第 10 級人數 |
+| 15 | `n11` | INT |  |  | 第 11 級人數 |
+| 16 | `n12` | INT |  |  | 第 12 級人數 |
+| 17 | `n13` | INT |  |  | 第 13 級人數 |
+| 18 | `n14` | INT |  |  | 第 14 級人數 |
+| 19 | `n15` | INT |  |  | 第 15 級人數 |
+| 20 | `n16` | INT |  |  | 第 16 級人數（16 = 差異數調整） |
+| 21 | `s1` | BIGINT |  |  | 第 1 級股數 |
+| 22 | `s2` | BIGINT |  |  | 第 2 級股數 |
+| 23 | `s3` | BIGINT |  |  | 第 3 級股數 |
+| 24 | `s4` | BIGINT |  |  | 第 4 級股數 |
+| 25 | `s5` | BIGINT |  |  | 第 5 級股數 |
+| 26 | `s6` | BIGINT |  |  | 第 6 級股數 |
+| 27 | `s7` | BIGINT |  |  | 第 7 級股數 |
+| 28 | `s8` | BIGINT |  |  | 第 8 級股數 |
+| 29 | `s9` | BIGINT |  |  | 第 9 級股數 |
+| 30 | `s10` | BIGINT |  |  | 第 10 級股數 |
+| 31 | `s11` | BIGINT |  |  | 第 11 級股數 |
+| 32 | `s12` | BIGINT |  |  | 第 12 級股數 |
+| 33 | `s13` | BIGINT |  |  | 第 13 級股數 |
+| 34 | `s14` | BIGINT |  |  | 第 14 級股數 |
+| 35 | `s15` | BIGINT |  |  | 第 15 級股數 |
+| 36 | `s16` | BIGINT |  |  | 第 16 級股數（16 = 差異數調整） |
+| 37 | `n_total` | INT |  |  | 17 級（合計）人數 = 1～15 級人數和 |
+| 38 | `s_total` | BIGINT |  |  | 17 級（合計）股數 = 1～15 級股數和 − 16 級股數；比例的分母 |
+| 39 | `fetched_at` | DATETIME |  | GETDATE() | 寫入時間（容器 GETDATE()，UTC） |
+
+- 分級（股）：1 = 1～999（未滿 1 張）、2 = 1,000～5,000、3 = 5,001～10,000、4 = 10,001～15,000、5 = 15,001～20,000、6 = 20,001～30,000、7 = 30,001～40,000、8 = 40,001～50,000、9 = 50,001～100,000、10 = 100,001～200,000、11 = 200,001～400,000、12 = 400,001～600,000、13 = 600,001～800,000、14 = 800,001～1,000,000、15 = 1,000,001 以上。
+- 官方「占集保庫存數比例%」不存（匯出時由股數自算）。
+
+**索引／條件約束**
+
+- UNIQUE `UQ_share_distribution`：(code,data_date)
+- INDEX `IX_share_distribution_date`：(data_date)
 
 ## 四、基本面
 

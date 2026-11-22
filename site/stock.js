@@ -258,6 +258,7 @@ window.renderStock = async function (code, sub) {
       <div class="metrics kv">${cardsHTML(cards)}</div>${chart}${foot}</section>`;
   const chLeg = (t, id, h) => `<div class="ch-label">${t}<span id="${id}L" style="display:contents"></span></div><div id="${id}" class="chart-box" style="height:${h}px"></div>`;
   const GK = data.mg?.k ? '，面額變更、減資前依官方換算' : '';
+  const SH = data.sh && data.sh.d.length ? data.sh : null, shN = SH ? SH.d.length : 0;   // 第 43 輪 F43-3：集保股權分散（每週）
 
   // E2-4：主動 ETF 持有（統一、群益投信 8 檔；沒有任何一檔持有、也沒有 act 時不顯示）
   const AC = data.active, A = data.act;
@@ -318,6 +319,9 @@ window.renderStock = async function (code, sub) {
     ${chipSec('法人買賣超', `${fd}，億，估算（張數 × 收盤）`, inCards, chLeg(E ? '收盤（原始價）' : '收盤（還原）', 'cpC', 64) + `<div class="chip-inv">${segHTML('chipInv', CHIP_I, chipI)}</div>` + chLeg('每日買賣超（張，未還原）', 'ciC', 120) +
       chLeg('<span id="cuCT">區間累計（張）</span>', 'cuC', 72), '<div class="muted small val-note">累計線的高度取決於起算日，看斜率不看高度；最近每天的買賣看上方柱狀圖。</div>' +
       (FH ? chLeg('外資及陸資持股比率（%，以當日發行股數為分母，增資、減資時會跳動）', 'fhC', 90) : ''))}
+    ${SH ? chipSec('股權分散', `資料日 ${md(SH.d[shN - 1])}（每週一次，集保結算所）`, shCards(SH, E), shN >= 2 ? chLeg('持股比例（%，每週）', 'shC', 110) +
+      chLeg(`${E ? '受益' : '股東'}人數（人，每週）`, 'snC', 90) : `<div class="muted small">自 ${md(SH.d[0])} 起收錄，累積 2 週後顯示走勢。</div>`,
+      `<div class="muted small val-note">${SH_NOTE[E ? 1 : 0]}</div>`) : ''}
     ${chipSec('信用交易', MG ? md(MG.d) : '', mgCards, data.mg ? chLeg(`融資餘額（張${GK}）`, 'cmC', 110) : '')}
     ${chipSec('借券賣出', SL ? `${md(SL.d)}，晚上 8 點半以後更新` : '', slCards, data.mg?.lb ? chLeg(`借券賣出餘額（張${GK}）`, 'clC', 110) : '',
       `<div class="muted small val-note">借券賣出包含避險、套利（例如 ETF、權證、可轉債避險），不等於看空，只能當作空方部位的上限。${E ? '' : '占股本以目前發行股數計算。'}</div>`)}
@@ -735,6 +739,34 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   kc.timeScale().setVisibleLogicalRange({ from: Math.max(0, raw.length - VIEW), to: raw.length - 1 + 3 });
 }
 
+// 第 43 輪 F43-3：集保股權分散 4 張卡（i = 最新一週；1週、4週 = 和上一筆、往前第 4 筆有資料的週比，沒有那一筆寫 --）
+function shCards(sh, etf) {
+  const i = sh.d.length - 1, w = (a, k, nd) => i - k < 0 ? '--' : sgn((Math.round((a[i] - a[i - k]) * 100) + 0) / 100, nd);
+  const pp = a => `1週 ${w(a, 1, 2)}　4週 ${w(a, 4, 2)}（百分點）`;
+  return [['持股超過 400 張', fmt(sh.b[i], 2) + '%', '', pp(sh.b) + '<br>' + fmt(sh.bn[i]) + ' 人'], ['持股超過 1,000 張', fmt(sh.k[i], 2) + '%', '', pp(sh.k)],
+    ['50 張以下', fmt(sh.r[i], 2) + '%', '', pp(sh.r)],
+    [etf ? '受益人數' : '股東人數', fmt(sh.n[i]) + ' 人', '', `1週 ${w(sh.n, 1, 0)}　4週 ${w(sh.n, 4, 0)}（人）<br>未滿 1 張 ${fmt(sh.z[i])} 人`]];
+}
+const SH_NOTE = [
+  '以集保戶每週最後一個營業日的餘額，依身分歸戶後分級；大戶包含外資、法人、ETF 與公司大股東，融資、借券以專戶計。比例 = 各級股數 ÷ 集保庫存合計，增資、減資、合併時會跳動。官方每週公布一次，本站通常在下週一晚上更新；本站從上線起逐週累積，之前的週無法回補。比例的變化只描述持股結構，不代表之後的走勢。',
+  '以集保戶每週最後一個營業日的餘額，依身分歸戶後分級；人數為受益人數，大額持有人包含法人、壽險與其他基金。比例 = 各級受益權單位 ÷ 集保庫存合計，申購、贖回時會跳動。官方每週公布一次，本站通常在下週一晚上更新；本站從上線起逐週累積，之前的週無法回補。比例的變化只描述持有結構，不代表之後的走勢。'];
+// 第 43 輪 F43-3：股權分散週圖（每週一點、固定 sh 全部；不跟圖表區間、不和日資料的籌碼圖十字線同步；兩張圖的圖例一起換週）。mk = buildChip 的建圖函式
+function shChart(sh, E, mk) {
+  const T = sh.d, last = T.length - 1, B = '#4C6EF5', R = '#DB6E00', N = '#1C7ED6';
+  const pct = { type: 'custom', minMove: 0.01, formatter: v => fmt(v, 2) + '%' }, ppl = { type: 'custom', minMove: 1, formatter: v => fmt(v) };
+  const line = (c, vals, color, f, style) => { const s = c.addLineSeries({ color, lineWidth: 2, lineStyle: style, priceFormat: f, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    s.setData(vals.map((v, i) => ({ time: T[i], value: v }))); return s; };
+  const a = mk('shC', true), b = mk('snC', true);
+  line(a, sh.b, B, pct, 0); line(a, sh.r, R, pct, 2); line(b, sh.n, N, ppl, 0);
+  const show = i => { const d = `<span><b>${md(T[i])}</b></span>`;
+    $('#shCL').innerHTML = `${d}<span class="lg"><i style="background:${B}"></i>超過 400 張 <b class="num">${fmt(sh.b[i], 2)}%</b></span>` +
+      `<span class="lg"><i style="background:none;height:0;border-top:2px dashed ${R}"></i>50 張以下 <b class="num">${fmt(sh.r[i], 2)}%</b></span><span>超過 50 至 400 張 <b class="num">${fmt(sh.m[i], 2)}%</b></span>`;
+    $('#snCL').innerHTML = `${d}<span class="lg"><i style="background:${N}"></i>${E ? '受益人' : '股東'} <b class="num">${fmt(sh.n[i])} 人</b></span>`; };
+  [a, b].forEach(c => c.subscribeCrosshairMove(p => { const i = p.logical == null ? -1 : Math.round(p.logical); show(p.time !== undefined && i >= 0 && i <= last ? i : last); }));
+  show(last);
+  return [a, b];
+}
+
 // 第 28 輪 D28-01：籌碼分頁時間序列（張）。法人：收盤小面板＋外資／投信／自營區間累計（不用雙 Y 軸）；信用：融資餘額；借券：借券賣出餘額。
 // 第 29 輪 F29-1、2：法人改成「選一種法人」的每日買賣超柱（主）＋同一法人的區間累計小面板（輔，標題寫起算日）
 // 區間由 #chipSeg 決定，不能拖曳縮放（避免手機捲頁時誤拖）；十字線四張圖同步，圖例顯示該日數字
@@ -796,6 +828,7 @@ function buildChip(data, E) {
     legs.push(i => { const j = at(LB, i); $('#clCL').innerHTML = `${day(i, j)}<span class="lg"><i style="background:#E8590C"></i>借券賣出 <b class="num">${fmt(LB[j])}</b></span>`; });
   }
   charts = anchors.map(a => a[0]);            // disposeStockCharts 一併釋放
+  if (data.sh && data.sh.d.length >= 2 && $('#shC')) charts.push(...shChart(data.sh, E, mk));   // 第 43 輪 F43-3：週圖也列入 charts（切換區間時一起釋放、重畫）
   charts.forEach(c => c.timeScale().fitContent());
   const show = i => legs.forEach(f => f(i));
   let busy = false;

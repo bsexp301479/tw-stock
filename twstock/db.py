@@ -558,6 +558,22 @@ DDL = [
         CONSTRAINT UQ_dividend_notices UNIQUE (code, ex_date)
     )
     """,
+    # 第 43 輪 F43-1：集保股權分散（每週一次；一檔一週一列，1～16 級人數 n、股數 s 與 17 級合計；股票、ETF 同表，不用外鍵；官方比例不存）
+    f"""
+    IF OBJECT_ID('share_distribution') IS NULL
+    CREATE TABLE share_distribution (
+        id           BIGINT IDENTITY(1,1) PRIMARY KEY,
+        code         NVARCHAR(10)  NOT NULL,   -- 股票或 ETF 代號（寫入時只收 stocks、etfs 表已有的）
+        is_etf       BIT           NOT NULL,
+        data_date    DATE          NOT NULL,   -- 官方資料日期（每週最後一個營業日），不是抓取日
+        {", ".join(f"n{i} INT NOT NULL" for i in range(1, 17))},
+        {", ".join(f"s{i} BIGINT NOT NULL" for i in range(1, 17))},
+        n_total      INT           NOT NULL,   -- 17 級（合計）人數；n1～n16 = 1～16 級人數（16 = 差異數調整）
+        s_total      BIGINT        NOT NULL,   -- 17 級（合計）股數 = 1～15 級股數和 − 16 級股數；s1～s16 = 1～16 級股數
+        fetched_at   DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_share_distribution UNIQUE (code, data_date)
+    )
+    """,
     # 第 11 輪：發行股數（update_industry 一併寫入；目前股數，不保留歷史）
     "IF COL_LENGTH('stocks', 'shares') IS NULL ALTER TABLE stocks ADD shares BIGINT NULL",
     # 第 19 輪：減除股利參考價（只扣股利、不扣現金增資；TWT49U、TPEX_EX 才有，其他來源 NULL），分辨配股與現金增資
@@ -583,6 +599,8 @@ DDL = [
     "CREATE INDEX IX_sbl_trades_date ON sbl_trades(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_foreign_holdings_date') "
     "CREATE INDEX IX_foreign_holdings_date ON foreign_holdings(trade_date)",
+    "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_share_distribution_date') "
+    "CREATE INDEX IX_share_distribution_date ON share_distribution(data_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_daily_date') "
     "CREATE INDEX IX_etf_daily_date ON etf_daily(trade_date)",
     "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_etf_holdings_code') "
@@ -608,4 +626,4 @@ def setup_database():
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
           "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
-          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、etf_holding_gaps")
+          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、share_distribution（第 43 輪）、etf_holding_gaps")
