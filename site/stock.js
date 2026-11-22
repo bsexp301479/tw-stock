@@ -32,15 +32,19 @@ function balStreak(G, D, key, to) {
 
 // 第 23 輪 F23-1：近期表現（匯出端 pf = [[區間, 基準日, 本股 %, 指數 %, 差距]]，和選股 5／20／60 日報酬、相對強度同一套）；停牌、ETF 沒有 pf。nt = 本股最後成交日（今天無成交時）
 const PF_NAME = { 5: '5 日', 20: '20 日', 60: '60 日', 120: '120 日', y: '今年以來', w: '52 週' };
-function perfHTML(pf, mkt, nt) {
-  const ix = mkt === 'TWSE' ? '加權指數' : '櫃買指數', ls = mkt === 'TWSE' ? '上市以來' : '上櫃以來', at = k => pf.find(r => r[0] === k)?.[1];
+// 第 46 輪 F46-2：etf = ETF 代號時為 ETF 版（etfp/ 的 epf：含息、上市上櫃一律對照加權指數、代號尾碼 B／L／R／U 多一行提示），股票輸出不變
+function perfHTML(pf, mkt, nt, etf = false) {
+  const ix = mkt === 'TWSE' || etf ? '加權指數' : '櫃買指數', ls = mkt === 'TWSE' ? '上市以來' : '上櫃以來', at = k => pf.find(r => r[0] === k)?.[1];
   const td = (v, u) => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v) + u}</td>`;
-  const short = '還原價（含股息）；指數不含股息，長區間的差距會偏向個股';      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
-  const full = `差距 = 本股 − ${ix}（百分點）。本股用還原收盤（除權息、減資、現金增資依官方參考價調整，和 K 線、52 週高低、選股相同），今天無成交時用最後成交的收盤；${ix}是價格指數，不含股息，所以區間越長，差距越偏向本股（大約是期間的殖利率）。` +
+  const short = etf ? '含息報酬（配息在除息日再投入）；加權指數不含股息，長區間的差距會偏向 ETF' : '還原價（含股息）；指數不含股息，長區間的差距會偏向個股';      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
+  const full = etf ? `差距 = 本檔 − 加權指數（百分點）。本檔用含息還原收盤：除息日依證交所、櫃買中心除息表的參考價 ÷ 除息前收盤，調整之前的價格，等於把配息在除息日以參考價再投入同一檔；上市 ETF 推測的其他價格調整（多為分割、合併）也一起調整，上櫃 ETF 的分割、合併本站無法辨識。K 線、52 週高低仍是原始價。不含手續費、稅與二代健保補充保費。今天無成交時用最後成交的收盤。加權指數是價格指數，不含股息，所以區間越長，差距越偏向 ETF；ETF 追蹤的指數和加權指數不同，債券、海外、槓桿／反向、期貨 ETF 的差距只能當參考。N 日 = 從往前第 N 個交易日的收盤起算（20 日約 1 個月、60 日約 3 個月、120 日約 6 個月）；今年以來從 ${at('y')} 收盤起算；52 週從 ${at('w')} 收盤起算。「--」= 基準日時本站還沒有這檔的成交${at('s') ? `；${ls}從本站第一個成交日 ${at('s')} 的收盤起算，不是發行價（本站日線從 2025-10-30 起）` : ''}。`
+    : `差距 = 本股 − ${ix}（百分點）。本股用還原收盤（除權息、減資、現金增資依官方參考價調整，和 K 線、52 週高低、選股相同），今天無成交時用最後成交的收盤；${ix}是價格指數，不含股息，所以區間越長，差距越偏向本股（大約是期間的殖利率）。` +
     `N 日 = 從往前第 N 個交易日的收盤起算，5、20、60 日和選股的 5／20／60 日報酬、20／60 日相對強度相同；今年以來從 ${at('y')} 收盤起算；52 週從 ${at('w')} 收盤起算。` +
     `「--」= 基準日時本站還沒有這檔的成交${at('s') ? `；${ls}從本站第一個成交日 ${at('s')} 的收盤起算，不是承銷價（本站日線從 2025-10-30 起，復牌或轉換為控股公司的股票也從第一個成交日起算）` : ''}。`;
-  return `<section class="sec card"><div class="sec-h"><h2>近期表現</h2><span class="muted small">至 ${md(App.latest.date)}${nt ? `，本股最後成交 ${md(nt)}` : ''}</span></div>
-    <div class="tbl-wrap"><table class="tbl pf-tbl"><thead><tr><th>區間</th><th>本股</th><th>${ix}</th><th>差距</th></tr></thead><tbody>` +
+  const tip = etf && { B: '債券 ETF 和股價指數走勢不同，差距只能當參考。', L: '槓桿、反向 ETF 每日追蹤指數報酬的倍數，區間報酬不等於指數報酬乘以倍數。',
+    U: '期貨 ETF 追蹤期貨價格，和股價指數走勢不同，差距只能當參考。' }[etf.slice(-1).replace('R', 'L')], me = etf ? '本檔' : '本股';
+  return `<section class="sec card"><div class="sec-h"><h2>${etf ? '近期表現（含息）' : '近期表現'}</h2><span class="muted small">至 ${md(App.latest.date)}${nt ? `，${me}最後成交 ${md(nt)}` : ''}</span></div>${tip ? `<div class="muted small">${tip}</div>` : ''}
+    <div class="tbl-wrap"><table class="tbl pf-tbl"><thead><tr><th>區間</th><th>${me}</th><th>${ix}</th><th>差距</th></tr></thead><tbody>` +
     pf.map(([k, b, s, i, g]) => `<tr><td>${k === 's' ? `${ls}<span>${md(b)} 起</span>` : PF_NAME[k]}</td>${td(s, '%')}${td(i, '%')}${td(g, '')}</tr>`).join('') +
     `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
 }
@@ -355,6 +359,7 @@ window.renderStock = async function (code, sub) {
     </section>
 
     ${data.pf ? perfHTML(data.pf, data.market, noTrade ? P.d[lt] : null) : ''}
+    ${E && data.epf ? perfHTML(data.epf, data.market, noTrade ? P.d[lt] : null, data.code) : ''}
     ${E ? divHTML(data.dv || [], data.market, P, true) : '<section class="sec card"><div class="sec-h"><h2 id="sigTitle">技術面訊號</h2></div><div id="sigBox"></div></section>'}`}`;   // 第 36 輪 F36-2
 
   const ptab = $('#view .page-tabs'), topH = () => $('.top').offsetHeight;   // 第 30 輪 D30-01

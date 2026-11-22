@@ -49,6 +49,7 @@ NH_DAYS = (240, 120, 60, 20)    # C3：創 N 日新高／新低的 N（由大到
 HL_DAYS, HL_REV_DAYS = 5, 20     # 第 21 輪 F21-1：近期新訊號看最近 5 個交易日；營收看最近 20 個交易日
 HL_EPS_YOY, HL_EPS_BASE = 50, 0.1   # 第 22 輪 F22-11：EPS 年增事件門檻（%）；去年同季 < 0.1 元為基期低（同前端 EPS_BASE），不產生事件
 PF_DAYS = (5, 20, 60, 120)       # 第 23 輪 F23-1：個股頁近期表現的 N 日區間（另有今年以來 y、52 週 w、上市以來 s）
+EPF_KEYS = {20: "r20", 60: "r60", "y": "ry", "w": "rw"}   # 第 46 輪 F46-3：ETF 列表的含息報酬欄（epf 的區間 → latest.json ETF 列的鍵）
 CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視為官方已換算
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
@@ -862,6 +863,28 @@ def etf_gaps(d_, c, ch, market):
         return []
     return [str(d_[i]) for i in range(1, len(d_)) if c[i] is not None and c[i - 1] is not None and ch[i] is not None
             and abs(float(c[i]) - float(ch[i]) - float(c[i - 1])) >= 0.005]
+
+
+def etf_perf(rows, market, events, days, idx, w52_start):
+    """
+    第 46 輪 F46-1：etfp/{代號}.json 的 epf（近期表現，含息），格式同 stock_perf；對照一律用加權指數 idx（R54）。
+    還原事件（R52）= 官方除息表 events（參考價 ÷ 除息前收盤）＋上市 etf_gaps 中不在除息表的日子（參考價 = 收盤 − 官方漲跌，類型「調」）；
+    以 TWSE 呼叫 _price_events（不做上櫃反推），還原收盤 = 收盤 × _adj_factors，等於配息在除息日以參考價再投入同一檔。
+    回傳 None（不輸出）：從沒成交；上櫃 ETF（D138）有一天「前一列有成交、官方漲跌空白、不在除息表」，或相鄰兩個成交列的還原收盤變動超過 ±30%。
+    """
+    d_, _, _, _, c, _, ch = zip(*rows)
+    ex, gx = {str(e[0]) for e in events}, set(etf_gaps(d_, c, ch, market))
+    ev = [{"d": d, "t": "息", "p": float(p), "r": float(r), "src": "etf"} for d, p, r, _ in events] + \
+         [{"d": d_[i], "t": "調", "p": float(c[i - 1]), "r": round(float(c[i]) - float(ch[i]), 2), "src": "gap"}
+          for i in range(1, len(d_)) if str(d_[i]) in gx - ex]
+    af = _adj_factors(len(d_), _price_events(d_, c, ch, "TWSE", ev)[0])
+    adj = [float(x) * f if x is not None else None for x, f in zip(c, af)]
+    px = [a for a in adj if a is not None]
+    if not px or market == "TPEx" and (
+            any(c[i] is not None and c[i - 1] is not None and ch[i] is None and str(d_[i]) not in ex for i in range(1, len(d_)))
+            or any(abs(b / a - 1) > 0.30 for a, b in zip(px, px[1:]))):
+        return None
+    return stock_perf(d_, adj, days, idx, w52_start)
 
 
 def _num(v):
@@ -1905,6 +1928,7 @@ def export_all() -> float:
     # 第 15 輪 F15-2：ETF 個股檔 = latest.json etfs.rows 的 ETF（已下市、最新一天沒有列的不匯出）
     n_etf = kb_etf = 0
     edv = {}                                                    # 第 36 輪 F36-3：ETF 列表的配息欄
+    eix = {}                                                    # 第 46 輪 F46-3：ETF 列表「表現」的加權指數同期 %（各檔相同）
     for m, (_, items) in (etf_latest or {}).items():
         ds = esd.get(m, [])
         for code, name, *_ in items:
@@ -1915,8 +1939,15 @@ def export_all() -> float:
                 E["nx"] = nx_etf[code]                         # 第 40 輪 F40-2：下一次除權除息預告（放在最後；沒有就不輸出）
             if code in sh_etf:
                 E["sh"] = sh_etf[code]                         # 第 43 輪 F43-2：集保股權分散（放在最後；沒有就不輸出）
+            if (epf := etf_perf(epx[code], m, eev.get(code, ()), p_days, idx_close["TWSE"], w52_start)) is not None:
+                E["epf"] = epf                                 # 第 46 輪 F46-1：近期表現（含息；放在最後；沒有就不輸出）
             _write(p, E)
             edv[code] = etf_div_row(E.get("dv", []), latest_date)
+            for k, _, r, i, _ in epf or ():                    # 第 46 輪 F46-3：ETF 列表的含息報酬欄（放在配息欄之後；缺值不輸出）與加權同期
+                if k in EPF_KEYS and r is not None:
+                    edv[code][EPF_KEYS[k]] = r
+                if k in EPF_KEYS and i is not None:
+                    eix.setdefault(k, i)
             n_etf, kb_etf = n_etf + 1, kb_etf + p.stat().st_size / 1024
 
     if futures:
@@ -1963,6 +1994,8 @@ def export_all() -> float:
         "alerts": alert_board(alerts),                          # 第 16 輪 F16-3：今日頁處置／注意清單
         "stocks": snapshot,
     }
+    if latest["etfs"] and eix:
+        latest["etfs"]["ix"] = {str(k): eix[k] for k in EPF_KEYS if k in eix}   # 第 46 輪 F46-3：{"20", "60", "y", "w"}
     # 第 17 輪 F17-2：注意累計預警（推算）；處置中、即將處置不列
     latest["alerts"]["w"] = alert_watch(watch_notes, watch_days,
                                         {c for c, v in alerts.items() if any(a["t"] == "disposal" for a in v)})

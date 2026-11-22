@@ -1420,6 +1420,7 @@ async function renderScreen(q) {
 // ─── ETF（E1）：與股票完全分開，不計入任何個股統計 ─────────
 const ETF_SORT = [['tv', '成交額', -1], ['p+', '漲幅', -1], ['p-', '跌幅', 1], ['m1', '融資增減', -1], ['s1', '融券增減', -1],
   ['l1+', '借券增加', -1], ['l1-', '借券減少', 1], ['lb', '借券餘額', -1],     // 第 12 輪 ETF-借券
+  ['r20', '含息 20 日', -1], ['r60', '含息 60 日', -1], ['ry', '含息今年以來', -1], ['rw', '含息 52 週', -1],   // 第 46 輪 F46-3
   ['dvr', '配息率', -1], ['dva', '最近除息', 1]];                                  // 第 36 輪 F36-3
 // 第 36 輪 F36-3：ETF 配息欄。dvr 配息率 = 近一年配息 ÷ 收盤（%）；dva 除息至今天數（相對網站資料日，排序用）
 const etfDiv = (r, d) => { r.dvr = r.dvc > 0 && r.c > 0 ? r.dvc / r.c * 100 : null; r.dva = r.dvd ? Math.round((Date.parse(d) - Date.parse(r.dvd)) / 864e5) : null; return r; };
@@ -1433,6 +1434,18 @@ const ETF_DIV_NOTE = '配息率 = 近一年（365 天）每單位配息合計 ÷
 const onEtfRow = e => { const tr = e.target.closest('tr[data-etf]'); if (tr && !e.target.closest('a,button')) location.hash = '#/stock/' + tr.dataset.etf; };
 
 const ETF_N = 50;   // 第 30 輪 D30-04：ETF 列表預設顯示的檔數（和排行一樣）
+// 第 46 輪 F46-3：ETF 列表「表現」欄組（latest.json ETF 列的 r20、r60、ry、rw = 含息報酬 %，etfs.ix = 加權指數同期 %）
+const EPF_COLS = [['r20', '20', '20 日'], ['r60', '60', '60 日'], ['ry', 'y', '今年以來'], ['rw', 'w', '52 週']];
+const ETF_PF_NOTE = '含息報酬（%），算法同 ETF 個股頁「近期表現（含息）」：配息在除息日以參考價再投入，不含手續費與稅；「--」= 基準日時本站還沒有這檔的成交；今天無成交時用最後成交的收盤。加權指數是價格指數，不含股息；債券、海外、槓桿／反向、期貨 ETF 和加權指數比較的意義有限。';
+function etfPerfHTML(list, ix) {
+  const pct = v => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v) + '%'}</td>`;
+  const line = EPF_COLS.filter(([, k]) => ix && ix[k] != null).map(([, k, l]) => `${l} ${sgn(ix[k])}%`).join('、');
+  return (line ? `<div class="muted small" style="margin-bottom:6px">加權指數同期：${line}（價格指數，不含股息）</div>` : '') +
+    `<div class="card"><div class="tbl-wrap"><table class="tbl etf-tbl"><thead><tr><th>ETF</th><th>收盤</th>${EPF_COLS.map(c => `<th>${c[2]}</th>`).join('')}</tr></thead><tbody>` +
+    list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
+      ${r.c == null ? '<td class="num flat">無成交</td>' : `<td class="num ${cls(r.ch)}">${pfmt(r.c)}</td>`}${EPF_COLS.map(([k]) => pct(r[k])).join('')}</tr>`).join('') +
+    '</tbody></table></div></div>';
+}
 function renderEtf() {
   const E = App.latest.etfs;
   if (!E) {
@@ -1440,17 +1453,27 @@ function renderEtf() {
     return;
   }
   const by = localStore('etfSort', 'tv'), mkt = localStore('etfMkt', 'all');
-  const [key, , dir] = ETF_SORT.find(x => x[0] === by) || ETF_SORT[0];
+  // 第 46 輪 QA46-02：有含息報酬欄（新 latest.json）才顯示「行情／表現」欄組；舊 latest.json 時存下的含息排序改用成交額
+  const hasPf = Object.values(E.rows).some(r => EPF_COLS.some(([k]) => r[k] != null)), perf = hasPf && App.etfCols === 'perf';
+  const [key, , dir] = ETF_SORT.find(x => x[0] === by && (hasPf || !EPF_COLS.some(c => c[0] === x[0]))) || ETF_SORT[0];
   const f = key.replace(/[+-]$/, '');
   const list = Object.entries(E.rows).map(([c, r]) => [c, etfDiv(r, App.latest.date)]).filter(([, r]) => mkt === 'all' || r.m === mkt)
     .sort((a, b) => (a[1][f] == null) - (b[1][f] == null) || dir * ((a[1][f] ?? 0) - (b[1][f] ?? 0)));
   const lots = v => `<td class="num ${cls(v)}">${v == null ? '--' : sgn(v, 0)}</td>`;
   const dates = Object.entries(E.dates).map(([m, d]) => `${m === 'TWSE' ? '上市' : '上櫃'} ${md(d)}`).join('　');
-  $('#view').innerHTML = `<section class="sec">
-      <div class="sec-h"><h2>ETF</h2><span class="muted small">${dates}</span>${App.latest.active_rank ? '<a class="pill hold" href="#/etf/active">主動 ETF 彙總</a>' : ''}<span class="sp"></span>
+  // 第 46 輪 F46-3：欄組只記在這次瀏覽（App.etfCols），「行情」輸出不變
+  const head = `<div class="sec-h"><h2>ETF</h2><span class="muted small">${dates}</span>${App.latest.active_rank ? '<a class="pill hold" href="#/etf/active">主動 ETF 彙總</a>' : ''}<span class="sp"></span>
         ${segHTML('etfMktSeg', [['all', '全部'], ['TWSE', '上市'], ['TPEx', '上櫃']], mkt)}
         <input id="etfQ" class="sel" type="search" placeholder="篩選代號或名稱" aria-label="篩選 ETF" value="${esc(App.etfQ || '')}">
-        <select id="etfSel" class="sel" aria-label="排序">${ETF_SORT.map(x => `<option value="${x[0]}"${x[0] === by ? ' selected' : ''}>${x[1]}</option>`).join('')}</select></div>
+        <select id="etfSel" class="sel" aria-label="排序">${ETF_SORT.filter(x => hasPf || !EPF_COLS.some(c => c[0] === x[0])).map(x => `<option value="${x[0]}"${x[0] === by ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>${hasPf ? segHTML('etfColSeg', [['flow', '行情'], ['perf', '表現']], perf ? 'perf' : 'flow') : ''}</div>`;
+  const more = list.length > ETF_N ? `<button class="chip" id="etfMore" style="margin-top:8px">${App.etfAll ? `只顯示前 ${ETF_N} 檔` : `顯示全部 ${list.length} 檔`}</button>` : '';
+  if (perf) $('#view').innerHTML = `<section class="sec">
+      ${head}
+      ${etfPerfHTML(list, E.ix)}
+      ${more}
+      <div class="muted small" style="margin-top:6px">共 ${list.length} 檔。${ETF_PF_NOTE}</div></section>`;
+  else $('#view').innerHTML = `<section class="sec">
+      ${head}
       <div class="card"><div class="tbl-wrap"><table class="tbl etf-tbl"><thead><tr>
         <th>ETF</th><th>收盤</th><th>漲跌</th><th>成交量</th><th>成交額</th><th>融資餘額</th><th>融資增減</th><th>融券餘額</th><th>融券增減</th><th>借券餘額</th><th>借券增減</th><th>近一年配息</th><th>配息率</th><th>最近除息</th></tr></thead><tbody>` +
       list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm"><b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}</td>
@@ -1463,12 +1486,16 @@ function renderEtf() {
         <td class="num">${r.dvc == null ? '--' : r.dvc.toLocaleString('zh-TW', { maximumFractionDigits: 4 })}</td><td class="num">${r.dvr == null ? '--' : fmt(r.dvr, 2) + '%'}</td>
         <td class="num">${r.dvd ? md(r.dvd) + `<span class="sub2">${r.dvn != null ? r.dvn + ' 天填息' : r.dvx ? '中斷' : '未填息'}</span>` : '--'}</td></tr>`).join('') +
       `</tbody></table></div></div>
-      ${list.length > ETF_N ? `<button class="chip" id="etfMore" style="margin-top:8px">${App.etfAll ? `只顯示前 ${ETF_N} 檔` : `顯示全部 ${list.length} 檔`}</button>` : ''}
+      ${more}
       <div class="muted small" style="margin-top:6px">共 ${list.length} 檔。成交量為張、成交額為億元；融資融券為張，增減 = 今日餘額 − 前日餘額，「--」表示不在信用交易清單。借券為借券賣出（張，資料晚上 8 點半以後更新），多為造市、套利與避險，不等於看空。ETF 不計入首頁家數、成交額、類股資金流、排行與股票口徑的融資融券。${ETF_DIV_NOTE}</div></section>`;
-  keyCol({ tv: 4, p: 2, m1: 6, s1: 8, l1: 10, lb: 9 }[f]);
-  keyCol({ dvr: 12, dva: 13 }[f]);                                           // 第 36 輪 F36-3
+  if (perf) keyCol({ r20: 2, r60: 3, ry: 4, rw: 5 }[f]);                    // 第 46 輪 F46-3：「表現」只移含息欄；行情的兩行不作用在表現表
+  else {
+    keyCol({ tv: 4, p: 2, m1: 6, s1: 8, l1: 10, lb: 9 }[f]);
+    keyCol({ dvr: 12, dva: 13 }[f]);                                           // 第 36 輪 F36-3
+  }
   $('#etfSel').addEventListener('change', e => { localStore('etfSort', null, e.target.value); renderEtf(); });
   onSeg('etfMktSeg', v => { localStore('etfMkt', null, v); renderEtf(); });
+  if (hasPf) onSeg('etfColSeg', v => { App.etfCols = v; renderEtf(); });
   const etfQ = () => { const q = (App.etfQ = $('#etfQ').value.trim()).toLowerCase();   // 第 25 輪 D25-15：只隱藏列，不重畫
     // 第 30 輪 D30-04：沒有篩選字時只顯示前 ETF_N 檔（「顯示全部」後全列）；有篩選字時在全部 ETF 中找
     $('#view').querySelectorAll('tr[data-etf]').forEach((tr, i) => { tr.hidden = q ? !(tr.dataset.etf.toLowerCase() + tr.cells[0].textContent.toLowerCase()).includes(q) : !App.etfAll && i >= ETF_N; });
