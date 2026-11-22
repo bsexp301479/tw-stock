@@ -46,7 +46,7 @@ def parse_notices(market: str, data) -> list:
         kind = str(r[names[2]] or "").strip().lstrip("除")       # 櫃買「除息／除權／除權息」→ 去掉「除」
         if d is None or kind not in NOTICE_TYPES or not (is_valid_stock_code(code) or is_etf_code(code)):
             continue
-        num = lambda k: clean_number(r[names[k]], Decimal)
+        num = lambda k: x if (x := clean_number(r[names[k]], Decimal)) is None or x.is_finite() else None   # QA40-04：NaN、Infinity 當作沒有值
         sub = num(5) or Decimal(0)
         out[(code, d)] = {"code": code, "ex_date": d, "event_type": kind, "cash_div": num(3), "stock_ratio": num(4) or Decimal(0),
                           "sub_ratio": sub, "sub_price": num(6) if sub else None}     # 「待公告」「尚未公告」「註4」→ None

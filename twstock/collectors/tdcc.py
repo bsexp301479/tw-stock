@@ -96,5 +96,6 @@ def collect_tdcc(latest, today: date) -> dict:
             conn.close()
     e = sum(1 for r in out if r[0])
     s = len(out) - e
-    print(f"  🏦 集保股權分散 {data_date}：股票 {s:,} 檔、ETF {e:,} 檔" + (f"，略過 {skipped:,} 檔（合計不符）" if skipped else ""))
+    bad = skipped and not rows                          # QA43-03：全部略過 = 官方格式可能改變
+    print(f"  {'⚠️' if bad else '🏦'} 集保股權分散 {data_date}：股票 {s:,} 檔、ETF {e:,} 檔" + (f"，略過 {skipped:,} 檔（合計不符）" if skipped else "") + ("，官方格式可能改變，請檢查" if bad else ""))
     return {**rec, "s": s, "e": e}

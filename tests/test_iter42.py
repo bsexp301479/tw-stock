@@ -377,7 +377,7 @@ console.log(JSON.stringify(out));""" % json.dumps({k: v for k, v in H.items() if
     assert re.findall(r'<tr data-code="(\w+)">', c) == ["00679B", "2330", "0056", "1538", "1101"]                    # 前 5 個認得的，依自選順序、混排
     assert f'<tr data-code="00679B"><td class="nm"><b>元大美債20年</b><span>00679B</span></td><td class="num flat">26.15</td><td class="num flat" title="{EX_TIP}">除息</td><td class="num">--</td></tr>' in c
     assert '<td class="nm"><b>台積電</b><span>2330</span></td>' in c and '<td class="num dn">2,000</td><td class="num dn">-4.76%</td>' in c   # 沿用 rows
-    m = re.search(r'<a class="w-hold" href="#/watch">持股 (\d+) 檔　今日損益 <b class="\w+">(.*?)</b> 元　未實現損益 <b class="\w+">(.*?)</b> 元（(.*?)）', c)
+    m = re.search(r'<a class="w-hold" href="#/watch">持股 (\d+) 檔　今日損益 <b class="\w+">(.*?)</b> 元　未實現損益 <b class="\w+">(.*?)</b> 元（<b class="\w+">(.*?)</b>）', c)
     a = re.search(r"今日損益 <span class=\"\w+\">(.*?)</span> 元　未實現損益 <span class=\"\w+\">(.*?)</span> 元（<span class=\"\w+\">(.*?)</span>）", o["all"])
     assert m and a and m.groups()[1:] == a.groups() and m.group(1) == "4", (m and m.groups(), a and a.groups())      # 和自選頁全部持股同一個數字
     assert "（今日損益不含無成交、除息 2 檔）" in c and "以 11/20 收盤全部出售試算，已扣出售手續費與證交稅" in c
@@ -510,7 +510,7 @@ def test_call_not_copy_and_counts():
     v = {f: hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8] for f in ("app.js", "stock.js", "app.css", "tools.js")}
     for f, h in v.items():
         assert f'{f}?v={h}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {h}"
-    assert v["tools.js"] == "05638786" and HTML.count("https://") == 2                       # tools.js 0 行改動
+    assert HTML.count("https://") == 2                       # 第 42 輪 tools.js 0 行改動；之後 tools.js 的版本由上面 ?v= 比對
 
 
 def test_no_advice_words():

@@ -103,7 +103,7 @@ function tlFeePref(raw) {
   return { d: d > 0 && d <= 10 ? String(d) : '10', m: m >= 0 ? String(m) : String(TL_RULES.minFee) };
 }
 const TL = { code: undefined, info: null,
-  dt: { mode: 'dt', dir: 'b', k: 's', b: '', s: '', n: '1000', ref: '' },
+  dt: { mode: 'g', dir: 'b', k: 's', b: '', s: '', n: '1000', ref: '' },
   cp: { P: '0', M: '5000', at: 'end', r: '', n: '10', dv: '0', y: '' },
   pl: { p1: '', p2: '', q: '1', u: 'lot', cap: '60', loan: '', rate: '', days: '180', base: '365', fee: '0', call: '130' },
   dv: { mk: 'l', k: 's', p: '', c: '', s: '0', n: '1000', cost: '', y1: '' },   // 第 39 輪：持有成本不帶入（D83-1 = A）
@@ -290,7 +290,7 @@ function tlDvLoad(d, e) {
   const V = d.dv || [], x = V[V.length - 1], tw = d.market !== 'TPEx', D = d.prices.d, n = (d.nx || [])[0], N = n ? tlNx(n, tw, e) : [false, ''];
   const o = { mk: tw ? 'l' : 'o', c: '', s: '0', y1: '', cost: '' }, h = [];   // 換股票時清掉上一檔的持有成本
   if (N[0]) { o.c = String(n.c); o.s = n.s != null ? String(n.s) : '0'; h.push(N[1]); }
-  if (!x || !x.t) return [o, h.concat(`${D[0]} 起沒有除權息紀錄，請依公司公告填寫`, n && !N[0] ? N[1] : [])];
+  if (!x || !x.t) return [o, h.concat(`${D[0]} 起沒有除權息紀錄，請依${e ? '發行人' : '公司'}公告填寫`, n && !N[0] ? N[1] : [])];
   const from = new Date(Date.parse(D[D.length - 1]) - 365 * 864e5).toISOString().slice(0, 10);
   let y = 0n, k = 0, miss = false;
   V.forEach(v => { if (v.d > from && (v.t === '息' || v.t === '權息')) { const c = v.c == null ? null : tlBig(String(v.c), 6); if (c === null) miss = true; else { y += c; k++; } } });
@@ -298,7 +298,7 @@ function tlDvLoad(d, e) {
   if (N[0]) { /* 已帶入預告 */ }
   else if (x.k === 'sc') h.push(`最近一次（${md(x.d)}）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入`);
   else if (tw && x.c == null && x.a != null) h.push(`上市官方表只有 ${md(x.d)} 的權值＋息值合計 ${x.a} 元，請依公告填現金股利與配股`);
-  else { o.c = x.c != null ? String(x.c) : '0'; o.s = x.s != null ? String(x.s) : '0'; h.push(`已帶入 ${md(x.d)} 的股利（最近一次），下次請依公司公告修改`); }
+  else { o.c = x.c != null ? String(x.c) : '0'; o.s = x.s != null ? String(x.s) : '0'; h.push(`已帶入 ${md(x.d)} 的股利（最近一次），下次請依${e ? '發行人' : '公司'}公告修改`); }
   if (n && !N[0]) h.push(N[1]);
   const ev = (d.ev || []).filter(v => v.d === x.d && v.t === x.t)[0], R = x.r != null ? x.r : ev && ev.r;
   if (R != null && x.p != null) h.push(`上次官方參考價 ${pfmt(R)}（${md(x.d)}，前收 ${pfmt(x.p)}）；前收改成 ${pfmt(x.p)} 可對照`);

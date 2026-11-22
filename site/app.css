@@ -376,3 +376,4 @@ a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
 .h-tbl tfoot td{border-bottom:0;border-top:2px solid var(--border);font-weight:500}.h-msg:not(:empty){color:var(--amber);font-size:13px;margin-top:6px}.h-all{margin-top:8px;line-height:1.7}.h-note{margin-top:6px}   /* 第 42 輪：持股合計列、輸入訊息、全部持股、自選 ETF 表說明 */
 .w-hold{display:block;margin-top:8px;line-height:1.7}.w-ev-l{display:block;margin-top:6px;color:var(--blue)}.w-today>.muted.small{margin-top:4px}   /* 第 42 輪 F42-2：今日頁我的自選 */
 a.pill.grp{cursor:pointer}a.pill.grp:hover,a.pill.grp:focus-visible{border-color:var(--blue);outline:none}   /* 第 42 輪 F42-3：可點的族群標籤（文字顏色不變） */
+.dv-nx{word-break:keep-all}.tl-lg+.muted.small{text-wrap:pretty}.chip-g .stat .s{word-break:keep-all}   /* 第 44 輪：375 寬不拆「預告」、複利座標說明不剩單字、籌碼卡不拆「（百分點）」（QA44-01） */

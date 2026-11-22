@@ -1,0 +1,514 @@
+diff --git a/README.md b/README.md
+index 59b1263..be2af6b 100644
+--- a/README.md
++++ b/README.md
+@@ -86,6 +86,7 @@ python3 tests/test_iter40.py                     # 第 40 輪測試（除權除
+ python3 tests/test_iter41.py                     # 第 41 輪測試（平均成本）
+ python3 tests/test_iter42.py                     # 第 42 輪測試（持股、今日頁我的自選、族群標籤、ETF 配息卡）
+ python3 tests/test_iter43.py                     # 第 43 輪測試（集保股權分散）
++python3 tests/test_iter44.py                     # 第 44 輪測試（小項整理）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -147,6 +148,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker
+ - 除權除息預告（第 40 輪，資料表 `dividend_notices`）：上市取自證交所 `TWT48U`（除權除息預告表）、上櫃取自櫃買 OpenAPI `tpex_exright_prepost`，兩個來源都只有當下快照（不能回補）。`collect --catch-up` 抓除權息事件的那一次（每個新交易日一次）各抓 1 次，每晚多 2 個請求；`collect --date`、`events` 不抓。附屬查詢不重試、不標記主機，失敗只印 ⚠️，不算異常、不通知，該市場沿用上次快照。以（代號, 除權息日）為鍵，記第一次與最近一次看到的抓取日（`first_seen`、`last_seen`），不刪除；現金股利「待公告」存 NULL；無償配股率是每股（× 1,000 = 每千股配股）；認購價「尚未公告」「註4」存 NULL。只收 `stocks`、`etfs` 表已有的代號（ETN、受益證券不收）。預告有變不算新資料、不觸發匯出。個股 `stocks/{代號}.json`、ETF `etfp/{代號}.json` 加 `nx` = `[{d, t, c, s?, sr?, sp?}]`：只取各市場最近一次成功快照、除權息日在資料日之後的列（到了除權息日改看 `dv`／`ev`）；`c` = null 是待公告，`s` = 每千股配股、`sr`／`sp` = 現增配股率與認購價，只在大於 0 時出現；沒有預告時不輸出鍵。個股「股利與填息」、ETF「配息與填息」卡標題列下加一行「即將除息 MM/DD：…（預告，以公司／發行人公告為準）」；工具頁 `?c=` 有預告金額時帶入下一次預告股利（含現增、待公告、超過 6 位小數時照舊帶最近一次並提示），交易成本頁的「MM/DD 除權息，參考價另計」改用預告日。官方註明預告僅供參考，以公司公告為準。
+ - 平均成本（第 41 輪）：工具頁第 2 個分頁 `#/tools/ac`（交易成本之後），輸入多筆買入（預設 3 列、最多 10 列，可新增、刪除），算總股數、成交金額、買入手續費、總成本、平均成交價與平均成本（含手續費，整數運算四捨五入到 0.01），以及全部出售的損益兩平賣價（理論值，和從平均成本進位到升降單位起逐檔驗算的可成交值）；填了目前價格再算出售金額、出售手續費、證交稅、未實現損益與報酬率。股數不是 1,000 的倍數時拆成整股＋零股兩筆，各自套用最低手續費（整股、零股兩欄，零股預設 1 元）並各自捨去證交稅。折扣與整股最低手續費第一次打開時取交易成本頁的值，本頁修改不存；各列內容不存、不放進網址；`?c=代號` 帶入最新收盤當目前價格與商品別，換代號清空各列。不含部分出售、當沖、融資與除權息調整成本。窄螢幕（520px 以下）工具頁分頁列換成兩行。
+ - 持股（第 42 輪）：自選頁第 4 個欄位組「持股」（只有 ETF 時為「行情｜持股」），在編輯模式或各列「填入」輸入股數與平均成本（含買入手續費，最多 2 位小數），顯示收盤、市值、今日損益（股數 × 今日漲跌；無成交、ETF 除息日不計）、未實現損益與報酬率（以最新收盤全部出售試算，扣出售手續費與證交稅，同平均成本工具；手續費折扣與整股最低值取自交易成本頁，零股最低 1 元；證交稅股票 0.3%、名稱 -DR 結尾的存託憑證 0.1%、ETF 0.1%、代號 B 結尾的債券 ETF 停徵）及合計。持股只存在這個瀏覽器（`tw.hold`），不放進分享連結、網址與匯出檔；移出自選時一併刪除（復原前還在）。今日頁總覽第一個區塊「我的自選」小卡列前 5 檔與持股合計。個股頁的產業、產業鏈、概念股標籤點了跳泡泡圖並展開該族群；ETF 頁頭加近一年配息、配息率、最近除息、成交額卡，自選 ETF 表加配息三欄；ETF 今天除息時漲跌欄寫「除息」；本益比河流圖加一行 EPS 算法說明。
++- 小項整理（第 44 輪）：工具頁「交易成本」預設改為「非當沖」（證交稅 0.3%；點「現股當沖」照舊 0.15%）；工具頁「除權息」帶入股利時，ETF 的提示寫「依發行人公告」；今日頁「我的自選」小卡的報酬率依正負上色；窄螢幕不在「預告」、「4週」「20日」與數字之間斷行，複利圖座標說明不剩單一「元」。收集：除權除息預告表的 NaN、Infinity 當作待公告；集保股權分散若全部代號都合計不符，改印 ⚠️ 並提示官方格式可能改變。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+diff --git a/docs/iterations/README.md b/docs/iterations/README.md
+index 6f28c21..948f7e6 100644
+--- a/docs/iterations/README.md
++++ b/docs/iterations/README.md
+@@ -33,4 +33,5 @@
+ - 第 41 輪（2026-11-21 使用者選 F38-4 平均成本，五角色、每次交接等確認）。分析師 `41/01-analyst.md`：整股、零股混合時最低手續費要分兩欄，1,500 股這類列拆成整股＋零股兩筆（R35～R39）；D91～D100 = A。PM `41/02-pm.md`：F41-1 工具頁 `#/tools/ac`、F41-2 `?c=` 帶入目前價格，驗收 24 條；D95 = A（只改 `test_iter39:344` 一行）。設計 `41/03-design.md`（＋`03-design.diff`）：純函式 `tlLot`／`tlAvg`／`tlSell`／`tlAcBreak`（金額 BigInt、平均整數四捨五入；PM 寫的 68.525 在 node 用 `toFixed` 其實不會錯，反證改用 1.005），增刪列在 `tlAcForm` 處理（`tlDraw` 先表單後結果，不改）；D101 = A（窄螢幕工具頁分頁列換兩行，`tlDraw` 重畫後分頁列會捲回最左）；舊測試只改 `test_iter39:344` 一行，新測試 `test_iter41`。
+ - 第 42 輪（2026-11-21 使用者要求：持股與自選、今日頁、個股頁小改，五角色、每次交接等確認）。分析師 `42/01-analyst.md`：F42-1～F42-15、R40～R42；D103 = A（F42-1～F42-7）、D104～D104-2 = A、D105 = A、D106 排下一輪、D107 = A。PM `42/02-pm.md`：持股欄組、今日小卡、族群標籤、ETF 配息卡與欄、河流圖說明、除息字樣，驗收 26 條；D108 = B（小卡在分頁鈕之下）、D109 = A（舊測試 0 行）、D110 = A（證交稅依商品細分）。設計 `42/03-design.md`（＋`03-design.diff`）：`app.js` 新增 `holdLoad`／`holdSave`／`holdCalc`（呼叫 `tlSell`，不複製）等純函式與 `watchToday`，`change` 只更新數字儲存格（焦點不遺失），`tools.js` 0 行；D110 查證財政部（存託憑證 0.1%、只有被動式債券 ETF 停徵至 2026/12/31，延長 10 年修法 11/11 立法院初審）；舊測試 0 行改動，新測試 `test_iter42`。
+ - 第 43 輪（2026-11-22 使用者選 F42-12 集保股權分散，五角色、每次交接等確認）。分析師 `43/01-analyst.md`：集保開放資料 `getOD.ashx?id=1-5` 1 次請求拿到全市場一週（只有最近一週，不能回補），4,130 檔合計驗算全部成立（R43～R50）；D114 = A（F43-1～F43-3）、D114-1 = B（寬表）、D114-2～D114-8 = A。PM `43/02-pm.md`：新表 `share_distribution`、`check` 一行、`sh`、籌碼分頁「股權分散」4 卡＋2 張週圖，抓取時機情境 17 種，驗收 27 條；D115 = A（`changed` 另看本次寫入，`_undated_counts` 不動）。設計 `43/03-design.md`（＋`03-design.diff`）：新檔 `collectors/tdcc.py`（純函式解析、一個 MERGE＋`OUTPUT` 計實際寫入檔數），目標週 `tradingcal.last_full_week`（比週不比日期、資料日以官方檔為準），`OBJECT_ID` 判斷表存在才排、才匯出（`setup-db` 才是啟用開關，World 下 0 次請求），匯出 `share_export` 整數四捨五入，`stock.js` 新增 `shCards`／`shChart`（週圖不跟區間、不和日資料十字線同步）；舊測試 0 行改動，新測試 `test_iter43`。
++- 第 44 輪（2026-11-22 使用者選小項整理，五角色、每次交接等確認）。分析師 `44/01-analyst.md`：7 個小項逐一實測（含舊測試影響、375／320 斷行）；D119～D126 = A（同意改 13 行舊測試；F41-3、F43-6 不併入）。PM `44/02-pm.md`：F44-1～F44-7，驗收 23 條；D127 = A（收集程式不等 11/23）。設計 `44/03-design.md`（＋`03-design.diff`）：程式 11 行（`tools.js` 3、`stock.js` 3、`app.js` 1、`app.css` 1、`notices.py` 1、`tdcc.py` 2），舊測試 13 行，新測試 `test_iter44`。
+ - 規範：回應與文件用繁體中文；程式風格比照既有程式碼；只改必要的地方；外部網站請求要經過 `twstock/fetch.py` 的 `request`（有節流）；不要 commit 或 push；不要動 `.env`（建立專案副本時也不要複製 `.env`）；不要安裝排程或改系統設定（launchd、crontab、pmset、docker 設定），這些由使用者自行執行；埠 8000 是使用者自己的伺服器，測試用 8001 並在結束時關掉。改了 `site/` 的 js 或 css 要同步更新 `index.html` 的 `?v=`（sha1 前 8 碼，`test_iter23` 失敗時會印出正確的 3 行）。
+diff --git a/site/app.css b/site/app.css
+index e7924d8..bd15fb1 100644
+--- a/site/app.css
++++ b/site/app.css
+@@ -376,3 +376,4 @@ a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
+ .h-tbl tfoot td{border-bottom:0;border-top:2px solid var(--border);font-weight:500}.h-msg:not(:empty){color:var(--amber);font-size:13px;margin-top:6px}.h-all{margin-top:8px;line-height:1.7}.h-note{margin-top:6px}   /* 第 42 輪：持股合計列、輸入訊息、全部持股、自選 ETF 表說明 */
+ .w-hold{display:block;margin-top:8px;line-height:1.7}.w-ev-l{display:block;margin-top:6px;color:var(--blue)}.w-today>.muted.small{margin-top:4px}   /* 第 42 輪 F42-2：今日頁我的自選 */
+ a.pill.grp{cursor:pointer}a.pill.grp:hover,a.pill.grp:focus-visible{border-color:var(--blue);outline:none}   /* 第 42 輪 F42-3：可點的族群標籤（文字顏色不變） */
++.dv-nx{word-break:keep-all}.tl-lg+.muted.small{text-wrap:pretty}   /* 第 44 輪：375 寬不拆「預告」、複利座標說明不剩單字 */
+diff --git a/site/app.js b/site/app.js
+index 34e7bf4..7d039b3 100644
+--- a/site/app.js
++++ b/site/app.js
+@@ -1816,7 +1816,7 @@ function holdEdit(sec, c) {
+   if (al) al.innerHTML = holdAll(V);
+ }
+ const holdLine = (V, L) => !V.n ? '' : `<a class="w-hold" href="#/watch">持股 ${V.n} 檔　今日損益 <b class="${cls(Number(V.d))}">${holdY(V.d)}</b> 元　` +
+-  `未實現損益 <b class="${cls(Number(V.u))}">${holdY(V.u)}</b> 元（${holdP(V.u, V.t)}）${V.k ? `（今日損益不含無成交、除息 ${V.k} 檔）` : ''}</a>` +
++  `未實現損益 <b class="${cls(Number(V.u))}">${holdY(V.u)}</b> 元（<b class="${cls(Number(V.u))}">${holdP(V.u, V.t)}</b>）${V.k ? `（今日損益不含無成交、除息 ${V.k} 檔）` : ''}</a>` +
+   `<div class="muted small">以 ${md(L.date)} 收盤全部出售試算，已扣出售手續費與證交稅</div>`;
+ // 第 42 輪 F42-2：今日頁總覽「我的自選」小卡（只用 latest.json；股票列沿用 renderToday 的 rows；持股數字和自選頁同一個 holdCalc）
+ function watchToday(L, rows) {
+diff --git a/site/index.html b/site/index.html
+index 4e74ac8..3495eee 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,12 +7,12 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=55349eb3">
++<link rel="stylesheet" href="app.css?v=351d68e6">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=0283995e" defer></script>
+-<script src="stock.js?v=a6ab2ef4" defer></script>
+-<script src="tools.js?v=05638786" defer></script>
++<script src="app.js?v=29a4de94" defer></script>
++<script src="stock.js?v=c2c7d916" defer></script>
++<script src="tools.js?v=9066111f" defer></script>
+ </head>
+ <body>
+ <header class="top">
+diff --git a/site/stock.js b/site/stock.js
+index 6cf07f2..799cda1 100644
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -253,7 +253,7 @@ window.renderStock = async function (code, sub) {
+   const fhd = k => fj - k >= 0 && FH[fj - k] != null ? sgn(FH[fj] - FH[fj - k], 2) : '--';
+   const inCards = E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')], ['法人5日', yi(s?.n5), cls(s?.n5), ''],
+     ['外資5日', yi(s?.f5), cls(s?.f5), runTxt(s?.fs, '買', '賣')], ['投信5日', yi(s?.t5), cls(s?.t5), runTxt(s?.ts, '買', '賣')],
+-    ...fj == null ? [] : [['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`5日 ${fhd(5)}　20日 ${fhd(20)}（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]]];
++    ...fj == null ? [] : [['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`<span class="nw">5日 ${fhd(5)}</span>　<span class="nw">20日 ${fhd(20)}</span>（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]]];
+   const chipSec = (h, note, cards, chart, foot = '') => !cards.length ? '' : `<section class="sec card chip-g"><div class="sec-h"><h2>${h}</h2><span class="muted small">${note}</span></div>
+       <div class="metrics kv">${cardsHTML(cards)}</div>${chart}${foot}</section>`;
+   const chLeg = (t, id, h) => `<div class="ch-label">${t}<span id="${id}L" style="display:contents"></span></div><div id="${id}" class="chart-box" style="height:${h}px"></div>`;
+@@ -742,10 +742,10 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
+ // 第 43 輪 F43-3：集保股權分散 4 張卡（i = 最新一週；1週、4週 = 和上一筆、往前第 4 筆有資料的週比，沒有那一筆寫 --）
+ function shCards(sh, etf) {
+   const i = sh.d.length - 1, w = (a, k, nd) => i - k < 0 ? '--' : sgn((Math.round((a[i] - a[i - k]) * 100) + 0) / 100, nd);
+-  const pp = a => `1週 ${w(a, 1, 2)}　4週 ${w(a, 4, 2)}（百分點）`;
++  const pp = a => `<span class="nw">1週 ${w(a, 1, 2)}</span>　<span class="nw">4週 ${w(a, 4, 2)}</span>（百分點）`;
+   return [['持股超過 400 張', fmt(sh.b[i], 2) + '%', '', pp(sh.b) + '<br>' + fmt(sh.bn[i]) + ' 人'], ['持股超過 1,000 張', fmt(sh.k[i], 2) + '%', '', pp(sh.k)],
+     ['50 張以下', fmt(sh.r[i], 2) + '%', '', pp(sh.r)],
+-    [etf ? '受益人數' : '股東人數', fmt(sh.n[i]) + ' 人', '', `1週 ${w(sh.n, 1, 0)}　4週 ${w(sh.n, 4, 0)}（人）<br>未滿 1 張 ${fmt(sh.z[i])} 人`]];
++    [etf ? '受益人數' : '股東人數', fmt(sh.n[i]) + ' 人', '', `<span class="nw">1週 ${w(sh.n, 1, 0)}</span>　<span class="nw">4週 ${w(sh.n, 4, 0)}</span>（人）<br>未滿 1 張 ${fmt(sh.z[i])} 人`]];
+ }
+ const SH_NOTE = [
+   '以集保戶每週最後一個營業日的餘額，依身分歸戶後分級；大戶包含外資、法人、ETF 與公司大股東，融資、借券以專戶計。比例 = 各級股數 ÷ 集保庫存合計，增資、減資、合併時會跳動。官方每週公布一次，本站通常在下週一晚上更新；本站從上線起逐週累積，之前的週無法回補。比例的變化只描述持股結構，不代表之後的走勢。',
+diff --git a/site/tools.js b/site/tools.js
+index 6afd0a7..9122086 100644
+--- a/site/tools.js
++++ b/site/tools.js
+@@ -103,7 +103,7 @@ function tlFeePref(raw) {
+   return { d: d > 0 && d <= 10 ? String(d) : '10', m: m >= 0 ? String(m) : String(TL_RULES.minFee) };
+ }
+ const TL = { code: undefined, info: null,
+-  dt: { mode: 'dt', dir: 'b', k: 's', b: '', s: '', n: '1000', ref: '' },
++  dt: { mode: 'g', dir: 'b', k: 's', b: '', s: '', n: '1000', ref: '' },
+   cp: { P: '0', M: '5000', at: 'end', r: '', n: '10', dv: '0', y: '' },
+   pl: { p1: '', p2: '', q: '1', u: 'lot', cap: '60', loan: '', rate: '', days: '180', base: '365', fee: '0', call: '130' },
+   dv: { mk: 'l', k: 's', p: '', c: '', s: '0', n: '1000', cost: '', y1: '' },   // 第 39 輪：持有成本不帶入（D83-1 = A）
+@@ -290,7 +290,7 @@ function tlDvLoad(d, e) {
+   const V = d.dv || [], x = V[V.length - 1], tw = d.market !== 'TPEx', D = d.prices.d, n = (d.nx || [])[0], N = n ? tlNx(n, tw, e) : [false, ''];
+   const o = { mk: tw ? 'l' : 'o', c: '', s: '0', y1: '', cost: '' }, h = [];   // 換股票時清掉上一檔的持有成本
+   if (N[0]) { o.c = String(n.c); o.s = n.s != null ? String(n.s) : '0'; h.push(N[1]); }
+-  if (!x || !x.t) return [o, h.concat(`${D[0]} 起沒有除權息紀錄，請依公司公告填寫`, n && !N[0] ? N[1] : [])];
++  if (!x || !x.t) return [o, h.concat(`${D[0]} 起沒有除權息紀錄，請依${e ? '發行人' : '公司'}公告填寫`, n && !N[0] ? N[1] : [])];
+   const from = new Date(Date.parse(D[D.length - 1]) - 365 * 864e5).toISOString().slice(0, 10);
+   let y = 0n, k = 0, miss = false;
+   V.forEach(v => { if (v.d > from && (v.t === '息' || v.t === '權息')) { const c = v.c == null ? null : tlBig(String(v.c), 6); if (c === null) miss = true; else { y += c; k++; } } });
+@@ -298,7 +298,7 @@ function tlDvLoad(d, e) {
+   if (N[0]) { /* 已帶入預告 */ }
+   else if (x.k === 'sc') h.push(`最近一次（${md(x.d)}）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入`);
+   else if (tw && x.c == null && x.a != null) h.push(`上市官方表只有 ${md(x.d)} 的權值＋息值合計 ${x.a} 元，請依公告填現金股利與配股`);
+-  else { o.c = x.c != null ? String(x.c) : '0'; o.s = x.s != null ? String(x.s) : '0'; h.push(`已帶入 ${md(x.d)} 的股利（最近一次），下次請依公司公告修改`); }
++  else { o.c = x.c != null ? String(x.c) : '0'; o.s = x.s != null ? String(x.s) : '0'; h.push(`已帶入 ${md(x.d)} 的股利（最近一次），下次請依${e ? '發行人' : '公司'}公告修改`); }
+   if (n && !N[0]) h.push(N[1]);
+   const ev = (d.ev || []).filter(v => v.d === x.d && v.t === x.t)[0], R = x.r != null ? x.r : ev && ev.r;
+   if (R != null && x.p != null) h.push(`上次官方參考價 ${pfmt(R)}（${md(x.d)}，前收 ${pfmt(x.p)}）；前收改成 ${pfmt(x.p)} 可對照`);
+diff --git a/tests/test_iter29.py b/tests/test_iter29.py
+index e38fabf..4a93c0e 100644
+--- a/tests/test_iter29.py
++++ b/tests/test_iter29.py
+@@ -192,7 +192,7 @@ def test_fh_card_node():
+ 
+ 
+ def test_fh_card_source():
+-    assert "['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`5日 ${fhd(5)}　20日 ${fhd(20)}（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]" in STK
++    assert "['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`<span class=\"nw\">5日 ${fhd(5)}</span>　<span class=\"nw\">20日 ${fhd(20)}</span>（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]" in STK
+     assert "(FH ? chLeg('外資及陸資持股比率（%，以當日發行股數為分母，增資、減資時會跳動）', 'fhC', 90) : '')" in STK
+     assert "if (data.fh && $('#fhC'))" in STK
+ 
+diff --git a/tests/test_iter38.py b/tests/test_iter38.py
+index 45134ba..e055462 100644
+--- a/tests/test_iter38.py
++++ b/tests/test_iter38.py
+@@ -180,7 +180,7 @@ const $ = s => s === '#view' ? view : (els[s] = els[s] || { innerHTML: '', class
+ const history = { replaceState() {} }, localStore = (k, f) => f, loadStock = async () => (%s);
+ (async () => {
+   const r = {};
+-  await window.renderTools('dt?c=2330'); r.dt = view.innerHTML;
++  TL.dt.mode = 'dt'; await window.renderTools('dt?c=2330'); r.dt = view.innerHTML;
+   TL.dt.k = 'b'; TL.dt.mode = 'g'; await window.renderTools('dt?c=2330'); r.b = view.innerHTML;
+   TL.cp.r = '6'; TL.cp.dv = 're'; await window.renderTools('cp?c=2330'); r.cp = view.innerHTML;
+   await window.renderTools('pl?c=2330'); r.pl = view.innerHTML;
+diff --git a/tests/test_iter39.py b/tests/test_iter39.py
+index 49cd1b5..ef51d85 100644
+--- a/tests/test_iter39.py
++++ b/tests/test_iter39.py
+@@ -419,7 +419,7 @@ MUTANTS = [
+     ("上市權息合計當現金", [("else if (tw && x.c == null && x.a != null) h.push(", "else if (false) h.push("),
+                         ("o.c = x.c != null ? String(x.c) : '0'", "o.c = String(x.c != null ? x.c : x.a || 0)")], check_load),
+     ("近一年包含純權", [("(v.t === '息' || v.t === '權息')", "v.t")], check_load),
+-    ("沒寫最近一次", [("的股利（最近一次），下次請依公司公告修改", "的股利")], check_load),
++    ("沒寫最近一次", [("的股利（最近一次），", "的股利，")], check_load),
+     ("帶入持有成本", [("Object.assign(TL.dv, o, { p: c, k: E ? 'e' : 's' });", "Object.assign(TL.dv, o, { p: c, cost: c, k: E ? 'e' : 's' });")], check_load),
+     ("換股票沿用持有成本", [("y1: '', cost: '' }, h = [];", "y1: '' }, h = [];")], check_load),
+     ("拿掉面額說明", [("同一基準日的股票股利以面額一起計入，本頁只算現金股利。", "本頁只算現金股利。")], check_shares_nhi),
+diff --git a/tests/test_iter40.py b/tests/test_iter40.py
+index 12281df..17aca2e 100644
+--- a/tests/test_iter40.py
++++ b/tests/test_iter40.py
+@@ -403,7 +403,7 @@ WANT = {   # 代號：帶入值、要出現的提示（依序）、TL.info.ex
+     "6655": ({"c": "2", "s": "0"}, ["已帶入 05/01 的股利（最近一次），下次請依公司公告修改", "11/24 除息的預告現金股利 2.12345678 元超過 6 位小數，請依公告填寫"], "2026-11-24"),
+     "8942": ({"c": "1", "s": "50", "mk": "o"}, ["已帶入 12/10 除權息的預告股利（櫃買中心預告表，僅供參考，以公司公告為準）", "近一年現金股利 = 11/20 以後 1 次合計"], "2026-12-10"),
+     "00901": ({"c": "7", "s": "0", "k": "e"}, ["已帶入 11/24 除息的預告股利（證交所預告表，僅供參考，以發行人公告為準）", "2026-11-19 起沒有除權息紀錄"], "2026-11-24"),
+-    "00958B": ({"c": "0.15", "k": "e", "mk": "o"}, ["已帶入 08/20 的股利（最近一次），下次請依公司公告修改", "11/24 除息，金額待公告", "上次官方參考價 9.15"], "2026-11-24"),
++    "00958B": ({"c": "0.15", "k": "e", "mk": "o"}, ["已帶入 08/20 的股利（最近一次），下次請依發行人公告修改", "11/24 除息，金額待公告", "上次官方參考價 9.15"], "2026-11-24"),
+ }
+ 
+ 
+diff --git a/tests/test_iter41.py b/tests/test_iter41.py
+index 174cd50..0603a65 100644
+--- a/tests/test_iter41.py
++++ b/tests/test_iter41.py
+@@ -434,7 +434,7 @@ NEW = ("tlLot", "tlAvg", "tlSell", "tlAcBreak", "tlAcN", "tlAcV", "tlAcOut", "tl
+ 
+ 
+ def test_unchanged_and_wiring():
+-    assert hashlib.sha1("".join(T._grab(TOOLS, n) for n in OLD).encode()).hexdigest()[:12] == "f206966d85e5"   # 只呼叫、不修改
++    assert hashlib.sha1("".join(T._grab(TOOLS, n) for n in OLD).encode()).hexdigest()[:12] == "ff151c62306c"   # 只呼叫、不修改
+     for f in ("tools.js", "app.js", "stock.js", "app.css"):
+         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
+         assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
+diff --git a/tests/test_iter42.py b/tests/test_iter42.py
+index 0a358fe..20ab0cc 100644
+--- a/tests/test_iter42.py
++++ b/tests/test_iter42.py
+@@ -377,7 +377,7 @@ console.log(JSON.stringify(out));""" % json.dumps({k: v for k, v in H.items() if
+     assert re.findall(r'<tr data-code="(\w+)">', c) == ["00679B", "2330", "0056", "1538", "1101"]                    # 前 5 個認得的，依自選順序、混排
+     assert f'<tr data-code="00679B"><td class="nm"><b>元大美債20年</b><span>00679B</span></td><td class="num flat">26.15</td><td class="num flat" title="{EX_TIP}">除息</td><td class="num">--</td></tr>' in c
+     assert '<td class="nm"><b>台積電</b><span>2330</span></td>' in c and '<td class="num dn">2,000</td><td class="num dn">-4.76%</td>' in c   # 沿用 rows
+-    m = re.search(r'<a class="w-hold" href="#/watch">持股 (\d+) 檔　今日損益 <b class="\w+">(.*?)</b> 元　未實現損益 <b class="\w+">(.*?)</b> 元（(.*?)）', c)
++    m = re.search(r'<a class="w-hold" href="#/watch">持股 (\d+) 檔　今日損益 <b class="\w+">(.*?)</b> 元　未實現損益 <b class="\w+">(.*?)</b> 元（<b class="\w+">(.*?)</b>）', c)
+     a = re.search(r"今日損益 <span class=\"\w+\">(.*?)</span> 元　未實現損益 <span class=\"\w+\">(.*?)</span> 元（<span class=\"\w+\">(.*?)</span>）", o["all"])
+     assert m and a and m.groups()[1:] == a.groups() and m.group(1) == "4", (m and m.groups(), a and a.groups())      # 和自選頁全部持股同一個數字
+     assert "（今日損益不含無成交、除息 2 檔）" in c and "以 11/20 收盤全部出售試算，已扣出售手續費與證交稅" in c
+@@ -510,7 +510,7 @@ def test_call_not_copy_and_counts():
+     v = {f: hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8] for f in ("app.js", "stock.js", "app.css", "tools.js")}
+     for f, h in v.items():
+         assert f'{f}?v={h}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {h}"
+-    assert v["tools.js"] == "05638786" and HTML.count("https://") == 2                       # tools.js 0 行改動
++    assert HTML.count("https://") == 2                       # 第 42 輪 tools.js 0 行改動；之後 tools.js 的版本由上面 ?v= 比對
+ 
+ 
+ def test_no_advice_words():
+diff --git a/tests/test_iter43.py b/tests/test_iter43.py
+index ffdf152..5481a29 100644
+--- a/tests/test_iter43.py
++++ b/tests/test_iter43.py
+@@ -412,13 +412,13 @@ SH1 = {k: v[:1] for k, v in SH2.items()}
+ SH5 = {"d": ["2026-11-20", "2026-11-27", "2026-12-04", "2026-12-11", "2026-12-18"], "b": [60, 61.5, 62, 62.25, 63], "k": [50, 50, 50, 50, 50],
+        "m": [10, 10, 10, 10, 10], "r": [30.1, 30.05, 29.9, 29.8, 29.7], "n": [100, 110, 90, 95, 120], "bn": [5, 5, 5, 5, 6], "z": [1, 1, 1, 1, 2]}
+ P = "（百分點）"
+-CARDS = [(SH2, False, [["持股超過 400 張", "63.45%", "", f"1週 +0.12　4週 --{P}<br>101 人"], ["持股超過 1,000 張", "52.01%", "", f"1週 +0.04　4週 --{P}"],
+-                       ["50 張以下", "22.95%", "", f"1週 -0.04　4週 --{P}"], ["股東人數", "53,407 人", "", "1週 +312　4週 --（人）<br>未滿 1 張 32,210 人"]]),
++CARDS = [(SH2, False, [["持股超過 400 張", "63.45%", "", f"<span class=\"nw\">1週 +0.12</span>　<span class=\"nw\">4週 --</span>{P}<br>101 人"], ["持股超過 1,000 張", "52.01%", "", f"<span class=\"nw\">1週 +0.04</span>　<span class=\"nw\">4週 --</span>{P}"],
++                       ["50 張以下", "22.95%", "", f"<span class=\"nw\">1週 -0.04</span>　<span class=\"nw\">4週 --</span>{P}"], ["股東人數", "53,407 人", "", "<span class=\"nw\">1週 +312</span>　<span class=\"nw\">4週 --</span>（人）<br>未滿 1 張 32,210 人"]]),
+          (SH2, True, "受益人數"),
+-         (SH1, False, [["持股超過 400 張", "63.33%", "", f"1週 --　4週 --{P}<br>100 人"], ["持股超過 1,000 張", "51.97%", "", f"1週 --　4週 --{P}"],
+-                       ["50 張以下", "22.99%", "", f"1週 --　4週 --{P}"], ["股東人數", "53,095 人", "", "1週 --　4週 --（人）<br>未滿 1 張 32,045 人"]]),
+-         (SH5, False, [["持股超過 400 張", "63.00%", "", f"1週 +0.75　4週 +3.00{P}<br>6 人"], ["持股超過 1,000 張", "50.00%", "", f"1週 0.00　4週 0.00{P}"],
+-                       ["50 張以下", "29.70%", "", f"1週 -0.10　4週 -0.40{P}"], ["股東人數", "120 人", "", "1週 +25　4週 +20（人）<br>未滿 1 張 2 人"]])]
++         (SH1, False, [["持股超過 400 張", "63.33%", "", f"<span class=\"nw\">1週 --</span>　<span class=\"nw\">4週 --</span>{P}<br>100 人"], ["持股超過 1,000 張", "51.97%", "", f"<span class=\"nw\">1週 --</span>　<span class=\"nw\">4週 --</span>{P}"],
++                       ["50 張以下", "22.99%", "", f"<span class=\"nw\">1週 --</span>　<span class=\"nw\">4週 --</span>{P}"], ["股東人數", "53,095 人", "", "<span class=\"nw\">1週 --</span>　<span class=\"nw\">4週 --</span>（人）<br>未滿 1 張 32,045 人"]]),
++         (SH5, False, [["持股超過 400 張", "63.00%", "", f"<span class=\"nw\">1週 +0.75</span>　<span class=\"nw\">4週 +3.00</span>{P}<br>6 人"], ["持股超過 1,000 張", "50.00%", "", f"<span class=\"nw\">1週 0.00</span>　<span class=\"nw\">4週 0.00</span>{P}"],
++                       ["50 張以下", "29.70%", "", f"<span class=\"nw\">1週 -0.10</span>　<span class=\"nw\">4週 -0.40</span>{P}"], ["股東人數", "120 人", "", "<span class=\"nw\">1週 +25</span>　<span class=\"nw\">4週 +20</span>（人）<br>未滿 1 張 2 人"]])]
+ NOTE_S = "以集保戶每週最後一個營業日的餘額，依身分歸戶後分級；大戶包含外資、法人、ETF 與公司大股東，融資、借券以專戶計。比例 = 各級股數 ÷ 集保庫存合計，增資、減資、合併時會跳動。官方每週公布一次，本站通常在下週一晚上更新；本站從上線起逐週累積，之前的週無法回補。比例的變化只描述持股結構，不代表之後的走勢。"
+ NOTE_E = "以集保戶每週最後一個營業日的餘額，依身分歸戶後分級；人數為受益人數，大額持有人包含法人、壽險與其他基金。比例 = 各級受益權單位 ÷ 集保庫存合計，申購、贖回時會跳動。官方每週公布一次，本站通常在下週一晚上更新；本站從上線起逐週累積，之前的週無法回補。比例的變化只描述持有結構，不代表之後的走勢。"
+ 
+diff --git a/tests/test_iter44.py b/tests/test_iter44.py
+new file mode 100644
+index 0000000..da03877
+--- /dev/null
++++ b/tests/test_iter44.py
+@@ -0,0 +1,242 @@
++"""第 44 輪（不連網、不連資料庫）：小項整理 F44-1～F44-7。
++F44-1 交易成本預設非當沖、F44-2a／2b 斷行 CSS、F44-2c／F44-7 籌碼卡 .nw、F44-3 今日小卡報酬率上色、
++F44-4 預告表 NaN／Infinity、F44-5 ETF「發行人」、F44-6 集保全部略過印 ⚠️。
++有 node 時逐字取出 app.js、stock.js、tools.js 的程式執行；檢查函式都接受要檢查的原始碼或函式，test_contrast 改壞後重跑，確認會失敗。"""
++import contextlib
++import hashlib
++import io
++import json
++import re
++import sys
++from decimal import Decimal
++from pathlib import Path
++from unittest import mock
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tests"))
++import test_iter28 as t28  # noqa: E402
++import test_iter34 as T  # noqa: E402
++import test_iter40 as t40  # noqa: E402
++import test_iter41 as T41  # noqa: E402
++import test_iter42 as T42  # noqa: E402
++import test_iter43 as t43  # noqa: E402
++from twstock import db  # noqa: E402
++from twstock.collectors import notices, tdcc  # noqa: E402
++
++SITE, HTML, TOOLS, APP, STK, CSS = T.SITE, T.HTML, T.TOOLS, T.APP, T.STK, T.CSS
++TODAY = "2026-11-21"
++tag = lambda s: re.sub(r"<[^>]+>", "", s)
++
++
++def _tools(body, src=TOOLS):
++    return T._node(T.HELPERS + "\nconst window = {};\nconst App = { latest: %s, stockCache: {} };\n" % json.dumps(T.LATEST, ensure_ascii=False)
++                   + src + "\n" + body)
++
++
++# ─── F44-1 交易成本預設非當沖（驗收 1～3）──────────────────────────
++def check_dt(src=TOOLS):
++    o = _tools("""const f = x => tlDtOut(Object.assign({}, TL.dt, { b: '100', d: '10', m: '20' }, x), null, '%s');
++console.log(JSON.stringify({ mode: TL.dt.mode, form: tlDtForm(TL.dt), g: f({}), dt: f({ mode: 'dt' }),
++  e: [f({ k: 'e' }), f({ k: 'e', mode: 'g' }), f({ k: 'b' }), f({ k: 'b', mode: 'g' })] }));""" % TODAY, src)
++    if o is None:
++        return []
++    bad = []
++    if o["mode"] != "g" or '<button data-v="g" class="on">非當沖</button>' not in o["form"] or 'data-g="dir"' in o["form"]:
++        bad.append(("預設表單", o["mode"]))
++    if "證交稅：股票 0.3%" not in o["g"] or "當沖需符合券商資格" in o["g"] or "0.15%" in o["g"]:
++        bad.append("預設規則行")
++    if "現股當沖 0.15%（至 2027/12/31）" not in o["dt"] or "當沖需符合券商資格；處置、全額交割股可能不能當沖。" not in o["dt"]:
++        bad.append("切到當沖")
++    if o["e"][0] != o["e"][1] or o["e"][2] != o["e"][3]:
++        bad.append("ETF／債券 ETF 預設和非當沖不同")
++    return bad
++
++
++def test_dt_default():
++    assert check_dt() == []
++
++
++# ─── F44-2a／2b CSS（驗收 4、5）─────────────────────────────────
++LINE = ".dv-nx{word-break:keep-all}.tl-lg+.muted.small{text-wrap:pretty}   /* 第 44 輪：375 寬不拆「預告」、複利座標說明不剩單字 */"
++
++
++def check_css(css=CSS):
++    return [] if css.splitlines().count(LINE) == 1 else ["app.css 第 44 輪那一行"]
++
++
++def test_css():
++    assert check_css() == []
++    assert TOOLS.count('tl-lg">') == 1 and TOOLS.count('</div><div class="muted small">第 0～${n} 年；縱軸 0～') == 1   # 選擇器只命中複利座標說明
++    assert STK.count('<div class="small dv-nx">') == 1
++
++
++# ─── F44-2c 股權分散卡、F44-7 外資持股卡（驗收 6、7）──────────────
++NW = re.compile(r'<span class="nw">([^<]*)</span>')
++
++
++def check_sh(src=STK):
++    o = t28._node(t28.HELPERS + "\n" + t28._grab(src, "shCards") + "\nconsole.log(JSON.stringify(%s.map(([sh, E]) => shCards(sh, E))));"
++                  % json.dumps([[sh, e] for sh, e, w in t43.CARDS if not isinstance(w, str)]))
++    if o is None:
++        return []
++    bad = []
++    for got, want in zip(o, [w for _, _, w in t43.CARDS if not isinstance(w, str)]):
++        subs = [c[3] for c in got]
++        spans = [x for s in subs for x in NW.findall(s)]
++        if len(spans) != 8 or not all(re.fullmatch(r"[14]週 (?:--|[-+]?[\d,.]+)", x) for x in spans) or [tag(s) for s in subs] != [tag(c[3]) for c in want]:
++            bad.append(subs)
++    return bad
++
++
++def test_sh_cards():
++    assert check_sh() == []
++
++
++FH_NEW = '`<span class="nw">5日 ${fhd(5)}</span>　<span class="nw">20日 ${fhd(20)}</span>（百分點）`'
++
++
++def check_fh(src=STK):
++    return [] if src.count(FH_NEW) == 1 and tag(FH_NEW) == "`5日 ${fhd(5)}　20日 ${fhd(20)}（百分點）`" else ["外資持股卡"]
++
++
++def test_fh_card():
++    assert check_fh() == []
++
++
++# ─── F44-3 今日小卡報酬率上色（驗收 8）────────────────────────────
++def check_hold(app=APP):
++    o = T42._run("console.log(JSON.stringify(%s.map(u => holdLine({ n: 1, d: '0', u, t: '100000', k: 0 }, App.latest))));"
++                 % json.dumps(["5000", "-5000", "0"]), app)
++    if o is None:
++        return []
++    bad = []
++    for h, c, p in zip(o, ("up", "dn", "flat"), ("+5.00%", "-5.00%")):
++        m = re.search(r'未實現損益 <b class="(\w+)">[^<]+</b> 元（<b class="(\w+)">([^<]+)</b>）', h)
++        if not m or m.group(1) != c or m.group(2) != c or (c != "flat" and m.group(3) != p):
++            bad.append(h)
++    return bad
++
++
++def test_hold_line():
++    assert check_hold() == []
++
++
++# ─── F44-4 預告表 NaN／Infinity（驗收 9）──────────────────────────
++Z = Decimal(0)
++TW_BAD = [  # 假資料：1437 那一列改成非有限值
++    ["115年12月03日", "1437", "勤益控", "息", "Infinity", "-Infinity", "52.00000000", "NaN", "", "", "", "", ""],
++    ["115年12月04日", "2345", "智邦", "權", "0.00000000", "sNaN", "52.00000000", "nan", "", "", "", "", ""]]
++TP_BAD = [t40._tp("1151126", "6523", "假資料", "除權息", "inf", "-inf", "62.00", "-Infinity"),
++          t40._tp("1151127", "6524", "假資料", "除息", "0.00000000", "0.00000000", "0.00", "4.00000000")]
++
++
++def check_nonfinite(parse=notices.parse_notices):
++    bad = t40.check_parse(parse)
++    got = parse("TWSE", dict(t40.TWSE, data=TW_BAD)) + parse("TPEx", TP_BAD)
++    want = [t40.N("1437", t40.D(12, 3), "息", None), t40.N("2345", t40.D(12, 4), "權", None),
++            t40.N("6523", t40.D(11, 26), "權息", None), t40.N("6524", t40.D(11, 27), "息", Decimal(4))]
++    if got != want:
++        bad.append(got)
++    return bad
++
++
++def test_nonfinite():
++    assert check_nonfinite() == []
++
++
++# ─── F44-5 ETF「發行人」（驗收 10）────────────────────────────────
++DV = {"dv": [{"d": "2026-08-20", "t": "息", "c": 0.5, "s": None}], "market": "TWSE", "prices": {"d": ["2025-11-19", "2026-11-19"]}}
++WANT_DV = [("已帶入 08/20 的股利（最近一次），下次請依發行人公告修改", "已帶入 08/20 的股利（最近一次），下次請依公司公告修改"),
++           ("2025-11-19 起沒有除權息紀錄，請依發行人公告填寫", "2025-11-19 起沒有除權息紀錄，請依公司公告填寫")]
++
++
++def check_dv(src=TOOLS):
++    o = _tools("console.log(JSON.stringify(%s.map(d => [tlDvLoad(d, true)[1], tlDvLoad(d, false)[1]])));" % json.dumps([DV, dict(DV, dv=[])]), src)
++    if o is None:
++        return []
++    return [] if [tuple(h[0] for h in x) for x in o] == WANT_DV else [o]
++
++
++def test_etf_wording():
++    assert check_dv() == []
++
++
++# ─── F44-6 集保全部略過（驗收 11、12）─────────────────────────────
++WARN = "  ⚠️ 集保股權分散 2026-11-20：股票 0 檔、ETF 0 檔，略過 1 檔（合計不符），官方格式可能改變，請檢查\n"
++
++
++def check_tdcc(collect=tdcc.collect_tdcc):
++    bad, conns = t43.check_write(collect), []
++    buf = io.StringIO()
++    ls = [x for x in t43.edit("2421  ", 17, n=1) if ",2421  ," in x or ",01001T," in x]       # 唯一要收的 2421 合計不符 → 全部略過
++    with mock.patch.object(tdcc, "request", lambda *a, **k: t43._resp(t43.csv_text(ls))), \
++            mock.patch.object(db, "connect", lambda: conns.append(1)), contextlib.redirect_stdout(buf):
++        rec = collect(None, t43.D(11, 23))
++    if conns or rec != {"on": "2026-11-23", "d": "2026-11-20", "s": 0, "e": 0} or buf.getvalue() != WARN:
++        bad.append((conns, rec, buf.getvalue()))
++    return bad
++
++
++def test_tdcc_all_skipped():
++    assert check_tdcc() == []
++
++
++# ─── ?v=、文件、用詞（驗收 15、17）────────────────────────────────
++def test_versions_docs_words():
++    for f in ("app.css", "app.js", "stock.js", "tools.js"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
++    readme = (ROOT / "README.md").read_text(encoding="utf-8")
++    assert "python3 tests/test_iter44.py" in readme and "第 44 輪" in readme
++    assert "第 44 輪" in (ROOT / "docs" / "iterations" / "README.md").read_text(encoding="utf-8")
++    new = "".join(WANT_DV[0] + WANT_DV[1]) + WARN
++    assert not [w for w in T42.ADVICE if w in new]
++
++
++# ─── 反證 ─────────────────────────────────────────────
++PY_MUTANTS = [
++    ("NaN 不過濾", notices, "parse_notices", "x if (x := clean_number(r[names[k]], Decimal)) is None or x.is_finite() else None",
++     "clean_number(r[names[k]], Decimal)", check_nonfinite),
++    ("只濾 NaN 不濾 Infinity", notices, "parse_notices", "x.is_finite()", "not x.is_nan()", check_nonfinite),
++    ("全部略過仍印 🏦", tdcc, "collect_tdcc", "bad = skipped and not rows", "bad = False", check_tdcc),
++    ("部分略過也印 ⚠️", tdcc, "collect_tdcc", "bad = skipped and not rows", "bad = skipped", check_tdcc),
++    ("沒有提示字", tdcc, "collect_tdcc", '("，官方格式可能改變，請檢查" if bad else "")', '""', check_tdcc),
++]
++JS_MUTANTS = [  # (名稱, 原始碼, 原字串, 改壞後, 檢查)
++    ("預設仍是當沖", TOOLS, "dt: { mode: 'g',", "dt: { mode: 'dt',", check_dt),
++    ("沒有紀錄仍寫公司", TOOLS, "請依${e ? '發行人' : '公司'}公告填寫", "請依公司公告填寫", check_dv),
++    ("最近一次仍寫公司", TOOLS, "下次請依${e ? '發行人' : '公司'}公告修改", "下次請依公司公告修改", check_dv),
++    ("發行人與公司對調", TOOLS, "下次請依${e ? '發行人' : '公司'}公告修改", "下次請依${e ? '公司' : '發行人'}公告修改", check_dv),
++    ("比例卡沒有 nw", STK, '`<span class="nw">1週 ${w(a, 1, 2)}</span>　<span class="nw">4週 ${w(a, 4, 2)}</span>（百分點）`',
++     "`1週 ${w(a, 1, 2)}　4週 ${w(a, 4, 2)}（百分點）`", check_sh),
++    ("人數卡沒有 nw", STK, '`<span class="nw">1週 ${w(sh.n, 1, 0)}</span>　<span class="nw">4週 ${w(sh.n, 4, 0)}</span>（人）',
++     "`1週 ${w(sh.n, 1, 0)}　4週 ${w(sh.n, 4, 0)}（人）", check_sh),
++    ("nw 連單位一起包", STK, '4週 ${w(a, 4, 2)}</span>（百分點）', '4週 ${w(a, 4, 2)}（百分點）</span>', check_sh),
++    ("外資持股卡沒有 nw", STK, FH_NEW, "`5日 ${fhd(5)}　20日 ${fhd(20)}（百分點）`", check_fh),
++    ("報酬率沒有上色", APP, '元（<b class="${cls(Number(V.u))}">${holdP(V.u, V.t)}</b>）', "元（${holdP(V.u, V.t)}）", check_hold),
++    ("報酬率顏色看今日損益", APP, '元（<b class="${cls(Number(V.u))}">', '元（<b class="${cls(Number(V.d))}">', check_hold),
++    ("拿掉 CSS 那一行", CSS, LINE + "\n", "", check_css),
++]
++
++
++def test_contrast():
++    for name, mod, fn, a, b, check in PY_MUTANTS:
++        with t40._mutate(mod, fn, a, b) as f, contextlib.redirect_stdout(io.StringIO()):
++            try:
++                fails = check(f)
++            except Exception as e:                                                                             # 改壞到執行失敗也算擋下
++                fails = [repr(e)]
++        assert fails, "反證沒有擋下：" + name
++    node = t28._node("console.log('1')") is not None
++    for name, src, a, b, check in JS_MUTANTS:
++        assert src.count(a) == 1, (name, a)
++        if node or check is check_css or check is check_fh:
++            assert check(src.replace(a, b)), "反證沒有擋下：" + name
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")
+diff --git a/twstock/collectors/notices.py b/twstock/collectors/notices.py
+index 5f9baf6..b27589a 100644
+--- a/twstock/collectors/notices.py
++++ b/twstock/collectors/notices.py
+@@ -46,7 +46,7 @@ def parse_notices(market: str, data) -> list:
+         kind = str(r[names[2]] or "").strip().lstrip("除")       # 櫃買「除息／除權／除權息」→ 去掉「除」
+         if d is None or kind not in NOTICE_TYPES or not (is_valid_stock_code(code) or is_etf_code(code)):
+             continue
+-        num = lambda k: clean_number(r[names[k]], Decimal)
++        num = lambda k: x if (x := clean_number(r[names[k]], Decimal)) is None or x.is_finite() else None   # QA40-04：NaN、Infinity 當作沒有值
+         sub = num(5) or Decimal(0)
+         out[(code, d)] = {"code": code, "ex_date": d, "event_type": kind, "cash_div": num(3), "stock_ratio": num(4) or Decimal(0),
+                           "sub_ratio": sub, "sub_price": num(6) if sub else None}     # 「待公告」「尚未公告」「註4」→ None
+diff --git a/twstock/collectors/tdcc.py b/twstock/collectors/tdcc.py
+index 67be246..bbf555a 100644
+--- a/twstock/collectors/tdcc.py
++++ b/twstock/collectors/tdcc.py
+@@ -96,5 +96,6 @@ def collect_tdcc(latest, today: date) -> dict:
+             conn.close()
+     e = sum(1 for r in out if r[0])
+     s = len(out) - e
+-    print(f"  🏦 集保股權分散 {data_date}：股票 {s:,} 檔、ETF {e:,} 檔" + (f"，略過 {skipped:,} 檔（合計不符）" if skipped else ""))
++    bad = skipped and not rows                          # QA43-03：全部略過 = 官方格式可能改變
++    print(f"  {'⚠️' if bad else '🏦'} 集保股權分散 {data_date}：股票 {s:,} 檔、ETF {e:,} 檔" + (f"，略過 {skipped:,} 檔（合計不符）" if skipped else "") + ("，官方格式可能改變，請檢查" if bad else ""))
+     return {**rec, "s": s, "e": e}

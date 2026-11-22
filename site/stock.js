@@ -253,7 +253,7 @@ window.renderStock = async function (code, sub) {
   const fhd = k => fj - k >= 0 && FH[fj - k] != null ? sgn(FH[fj] - FH[fj - k], 2) : '--';
   const inCards = E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')], ['法人5日', yi(s?.n5), cls(s?.n5), ''],
     ['外資5日', yi(s?.f5), cls(s?.f5), runTxt(s?.fs, '買', '賣')], ['投信5日', yi(s?.t5), cls(s?.t5), runTxt(s?.ts, '買', '賣')],
-    ...fj == null ? [] : [['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`5日 ${fhd(5)}　20日 ${fhd(20)}（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]]];
+    ...fj == null ? [] : [['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`<span class="nw">5日 ${fhd(5)}</span>　<span class="nw">20日 ${fhd(20)}</span>（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]]];
   const chipSec = (h, note, cards, chart, foot = '') => !cards.length ? '' : `<section class="sec card chip-g"><div class="sec-h"><h2>${h}</h2><span class="muted small">${note}</span></div>
       <div class="metrics kv">${cardsHTML(cards)}</div>${chart}${foot}</section>`;
   const chLeg = (t, id, h) => `<div class="ch-label">${t}<span id="${id}L" style="display:contents"></span></div><div id="${id}" class="chart-box" style="height:${h}px"></div>`;
@@ -742,10 +742,10 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
 // 第 43 輪 F43-3：集保股權分散 4 張卡（i = 最新一週；1週、4週 = 和上一筆、往前第 4 筆有資料的週比，沒有那一筆寫 --）
 function shCards(sh, etf) {
   const i = sh.d.length - 1, w = (a, k, nd) => i - k < 0 ? '--' : sgn((Math.round((a[i] - a[i - k]) * 100) + 0) / 100, nd);
-  const pp = a => `1週 ${w(a, 1, 2)}　4週 ${w(a, 4, 2)}（百分點）`;
+  const pp = a => `<span class="nw">1週 ${w(a, 1, 2)}</span>　<span class="nw">4週 ${w(a, 4, 2)}</span>（百分點）`;
   return [['持股超過 400 張', fmt(sh.b[i], 2) + '%', '', pp(sh.b) + '<br>' + fmt(sh.bn[i]) + ' 人'], ['持股超過 1,000 張', fmt(sh.k[i], 2) + '%', '', pp(sh.k)],
     ['50 張以下', fmt(sh.r[i], 2) + '%', '', pp(sh.r)],
-    [etf ? '受益人數' : '股東人數', fmt(sh.n[i]) + ' 人', '', `1週 ${w(sh.n, 1, 0)}　4週 ${w(sh.n, 4, 0)}（人）<br>未滿 1 張 ${fmt(sh.z[i])} 人`]];
+    [etf ? '受益人數' : '股東人數', fmt(sh.n[i]) + ' 人', '', `<span class="nw">1週 ${w(sh.n, 1, 0)}</span>　<span class="nw">4週 ${w(sh.n, 4, 0)}</span>（人）<br>未滿 1 張 ${fmt(sh.z[i])} 人`]];
 }
 const SH_NOTE = [
   '以集保戶每週最後一個營業日的餘額，依身分歸戶後分級；大戶包含外資、法人、ETF 與公司大股東，融資、借券以專戶計。比例 = 各級股數 ÷ 集保庫存合計，增資、減資、合併時會跳動。官方每週公布一次，本站通常在下週一晚上更新；本站從上線起逐週累積，之前的週無法回補。比例的變化只描述持股結構，不代表之後的走勢。',

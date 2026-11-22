@@ -192,7 +192,7 @@ def test_fh_card_node():
 
 
 def test_fh_card_source():
-    assert "['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`5日 ${fhd(5)}　20日 ${fhd(20)}（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]" in STK
+    assert "['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`<span class=\"nw\">5日 ${fhd(5)}</span>　<span class=\"nw\">20日 ${fhd(20)}</span>（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]" in STK
     assert "(FH ? chLeg('外資及陸資持股比率（%，以當日發行股數為分母，增資、減資時會跳動）', 'fhC', 90) : '')" in STK
     assert "if (data.fh && $('#fhC'))" in STK
 

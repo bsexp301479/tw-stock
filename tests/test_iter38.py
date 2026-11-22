@@ -180,7 +180,7 @@ const $ = s => s === '#view' ? view : (els[s] = els[s] || { innerHTML: '', class
 const history = { replaceState() {} }, localStore = (k, f) => f, loadStock = async () => (%s);
 (async () => {
   const r = {};
-  await window.renderTools('dt?c=2330'); r.dt = view.innerHTML;
+  TL.dt.mode = 'dt'; await window.renderTools('dt?c=2330'); r.dt = view.innerHTML;
   TL.dt.k = 'b'; TL.dt.mode = 'g'; await window.renderTools('dt?c=2330'); r.b = view.innerHTML;
   TL.cp.r = '6'; TL.cp.dv = 're'; await window.renderTools('cp?c=2330'); r.cp = view.innerHTML;
   await window.renderTools('pl?c=2330'); r.pl = view.innerHTML;

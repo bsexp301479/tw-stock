@@ -1816,7 +1816,7 @@ function holdEdit(sec, c) {
   if (al) al.innerHTML = holdAll(V);
 }
 const holdLine = (V, L) => !V.n ? '' : `<a class="w-hold" href="#/watch">持股 ${V.n} 檔　今日損益 <b class="${cls(Number(V.d))}">${holdY(V.d)}</b> 元　` +
-  `未實現損益 <b class="${cls(Number(V.u))}">${holdY(V.u)}</b> 元（${holdP(V.u, V.t)}）${V.k ? `（今日損益不含無成交、除息 ${V.k} 檔）` : ''}</a>` +
+  `未實現損益 <b class="${cls(Number(V.u))}">${holdY(V.u)}</b> 元（<b class="${cls(Number(V.u))}">${holdP(V.u, V.t)}</b>）${V.k ? `（今日損益不含無成交、除息 ${V.k} 檔）` : ''}</a>` +
   `<div class="muted small">以 ${md(L.date)} 收盤全部出售試算，已扣出售手續費與證交稅</div>`;
 // 第 42 輪 F42-2：今日頁總覽「我的自選」小卡（只用 latest.json；股票列沿用 renderToday 的 rows；持股數字和自選頁同一個 holdCalc）
 function watchToday(L, rows) {

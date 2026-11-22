@@ -419,7 +419,7 @@ MUTANTS = [
     ("上市權息合計當現金", [("else if (tw && x.c == null && x.a != null) h.push(", "else if (false) h.push("),
                         ("o.c = x.c != null ? String(x.c) : '0'", "o.c = String(x.c != null ? x.c : x.a || 0)")], check_load),
     ("近一年包含純權", [("(v.t === '息' || v.t === '權息')", "v.t")], check_load),
-    ("沒寫最近一次", [("的股利（最近一次），下次請依公司公告修改", "的股利")], check_load),
+    ("沒寫最近一次", [("的股利（最近一次），", "的股利，")], check_load),
     ("帶入持有成本", [("Object.assign(TL.dv, o, { p: c, k: E ? 'e' : 's' });", "Object.assign(TL.dv, o, { p: c, cost: c, k: E ? 'e' : 's' });")], check_load),
     ("換股票沿用持有成本", [("y1: '', cost: '' }, h = [];", "y1: '' }, h = [];")], check_load),
     ("拿掉面額說明", [("同一基準日的股票股利以面額一起計入，本頁只算現金股利。", "本頁只算現金股利。")], check_shares_nhi),
