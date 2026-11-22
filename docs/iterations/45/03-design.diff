@@ -1,0 +1,445 @@
+diff --git a/README.md b/README.md
+index 95c9737..c13b83b 100644
+--- a/README.md
++++ b/README.md
+@@ -87,6 +87,7 @@ python3 tests/test_iter41.py                     # 第 41 輪測試（平均成
+ python3 tests/test_iter42.py                     # 第 42 輪測試（持股、今日頁我的自選、族群標籤、ETF 配息卡）
+ python3 tests/test_iter43.py                     # 第 43 輪測試（集保股權分散）
+ python3 tests/test_iter44.py                     # 第 44 輪測試（小項整理）
++python3 tests/test_iter45.py                     # 第 45 輪測試（名詞說明）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -149,6 +150,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker
+ - 平均成本（第 41 輪）：工具頁第 2 個分頁 `#/tools/ac`（交易成本之後），輸入多筆買入（預設 3 列、最多 10 列，可新增、刪除），算總股數、成交金額、買入手續費、總成本、平均成交價與平均成本（含手續費，整數運算四捨五入到 0.01），以及全部出售的損益兩平賣價（理論值，和從平均成本進位到升降單位起逐檔驗算的可成交值）；填了目前價格再算出售金額、出售手續費、證交稅、未實現損益與報酬率。股數不是 1,000 的倍數時拆成整股＋零股兩筆，各自套用最低手續費（整股、零股兩欄，零股預設 1 元）並各自捨去證交稅。折扣與整股最低手續費第一次打開時取交易成本頁的值，本頁修改不存；各列內容不存、不放進網址；`?c=代號` 帶入最新收盤當目前價格與商品別，換代號清空各列。不含部分出售、當沖、融資與除權息調整成本。窄螢幕（520px 以下）工具頁分頁列換成兩行。
+ - 持股（第 42 輪）：自選頁第 4 個欄位組「持股」（只有 ETF 時為「行情｜持股」），在編輯模式或各列「填入」輸入股數與平均成本（含買入手續費，最多 2 位小數），顯示收盤、市值、今日損益（股數 × 今日漲跌；無成交、ETF 除息日不計）、未實現損益與報酬率（以最新收盤全部出售試算，扣出售手續費與證交稅，同平均成本工具；手續費折扣與整股最低值取自交易成本頁，零股最低 1 元；證交稅股票 0.3%、名稱 -DR 結尾的存託憑證 0.1%、ETF 0.1%、代號 B 結尾的債券 ETF 停徵）及合計。持股只存在這個瀏覽器（`tw.hold`），不放進分享連結、網址與匯出檔；移出自選時一併刪除（復原前還在）。今日頁總覽第一個區塊「我的自選」小卡列前 5 檔與持股合計。個股頁的產業、產業鏈、概念股標籤點了跳泡泡圖並展開該族群；ETF 頁頭加近一年配息、配息率、最近除息、成交額卡，自選 ETF 表加配息三欄；ETF 今天除息時漲跌欄寫「除息」；本益比河流圖加一行 EPS 算法說明。
+ - 小項整理（第 44 輪）：工具頁「交易成本」預設改為「非當沖」（證交稅 0.3%；點「現股當沖」照舊 0.15%）；工具頁「除權息」帶入股利時，ETF 的提示寫「依發行人公告」；今日頁「我的自選」小卡的報酬率依正負上色；窄螢幕不在「預告」、「4週」「20日」與數字之間、「（百分點）」中間斷行，複利圖座標說明不剩單一「元」。收集：除權除息預告表的 NaN、Infinity 當作待公告；集保股權分散若全部代號都合計不符，改印 ⚠️ 並提示官方格式可能改變。
++- 名詞說明（第 45 輪，`site/help.js`）：頂欄「?」與頁尾「名詞說明」進入 `#/help`，8 組 41 個名詞（資金流、價量與技術、信用交易、籌碼、基本面、股利、期貨、ETF），定義寫的是本站的算法，部分名詞附「看 X →」連到對應的排行或工具；`#/help/代號`（例如 `#/help/vr`、`#/help/credit`）捲到該名詞或分組並標示，代號不存在時回到 `#/help`。會隨法規改的數字（證交稅、二代健保）不寫進辭典，改連到工具頁。**改算法時要同步修改 `help.js` 的名詞文字**；`tests/test_iter45.py` 會比對名詞文字和 `docs/iterations/45/02-pm.md`，並把 KD、RSI、MACD、量比、券資比、大戶門檻、一年位置的數字和程式常數綁在一起。工具頁「除權息」的固定說明，ETF 寫「不足 1 股依發行人公告折付現金…實際以發行人發放為準」。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+diff --git a/docs/iterations/README.md b/docs/iterations/README.md
+index d7c06c1..b24f56f 100644
+--- a/docs/iterations/README.md
++++ b/docs/iterations/README.md
+@@ -34,4 +34,5 @@
+ - 第 42 輪（2026-11-21 使用者要求：持股與自選、今日頁、個股頁小改，五角色、每次交接等確認）。分析師 `42/01-analyst.md`：F42-1～F42-15、R40～R42；D103 = A（F42-1～F42-7）、D104～D104-2 = A、D105 = A、D106 排下一輪、D107 = A。PM `42/02-pm.md`：持股欄組、今日小卡、族群標籤、ETF 配息卡與欄、河流圖說明、除息字樣，驗收 26 條；D108 = B（小卡在分頁鈕之下）、D109 = A（舊測試 0 行）、D110 = A（證交稅依商品細分）。設計 `42/03-design.md`（＋`03-design.diff`）：`app.js` 新增 `holdLoad`／`holdSave`／`holdCalc`（呼叫 `tlSell`，不複製）等純函式與 `watchToday`，`change` 只更新數字儲存格（焦點不遺失），`tools.js` 0 行；D110 查證財政部（存託憑證 0.1%、只有被動式債券 ETF 停徵至 2026/12/31，延長 10 年修法 11/11 立法院初審）；舊測試 0 行改動，新測試 `test_iter42`。
+ - 第 43 輪（2026-11-22 使用者選 F42-12 集保股權分散，五角色、每次交接等確認）。分析師 `43/01-analyst.md`：集保開放資料 `getOD.ashx?id=1-5` 1 次請求拿到全市場一週（只有最近一週，不能回補），4,130 檔合計驗算全部成立（R43～R50）；D114 = A（F43-1～F43-3）、D114-1 = B（寬表）、D114-2～D114-8 = A。PM `43/02-pm.md`：新表 `share_distribution`、`check` 一行、`sh`、籌碼分頁「股權分散」4 卡＋2 張週圖，抓取時機情境 17 種，驗收 27 條；D115 = A（`changed` 另看本次寫入，`_undated_counts` 不動）。設計 `43/03-design.md`（＋`03-design.diff`）：新檔 `collectors/tdcc.py`（純函式解析、一個 MERGE＋`OUTPUT` 計實際寫入檔數），目標週 `tradingcal.last_full_week`（比週不比日期、資料日以官方檔為準），`OBJECT_ID` 判斷表存在才排、才匯出（`setup-db` 才是啟用開關，World 下 0 次請求），匯出 `share_export` 整數四捨五入，`stock.js` 新增 `shCards`／`shChart`（週圖不跟區間、不和日資料十字線同步）；舊測試 0 行改動，新測試 `test_iter43`。
+ - 第 44 輪（2026-11-22 使用者選小項整理，五角色、每次交接等確認）。分析師 `44/01-analyst.md`：7 個小項逐一實測（含舊測試影響、375／320 斷行）；D119～D126 = A（同意改 13 行舊測試；F41-3、F43-6 不併入）。PM `44/02-pm.md`：F44-1～F44-7，驗收 23 條；D127 = A（收集程式不等 11/23）。設計 `44/03-design.md`（＋`03-design.diff`）：程式 11 行（`tools.js` 3、`stock.js` 3、`app.js` 1、`app.css` 1、`notices.py` 1、`tdcc.py` 2），舊測試 13 行，新測試 `test_iter44`。PG `44/04-dev.md`：原樣套用，44 個測試全過，8001 冒煙正常。QA `44/05-qa.md` 通過：QA44-01（320 寬「（百分點）」被拆開）已修，`app.css` 同一行加 `.chip-g .stat .s{word-break:keep-all}`（籌碼分頁全部卡片行數、高度不變、沒有溢出）；QA44-02（集保 0 列可寫等兩種情況測試擋不下）已補 `test_iter44`；反證設計 19＋QA 16 種全擋；QA44-03（除權息說明 ETF 仍寫「依公司公告折付現金」）列待辦。
++- 第 45 輪（2026-11-22 使用者選名詞小辭典 F42-15，五角色、每次交接等確認）。分析師 `45/01-analyst.md`：41 個名詞草稿、入口實測（320 寬搜尋框 208 → 162px）、舊測試實測；D128～D133 = A（併入 QA44-03、只改 `test_iter41:437` 1 行、各處說明連結之後再加、禁用詞只把「借券賣出」當例外）。PM `45/02-pm.md`：F45-1～F45-5，41 個名詞逐字定稿（8 組、24 個連結），驗收 21 條。設計 `45/03-design.md`（＋`03-design.diff`）：新檔 `help.js`（79 行，名詞資料由 PM 表格產生）、`app.js` 2 行、`app.css` 1 行、`tools.js` 1 行、`index.html`（「?」按鈕、頁尾連結、`help.js` 載入、3 個 `?v=`），舊測試 1 行（雜湊 `4aec4a83de78`），新測試 `test_iter45`（反證 19）；PM 頁尾句「不構成投資建議」含禁用詞，改「不是買賣訊號」。
+ - 規範：回應與文件用繁體中文；程式風格比照既有程式碼；只改必要的地方；外部網站請求要經過 `twstock/fetch.py` 的 `request`（有節流）；不要 commit 或 push；不要動 `.env`（建立專案副本時也不要複製 `.env`）；不要安裝排程或改系統設定（launchd、crontab、pmset、docker 設定），這些由使用者自行執行；埠 8000 是使用者自己的伺服器，測試用 8001 並在結束時關掉。改了 `site/` 的 js 或 css 要同步更新 `index.html` 的 `?v=`（sha1 前 8 碼，`test_iter23` 失敗時會印出正確的 3 行）。
+diff --git a/site/app.css b/site/app.css
+index 91e2bb3..fe2fea9 100644
+--- a/site/app.css
++++ b/site/app.css
+@@ -377,3 +377,4 @@ a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
+ .w-hold{display:block;margin-top:8px;line-height:1.7}.w-ev-l{display:block;margin-top:6px;color:var(--blue)}.w-today>.muted.small{margin-top:4px}   /* 第 42 輪 F42-2：今日頁我的自選 */
+ a.pill.grp{cursor:pointer}a.pill.grp:hover,a.pill.grp:focus-visible{border-color:var(--blue);outline:none}   /* 第 42 輪 F42-3：可點的族群標籤（文字顏色不變） */
+ .dv-nx{word-break:keep-all}.tl-lg+.muted.small{text-wrap:pretty}.chip-g .stat .s{word-break:keep-all}   /* 第 44 輪：375 寬不拆「預告」、複利座標說明不剩單字、籌碼卡不拆「（百分點）」（QA44-01） */
++.help-btn{font-size:16px;font-weight:700;line-height:1;text-decoration:none}.help-g{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.help-t{padding:8px 6px;border-top:1px solid var(--border);scroll-margin-top:calc(var(--top-h,56px) + 8px)}.sec-h+.help-t{border-top:0}.help-t a{color:var(--blue);white-space:nowrap}.help-t.on{background:var(--card2);box-shadow:inset 3px 0 0 var(--blue)}   /* 第 45 輪：名詞說明 */
+diff --git a/site/app.js b/site/app.js
+index 7d039b3..9d7f58a 100644
+--- a/site/app.js
++++ b/site/app.js
+@@ -66,6 +66,7 @@ const routes = {
+   etf: code => code === 'active' ? renderActive() : code ? renderHoldings(code) : renderEtf(),   // 第 7 輪：#/etf/active 彙總排行
+   stock: (code, sub) => window.renderStock(code, sub),   // 第 25 輪 D25-08：#/stock/代號/分頁
+   tools: arg => window.renderTools(arg),                 // 第 34 輪：試算工具 #/tools/dt|cp|pl（tools.js）
++  help: arg => window.renderHelp(arg),                   // 第 45 輪：名詞說明 #/help、#/help/代號（help.js）
+ };
+ 
+ // 第 28 輪 D28-03：瀏覽器「返回／前進」回到看過的頁面時還原捲動位置；點連結進新頁才回到頂端。
+@@ -84,7 +85,7 @@ async function route() {
+   if (page !== 'watch') App.watchShare = App.watchAdd = App.watchUndo = App.watchEdit = null;   // 離開自選頁：清掉復原、結束編輯
+   // 第 27 輪 D27-10：瀏覽器分頁標題帶頁面名稱（個股頁由 renderStock 換成「名稱 代號」）
+   document.title = ({ today: '今日', bubble: '泡泡圖', rank: { hl: '新訊號', screen: '選股' }[String(arg).split('?')[0]] || '排行',
+-    etf: arg === 'active' ? '主動 ETF 彙總' : arg ? arg + ' 持股' : 'ETF', watch: '自選', tools: '工具' }[page] || (page === 'stock' ? arg : '今日')) + '｜台股資金流';
++    etf: arg === 'active' ? '主動 ETF 彙總' : arg ? arg + ' 持股' : 'ETF', watch: '自選', tools: '工具', help: '名詞說明' }[page] || (page === 'stock' ? arg : '今日')) + '｜台股資金流';
+   document.querySelectorAll('[data-tab]').forEach(a => a.classList.toggle('on', a.dataset.tab === page));
+   const view = $('#view');
+   if (window.Plotly && $('#bubble')) Plotly.purge('bubble');
+diff --git a/site/help.js b/site/help.js
+new file mode 100644
+index 0000000..5d8946e
+--- /dev/null
++++ b/site/help.js
+@@ -0,0 +1,79 @@
++// 第 45 輪 F45-1、F45-2：名詞說明 #/help、#/help/代號（名詞或組）。
++// 名詞文字是本站算法的說明（45/02-pm.md 二之一逐字）；改算法時要同步修改這裡（tests/test_iter45.py 比對關鍵數字）
++const HELP = [   // [組代號, 組名, [[代號, 名詞, 定義, 連結文字, 網址], …]]
++  ['flow', '資金流', [
++    ['inst', '三大法人買賣超', '外資、投信、自營商當天買的張數減掉賣的張數，正為買超、負為賣超。本站的金額 = 買賣超張數 × 當日收盤，是估算；排行與選股不含 ETF。', '看法人買超排行', '#/rank/n+'],
++    ['quad', '資金象限', '依族群近 5 日的資金淨流入（出），和 20 日平均比較後分成四類：漲潮（流入且加速）、輪動（流入但放緩）、觀望（流出但放緩）、退潮（流出且加速）。', '看泡泡圖', '#/bubble'],
++    ['grp', '類股、產業鏈、概念股', '類股是證交所、櫃買中心的產業別；產業鏈與概念股是本站整理的分類，同一檔股票可能出現在多個族群。'],
++    ['aetf', '主動 ETF 與投信買超', '主動 ETF 由經理人選股，持股會隨時調整。投資人申購的資金要拿去買股票，所以投信買超會受主動 ETF 申購影響；個股頁「主動 ETF 持有」卡列出已收錄的部分。', '看主動 ETF 彙總', '#/etf/active'],
++  ]],
++  ['px', '價量與技術', [
++    ['adj', '還原價', '除權息、減資、面額變更時，用官方參考價把之前的價格等比例調整，最新收盤不變。報酬、乖離、均線、新高新低、KD、RSI 都用還原價；個股 K 線可切換「原始」，ETF 個股頁用原始價。'],
++    ['vr', '量比', '今日成交額 ÷ 前 20 個交易日平均成交額（無成交日以 0 計）。大於 1 代表今天成交比平常多。', '看量比排行', '#/rank/vr'],
++    ['bias', '均線、乖離', 'MA20 = 近 20 個交易日收盤平均；MA20 乖離 = 收盤 ÷ MA20 − 1（%）。MA60 同理。', '看條件選股', '#/rank/screen'],
++    ['rs', '相對大盤', '個股近 N 個交易日的報酬減掉同期指數報酬（百分點）；上市比加權指數、上櫃比櫃買指數。指數不含股息，區間越長越偏向個股。', '看 20 日相對排行', '#/rank/rs20'],
++    ['nh', '創新高（N 日）', '今天收盤高於前 N 個交易日的最高收盤（還原價）；創新低同理。', '看創新高排行', '#/rank/nh'],
++    ['w52', '52 週高低', '資料日往前一年內的最高與最低價（還原價）。距 52 週高 = (52 週高 − 收盤) ÷ 52 週高。'],
++    ['to', '週轉率', '今日成交股數 ÷ 目前發行股數。增資、減資前後可能失真。', '看週轉率排行', '#/rank/to'],
++    ['macd', 'MACD', 'DIF = 收盤的 12 日 EMA − 26 日 EMA；DEA = DIF 的 9 日 EMA；柱 = DIF − DEA。個股頁 K 線下方的子圖預設顯示 MACD。'],
++    ['kd', 'KD', '本站用 KD(9,3,3)：RSV = (收盤 − 9 日最低) ÷ (9 日最高 − 9 日最低) × 100，K、D 再逐日平滑，數值在 0～100，圖上虛線為 20、80。急漲急跌時會長時間停在高檔或低檔，本站只寫數值與區間。'],
++    ['rsi', 'RSI', '本站用 RSI(14)：近 14 日上漲幅度占漲跌幅度合計的比例（Wilder 平滑），數值在 0～100，圖上虛線為 30、70。'],
++  ]],
++  ['credit', '信用交易', [
++    ['margin', '融資、融券', '融資是向券商借錢買股票，融券是向券商借股票來賣；餘額以張計。', '看今日信用估值', '#/today/credit'],
++    ['sr', '券資比', '融券餘額 ÷ 融資餘額（%）。本站的排行與選股只列融資 1,000 張以上的股票。', '看券資比排行', '#/rank/sr'],
++    ['mu', '融資使用率', '融資餘額 ÷ 融資限額（%）。限額 0 或沒有限額的股票不列。', '看融資使用率排行', '#/rank/mu'],
++    ['mt', '融資維持率（大盤）', '本站自算：Σ（融資張數 × 1,000 × 收盤）÷ 官方融資金額，含股票與 ETF。140% 是經驗值，不是官方門檻；個人整戶擔保維持率低於 130% 會被追繳，這是官方規定。', '看今日信用估值', '#/today/credit'],
++    ['sbl', '借券賣出餘額', '借來並已賣掉、還沒還券的股數。ETF 的借券賣出多為造市、套利與避險，不等於看空。', '看借券排行', '#/rank/l+'],
++  ]],
++  ['chip', '籌碼', [
++    ['fh', '外資持股比率', '外資及陸資持有股數占發行股數的比例（證交所、櫃買中心公布）。個股卡片的 5 日、20 日變化單位是百分點。'],
++    ['big', '大戶、散戶', '集保股權分散表依每週最後一個營業日的集保餘額分級。本站的大戶指持股超過 400 張或超過 1,000 張，散戶指 50 張以下；大戶包含外資、法人、ETF 與公司大股東。其他網站的門檻可能不同。'],
++    ['holders', '股東人數、受益人數', '集保戶的人數；股票叫股東人數，ETF 叫受益人數。個股卡片另列未滿 1 張的人數。'],
++    ['tdcc', '集保庫存', '存放在集保的股數（ETF 為受益權單位）。股權分散的比例 = 各級股數 ÷ 集保庫存合計，增資、減資、合併時會跳動；官方每週公布一次。'],
++    ['alert', '處置股、注意股', '注意股是交易所當天公布交易資訊異常的股票（標示「注」）；處置股是被交易所限制交易方式一段期間的股票（標示「處」，含即將處置）。', '看今日總覽', '#/today/ov'],
++    ['dt', '當沖', '同一天對同一檔股票先買後賣（或先賣後買）、當天沖銷。需符合券商資格；證交稅率與期限以「工具 › 交易成本」為準。', '看交易成本', '#/tools/dt'],
++  ]],
++  ['fund', '基本面', [
++    ['pe', '本益比', '股價 ÷ 近 4 季 EPS，本站用證交所、櫃買中心公布的值；虧損公司沒有本益比。獲利大增時本益比會下降，所以本益比低可能只是獲利在高峰。', '看本益比排行', '#/rank/pe'],
++    ['pb', '淨值比', '股價 ÷ 每股淨值，本站用證交所、櫃買中心公布的值。'],
++    ['dy', '殖利率', '股利 ÷ 股價，本站用證交所、櫃買中心公布的值（用去年的股利）。', '看殖利率排行', '#/rank/dy'],
++    ['pos', '一年位置', '近一年（約 242 個交易日）中，數值小於或等於今天的天數比例；接近 100% 表示接近這一年最高，接近 0% 表示接近這一年最低。只是位置，不是買賣訊號。', '看今日信用估值', '#/today/credit'],
++    ['band', '本益比河流圖', '倍數線 = 當天的近 4 季 EPS × 近一年官方本益比的百分位；淨值比河流圖改用每股淨值。倍數是用這一年的資料算的，不代表股價會回到某條線。'],
++    ['eps', 'EPS（單季、近 4 季）', '單季 = 本季累計 − 上一季累計；近 4 季 = 本季累計 + 去年全年 − 去年同季累計。期中有增資或減資時，會和公司公告的數字略有差異。'],
++    ['rev', '營收年增、毛利率、淨利率', '營收年增 = 今年該月 ÷ 去年同月 − 1。毛利率、稅後淨利率是單季數字；金融業沒有毛利率。', '看營收年增排行', '#/rank/ry'],
++  ]],
++  ['div', '股利', [
++    ['exd', '除權、除息、參考價', '除息是發放現金股利，除權是發放股票股利。除權息當天的開盤參考價 = (前收 − 現金股利) ÷ (1 + 每千股配股 ÷ 1,000)。', '看除權息試算', '#/tools/dv'],
++    ['fill', '填息', '除權息日起（含當天）第一個收盤大於或等於除權息前收盤的交易日；本站用原始價、不設期限，純配股不計算填權。'],
++    ['cap', '現金增資', '公司發行新股讓股東依認購價認購；除權當天的參考價會調整，本站的還原價也會跟著調整。'],
++    ['nx', '除權息預告', '交易所公布即將除權息的股票與金額；金額可能還沒公告，以公司或發行人公告為準。'],
++    ['nhi', '二代健保補充保費', '單次領取的股利達門檻時，會先扣補充保費。門檻與費率以「工具 › 除權息」為準。', '看除權息試算', '#/tools/dv'],
++  ]],
++  ['fut', '期貨', [
++    ['basis', '正價差、逆價差', '價差 = 台指期近月日盤收盤 − 同一天加權指數收盤；正值叫正價差、負值叫逆價差。期貨 13:45 收盤、加權指數 13:30 收盤，尾盤變化大時價差會失真。', '看今日期貨', '#/today/fut'],
++    ['near', '近月、結算日', '近月是當天有成交的最近到期月份。結算日為每月第三個週三，遇休市順延；結算日的下一個交易日換到下個月份，換月當天的價差跳動來自契約不同。', '看今日期貨', '#/today/fut'],
++  ]],
++  ['etf', 'ETF', [
++    ['units', 'ETF 單位數', 'ETF 在外流通的受益權單位數；投資人申購時增加、贖回時減少。', '看 ETF 列表', '#/etf'],
++    ['issuer', '發行人', '發行 ETF 的投信。ETF 的配息、配股以發行人公告為準；股票則以公司公告為準。'],
++  ]],
++];
++
++// 整頁 HTML；id = 要標示的名詞代號（組代號、空字串都不標示）
++function helpHTML(id) {
++  const row = x => `<div class="help-t${x[0] === id ? ' on' : ''}" id="help-${x[0]}"><b>${x[1]}</b><div>${x[2]}${x[4] ? `　<a href="${x[4]}">${x[3]} →</a>` : ''}</div></div>`;
++  return '<section class="sec card"><div class="sec-h"><h2>名詞說明</h2></div><div class="muted small">本站各頁用到的名詞與本站的算法；官方或其他網站的定義可能不同。</div>' +
++    `<div class="help-g">${HELP.map(g => `<a class="chip" href="#/help/${g[0]}">${g[1]}</a>`).join('')}</div></section>` +
++    HELP.map(g => `<section class="sec card" id="help-${g[0]}"><div class="sec-h"><h2>${g[1]}</h2></div>${g[2].map(row).join('')}</section>`).join('') +
++    '<div class="muted small">名詞說明只描述算法與定義，不是買賣訊號。</div>';
++}
++
++// #/help/代號：畫完整頁後捲到名詞或組（route() 捲到頂端之後）；代號不存在 → 網址改回 #/help、不捲動
++window.renderHelp = function (arg) {
++  const ids = HELP.reduce((a, g) => a.concat(g[0], g[2].map(x => x[0])), []);
++  const id = ids.indexOf(arg) >= 0 ? arg : '';
++  if (arg && !id) history.replaceState(history.state, '', '#/help');
++  document.getElementById('view').innerHTML = helpHTML(id);
++  if (id) requestAnimationFrame(() => { const e = document.getElementById('help-' + id); if (e) e.scrollIntoView(); });   // 已換頁就不捲
++};
+diff --git a/site/index.html b/site/index.html
+index f38ad5c..8180965 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,12 +7,13 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=e0814085">
++<link rel="stylesheet" href="app.css?v=7f4315c2">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=29a4de94" defer></script>
++<script src="app.js?v=c7bb2119" defer></script>
+ <script src="stock.js?v=c2c7d916" defer></script>
+-<script src="tools.js?v=9066111f" defer></script>
++<script src="tools.js?v=64e7360f" defer></script>
++<script src="help.js?v=55e93876" defer></script>
+ </head>
+ <body>
+ <header class="top">
+@@ -32,6 +33,7 @@
+     <a href="#/watch" data-tab="watch">自選</a>
+     <a href="#/tools" data-tab="tools">工具</a>
+   </nav>
++  <a class="theme-btn help-btn" href="#/help" aria-label="名詞說明" title="名詞說明">?</a>
+   <button class="theme-btn" id="themeBtn" type="button"></button>
+ </header>
+ 
+@@ -48,6 +50,6 @@
+   <a href="#/tools" data-tab="tools"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8.5 12h1M14.5 12h1M8.5 16.5h1M14.5 16.5h1"/></svg>工具</a>
+ </nav>
+ 
+-<footer class="foot wrap">資料來源：臺灣證券交易所、證券櫃檯買賣中心、公開資訊觀測站。僅供研究參考，不構成投資建議。</footer>
++<footer class="foot wrap"><a href="#/help">名詞說明</a>　資料來源：臺灣證券交易所、證券櫃檯買賣中心、公開資訊觀測站。僅供研究參考，不構成投資建議。</footer>
+ </body>
+ </html>
+diff --git a/site/tools.js b/site/tools.js
+index 9122086..690eec0 100644
+--- a/site/tools.js
++++ b/site/tools.js
+@@ -255,7 +255,7 @@ function tlDvOut(st, I) {
+   else if (P && C !== null && C >= P * 10000n) msg.push('現金股利須小於除權息前收盤');
+   const note = tlNote(['參考價 = (前收 − 現金股利) ÷ (1 + 每千股配股 ÷ 1,000)；上市除息捨去、上市有配股與上櫃四捨五入到 0.01（本站用近一年官方參考價驗算）。',
+     '官方以實際每股金額計算（常有小數尾數），只填到元或角時可能和官方差 0.01；有現金增資時參考價請看官方公告。配股 1 元 = 每千股 100 股（面額 10 元時）。',
+-    '可領現金元以下捨去；不足 1 股依公司公告折付現金，可在期限內湊股；實際以公司發放為準。',
++    `可領現金元以下捨去；不足 1 股依${e ? '發行人' : '公司'}公告折付現金，可在期限內湊股；實際以${e ? '發行人' : '公司'}發放為準。`,
+     '二代健保補充保費：單次股利 2 萬元以上扣 2.11%，元以下四捨五入，單次以 1,000 萬元為上限；同一基準日的股票股利以面額一起計入，本頁只算現金股利。']);
+   const hint = I && I.dvh ? tlNote(I.dvh) : '';
+   if (msg.length) return tlMsg(msg) + hint + note;
+diff --git a/tests/test_iter41.py b/tests/test_iter41.py
+index 0603a65..96450c8 100644
+--- a/tests/test_iter41.py
++++ b/tests/test_iter41.py
+@@ -434,7 +434,7 @@ NEW = ("tlLot", "tlAvg", "tlSell", "tlAcBreak", "tlAcN", "tlAcV", "tlAcOut", "tl
+ 
+ 
+ def test_unchanged_and_wiring():
+-    assert hashlib.sha1("".join(T._grab(TOOLS, n) for n in OLD).encode()).hexdigest()[:12] == "ff151c62306c"   # 只呼叫、不修改
++    assert hashlib.sha1("".join(T._grab(TOOLS, n) for n in OLD).encode()).hexdigest()[:12] == "4aec4a83de78"   # 只呼叫、不修改
+     for f in ("tools.js", "app.js", "stock.js", "app.css"):
+         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
+         assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
+diff --git a/tests/test_iter45.py b/tests/test_iter45.py
+new file mode 100644
+index 0000000..26f5f58
+--- /dev/null
++++ b/tests/test_iter45.py
+@@ -0,0 +1,231 @@
++"""第 45 輪（不連網、不連資料庫）：名詞說明 #/help（F45-1～F45-4）與 QA44-03（F45-5）。
++名詞文字和 docs/iterations/45/02-pm.md 二之一逐字比對；關鍵數字和程式常數綁在一起（改算法沒改 help.js 會失敗）。
++有 node 時逐字取出 help.js、app.js、tools.js 的程式執行；檢查函式都接受要檢查的原始碼，test_contrast 改壞後重跑，確認會失敗。"""
++import hashlib
++import json
++import re
++import sys
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tests"))
++import test_iter34 as T  # noqa: E402
++import test_iter39 as T39  # noqa: E402
++import test_iter42 as T42  # noqa: E402
++
++SITE, HTML, TOOLS, APP, STK = T.SITE, T.HTML, T.TOOLS, T.APP, T.STK
++HELP = (SITE / "help.js").read_text(encoding="utf-8")
++EXPORT = (ROOT / "twstock" / "export.py").read_text(encoding="utf-8")
++PM = (ROOT / "docs" / "iterations" / "45" / "02-pm.md").read_text(encoding="utf-8")
++ADVICE = set(T42.ADVICE) | {"主力", "籌碼乾淨", "進場", "退場", "吸籌", "出貨", "值得", "看好", "安全", "危險", "支撐", "壓力", "目標價", "上檔", "下檔"}   # test_iter43:511
++
++
++def _data(src=HELP):
++    return T._node(T._grab(src, "HELP") + "\nconsole.log(JSON.stringify(HELP));")
++
++
++def _want():
++    """02-pm.md 二之一的 8 張表 → [[組代號, 組名, [[代號, 名詞, 定義(, 連結文字, 網址)]]]]"""
++    sec = PM[PM.index("## 二之一"):PM.index("## 二之二")]
++    parts, out = re.split(r"\n### (.+?)（`(\w+)`）\n", sec)[1:], []
++    for i in range(0, len(parts), 3):
++        rows = []
++        for k, n, d, l in re.findall(r"^\| ([a-z0-9]+) \| (.+?) \| (.+?) \|(.*?)\|$", parts[i + 2], re.M):
++            m = re.fullmatch(r"(.+?) → `(#/[^`]+)`", l.strip())
++            rows.append([k, n, d] + ([m.group(1), m.group(2)] if m else []))
++        out.append([parts[i + 1], parts[i], rows])
++    return out
++
++
++# ─── 名詞資料（驗收 1～4）────────────────────────────────────────
++def check_data(src=HELP):
++    H = _data(src)
++    if H is None:
++        return []
++    bad, ids = [], [g[0] for g in H] + [x[0] for g in H for x in g[2]]
++    if H != _want():
++        bad.append("和 02-pm.md 二之一不同")
++    if len(H) != 8 or sum(len(g[2]) for g in H) != 41 or len(ids) != len(set(ids)):
++        bad.append(("數量或代號重複", len(H), len(ids)))
++    ranks = set(re.findall(r"\['([^']+)', '[^']+', '[^']+', -?1", T._grab(APP, "RANKS")))
++    today = set(re.findall(r"\['(\w+)', '", T._grab(APP, "TODAY_TABS")))
++    tools = set(re.search(r"!\[([^\]]+)\]\.includes\(tl\[1\]\)", APP).group(1).replace("'", "").split(", "))
++    ok = lambda u: (u in ("#/bubble", "#/etf", "#/etf/active") or re.fullmatch(r"#/rank/(.+)", u) and u[7:] in ranks | {"screen"}
++                    or re.fullmatch(r"#/today/\w+", u) and u[8:] in today or re.fullmatch(r"#/tools/\w+", u) and u[8:] in tools)
++    links = [x[4] for g in H for x in g[2] if len(x) == 5]
++    if len(links) != 24 or not all(ok(u) for u in links):
++        bad.append(("連結", [u for u in links if not ok(u)], len(links)))
++    text = "".join(x[2] for g in H for x in g[2])
++    for w in ("0.15%", "0.3%", "2.11%", "2027", "2 萬"):                                       # 驗收 4：法規數字不寫進辭典
++        if w in text:
++            bad.append(w)
++    return bad
++
++
++def test_data():
++    assert check_data() == []
++
++
++# 驗收 3：(辭典裡的字, 程式裡的字)。改了算法沒改辭典（或反過來）都會失敗
++SYNC = [("KD(9,3,3)", "STK", "function calcKD(H, L, C, n = 9)"), ("RSI(14)", "STK", "function calcRSI(C, n = 14)"),
++        ("12 日 EMA − 26 日 EMA", "STK", "ef = ema(closes, 12), es = ema(closes, 26)"), ("DIF 的 9 日 EMA", "STK", "dea = ema(dif, 9)"),
++        ("今日成交額 ÷ 前 20 個交易日平均成交額", "EXPORT", "prior = yi[-21:-1]"), ("融資 1,000 張以上", "APP", "const MARGIN_BASE = 1000;"),
++        ("超過 400 張或超過 1,000 張", "STK", "['持股超過 400 張', fmt(sh.b[i], 2)"), ("散戶指 50 張以下", "STK", "['50 張以下', fmt(sh.r[i], 2)"),
++        ("約 242 個交易日", "STK", "valuation?.TWSE?.days ?? 242")]
++
++
++def check_sync(src=HELP, **code):
++    code = dict({"STK": STK, "APP": APP, "EXPORT": EXPORT}, **code)
++    return [(a, b) for a, k, b in SYNC if a not in src or b not in code[k]]
++
++
++def test_sync():
++    assert check_sync() == []
++
++
++# ─── 頁面（驗收 5～8）────────────────────────────────────────────
++def _page(body, src=HELP):
++    return T._node("const window = {}; let hash = '', rafs = [];\n"
++                   "const history = { state: { k: 1 }, replaceState(s, t, u) { hash = u; } }, requestAnimationFrame = f => rafs.push(f);\n"
++                   "let gone = false; const view = { innerHTML: '' }, el = {}, document = { getElementById: id => id === 'view' ? view : gone ? null : (el[id] = el[id] || { id, n: 0, scrollIntoView() { this.n++; } }) };\n"
++                   + src + "\n" + body)
++
++
++TOP = ('<section class="sec card"><div class="sec-h"><h2>名詞說明</h2></div><div class="muted small">本站各頁用到的名詞與本站的算法；官方或其他網站的定義可能不同。</div>'
++       '<div class="help-g"><a class="chip" href="#/help/flow">資金流</a><a class="chip" href="#/help/px">價量與技術</a><a class="chip" href="#/help/credit">信用交易</a>'
++       '<a class="chip" href="#/help/chip">籌碼</a><a class="chip" href="#/help/fund">基本面</a><a class="chip" href="#/help/div">股利</a>'
++       '<a class="chip" href="#/help/fut">期貨</a><a class="chip" href="#/help/etf">ETF</a></div></section>')
++END = '<div class="muted small">名詞說明只描述算法與定義，不是買賣訊號。</div>'
++VR = ('<div class="help-t on" id="help-vr"><b>量比</b><div>今日成交額 ÷ 前 20 個交易日平均成交額（無成交日以 0 計）。大於 1 代表今天成交比平常多。'
++      '　<a href="#/rank/vr">看量比排行 →</a></div></div>')
++GRP = '<div class="help-t" id="help-grp"><b>類股、產業鏈、概念股</b><div>類股是證交所、櫃買中心的產業別；產業鏈與概念股是本站整理的分類，同一檔股票可能出現在多個族群。</div></div>'
++
++
++def check_page(src=HELP):
++    o = _page("""const out = [];
++for (const a of ['vr', 'credit', 'xyz', undefined]) {
++  hash = '#/help' + (a ? '/' + a : ''); rafs = []; for (const k in el) delete el[k];
++  window.renderHelp(a); rafs.forEach(f => f());
++  out.push([hash, view.innerHTML, Object.values(el).filter(e => e.n).map(e => e.id), rafs.length]);
++}
++window.renderHelp('vr'); gone = true; let err = ''; try { rafs.forEach(f => f()); } catch (e) { err = String(e); }   // 捲動前已換到別頁
++console.log(JSON.stringify(out.concat([err])));""", src)
++    if o is None:
++        return []
++    bad = ["已換頁仍捲：" + o[-1]] if o[-1] else []
++    for (h, html, sc, nr), want in zip(o, (["#/help/vr", ["help-vr"], 1], ["#/help/credit", ["help-credit"], 1], ["#/help", [], 0], ["#/help", [], 0])):
++        if [h, sc, nr] != want:
++            bad.append((h, sc, nr))
++        secs = re.findall(r'<section class="sec card" id="help-(\w+)"><div class="sec-h"><h2>(.+?)</h2></div>', html)
++        if not (html.startswith(TOP) and html.endswith(END) and secs == [(g[0], g[1]) for g in _want()] and GRP in html
++                and html.count('class="help-t') == 41 and html.count(' on"') == (h == "#/help/vr")):
++            bad.append(("版面", h))
++    if VR not in o[0][1] or VR in o[1][1] or VR.replace(" on", "") not in o[1][1]:
++        bad.append("標示")
++    return bad
++
++
++def test_page():
++    assert check_page() == []
++
++
++def test_route():
++    js = T._grab(APP, "esc") + "\n" + T._grab(APP, "scrollAt") + "\nlet scrollKey = null;\n" + T._grab(APP, "route") + r"""
++let hash = '', seen = [];
++const location = { get hash() { return hash; } };
++const history = { state: null, replaceState(s, t, u) { this.state = s; if (u) hash = u; } };
++const window = { scrollTo() {} };
++const document = { title: '', querySelectorAll: () => [] }, $ = () => null, App = {};
++const disposeFuturesChart = () => {}, renderToday = async () => {};
++const routes = { help: async arg => { seen.push([arg, hash, document.title]); } };
++(async () => {
++  for (const h of ['#/help', '#/help/vr']) { hash = h; history.state = null; await route(); }
++  console.log(JSON.stringify(seen));
++})();"""
++    o = T._node(js)
++    if o is not None:
++        assert o == [[None, "#/help", "名詞說明｜台股資金流"], ["vr", "#/help/vr", "名詞說明｜台股資金流"]], o
++    assert "  help: arg => window.renderHelp(arg),                   // 第 45 輪：名詞說明 #/help、#/help/代號（help.js）\n" in APP
++
++
++# ─── 入口（驗收 10）──────────────────────────────────────────────
++def test_entry():
++    top, bot = HTML[HTML.index('<header class="top">'):HTML.index("</header>")], HTML[HTML.index('<nav class="bottom"'):]
++    btn = '<a class="theme-btn help-btn" href="#/help" aria-label="名詞說明" title="名詞說明">?</a>'
++    assert btn in top and top.index(btn) < top.index('<button class="theme-btn" id="themeBtn" type="button"></button>')
++    assert '<footer class="foot wrap"><a href="#/help">名詞說明</a>　資料來源：臺灣證券交易所' in HTML
++    assert top.count("data-tab=") == 6 and bot[:bot.index("</nav>")].count("data-tab=") == 6
++    assert HTML.index('src="tools.js?v=') < HTML.index('src="help.js?v=') and len(re.findall(r'src="help\.js[?"]', HTML)) == 1
++
++
++# ─── QA44-03（驗收 11）───────────────────────────────────────────
++NOTE = "可領現金元以下捨去；不足 1 股依{0}公告折付現金，可在期限內湊股；實際以{0}發放為準。"
++
++
++def check_dv(src=TOOLS):
++    o = T39._out([T39._st(p="100", c="1", k=k) for k in ("e", "s")], src)
++    if o is None:
++        return []
++    return [] if NOTE.format("發行人") in o[0] and NOTE.format("公司") in o[1] and "發行人" not in o[1] else [o]
++
++
++def test_dv_etf():
++    assert check_dv() == []
++
++
++# ─── ?v=、node 14、用詞、文件（驗收 14～16）────────────────────────
++def check_words(src=HELP):
++    return [w for w in ADVICE if w in src.replace("借券賣出", "")] + \
++        [w for w in ("?.", "??", ".at(", "replaceAll", "||=", "&&=", "structuredClone", "findLast") if w in src]
++
++
++def test_versions_words_docs():
++    for f in ("app.css", "app.js", "tools.js", "help.js"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
++    assert HTML.count("https://") == 2 and "http" not in HELP and "fetch(" not in HELP and "localStorage" not in HELP
++    assert check_words() == []
++    readme = (ROOT / "README.md").read_text(encoding="utf-8")
++    assert "python3 tests/test_iter45.py" in readme and "第 45 輪" in readme and "help.js" in readme
++    assert "第 45 輪" in (ROOT / "docs" / "iterations" / "README.md").read_text(encoding="utf-8")
++
++
++# ─── 反證 ─────────────────────────────────────────────
++MUTANTS = [  # (名稱, 原始碼, 原字串, 改壞後, 檢查)
++    ("改錯一個字", HELP, "正為買超、負為賣超", "正為買超，負為賣超", check_data),
++    ("少一個名詞", HELP, "    ['pb', '淨值比', '股價 ÷ 每股淨值，本站用證交所、櫃買中心公布的值。'],\n", "", check_data),
++    ("連到不存在的排行", HELP, "'#/rank/vr'", "'#/rank/vol'", check_data),
++    ("連到不存在的今日分頁", HELP, "'看今日期貨', '#/today/fut'],\n    ['near'", "'看今日期貨', '#/today/futures'],\n    ['near'", check_data),
++    ("代號重複", HELP, "['near', '近月", "['basis', '近月", check_data),
++    ("寫進稅率", HELP, "證交稅率與期限以「工具 › 交易成本」為準", "證交稅 0.15%", check_data),
++    ("KD 參數不同步", HELP, "KD(9,3,3)", "KD(14,3,3)", check_sync),
++    ("大戶門檻不同步", STK, "['持股超過 400 張', fmt(sh.b[i], 2)", "['持股超過 500 張', fmt(sh.b[i], 2)", lambda s: check_sync(STK=s)),
++    ("量比天數不同步", EXPORT, "prior = yi[-21:-1]", "prior = yi[-11:-1]", lambda s: check_sync(EXPORT=s)),
++    ("沒有標示", HELP, "${x[0] === id ? ' on' : ''}", "", check_page),
++    ("組代號也標示", HELP, "x[0] === id ? ' on'", "(x[0] === id || id) ? ' on'", check_page),
++    ("沒有延後捲動", HELP, "requestAnimationFrame(() => { const e = document.getElementById('help-' + id); if (e) e.scrollIntoView(); });",
++     "{ const e = document.getElementById('help-' + id); if (e) e.scrollIntoView(); }", check_page),
++    ("已換頁仍捲", HELP, "if (e) e.scrollIntoView();", "e.scrollIntoView();", check_page),
++    ("不存在不改網址", HELP, "if (arg && !id) history.replaceState(history.state, '', '#/help');", "", check_page),
++    ("沒有頁尾", HELP, "名詞說明只描述算法與定義，不是買賣訊號。", "", check_page),
++    ("ETF 仍寫公司", TOOLS, "不足 1 股依${e ? '發行人' : '公司'}公告", "不足 1 股依公司公告", check_dv),
++    ("發行人與公司對調", TOOLS, "實際以${e ? '發行人' : '公司'}發放", "實際以${e ? '公司' : '發行人'}發放", check_dv),
++    ("用到禁用詞", HELP, "不等於看空", "不等於看好", check_words),
++    ("node 14 不支援", HELP, "ids.indexOf(arg) >= 0 ? arg : ''", "ids.includes(arg) ? arg : (arg ?? '')", check_words),
++]
++
++
++def test_contrast():
++    node = T._node("console.log('1')") is not None
++    for name, src, a, b, check in MUTANTS:
++        assert src.count(a) == 1, (name, a)
++        if node or check is check_words or "同步" in name:
++            assert check(src.replace(a, b)), "反證沒有擋下：" + name
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")

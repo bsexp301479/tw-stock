@@ -7,12 +7,13 @@
 <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
 <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=e0814085">
+<link rel="stylesheet" href="app.css?v=7f4315c2">
 <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
-<script src="app.js?v=29a4de94" defer></script>
+<script src="app.js?v=c7bb2119" defer></script>
 <script src="stock.js?v=c2c7d916" defer></script>
-<script src="tools.js?v=9066111f" defer></script>
+<script src="tools.js?v=64e7360f" defer></script>
+<script src="help.js?v=55e93876" defer></script>
 </head>
 <body>
 <header class="top">
@@ -32,6 +33,7 @@
     <a href="#/watch" data-tab="watch">自選</a>
     <a href="#/tools" data-tab="tools">工具</a>
   </nav>
+  <a class="theme-btn help-btn" href="#/help" aria-label="名詞說明" title="名詞說明">?</a>
   <button class="theme-btn" id="themeBtn" type="button"></button>
 </header>
 
@@ -48,6 +50,6 @@
   <a href="#/tools" data-tab="tools"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8.5 12h1M14.5 12h1M8.5 16.5h1M14.5 16.5h1"/></svg>工具</a>
 </nav>
 
-<footer class="foot wrap">資料來源：臺灣證券交易所、證券櫃檯買賣中心、公開資訊觀測站。僅供研究參考，不構成投資建議。</footer>
+<footer class="foot wrap"><a href="#/help">名詞說明</a>　資料來源：臺灣證券交易所、證券櫃檯買賣中心、公開資訊觀測站。僅供研究參考，不構成投資建議。</footer>
 </body>
 </html>

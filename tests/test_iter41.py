@@ -434,7 +434,7 @@ NEW = ("tlLot", "tlAvg", "tlSell", "tlAcBreak", "tlAcN", "tlAcV", "tlAcOut", "tl
 
 
 def test_unchanged_and_wiring():
-    assert hashlib.sha1("".join(T._grab(TOOLS, n) for n in OLD).encode()).hexdigest()[:12] == "ff151c62306c"   # 只呼叫、不修改
+    assert hashlib.sha1("".join(T._grab(TOOLS, n) for n in OLD).encode()).hexdigest()[:12] == "4aec4a83de78"   # 只呼叫、不修改
     for f in ("tools.js", "app.js", "stock.js", "app.css"):
         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
         assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
