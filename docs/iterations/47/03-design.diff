@@ -1,0 +1,734 @@
+diff --git a/README.md b/README.md
+index a2d1de9..aed9081 100644
+--- a/README.md
++++ b/README.md
+@@ -89,6 +89,7 @@ python3 tests/test_iter43.py                     # 第 43 輪測試（集保股
+ python3 tests/test_iter44.py                     # 第 44 輪測試（小項整理）
+ python3 tests/test_iter45.py                     # 第 45 輪測試（名詞說明）
+ python3 tests/test_iter46.py                     # 第 46 輪測試（ETF 近期表現，含息）
++python3 tests/test_iter47.py                     # 第 47 輪測試（即將除權息提醒、自選 ETF 表現、指數卡、法人卡、夜盤、名詞）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -153,6 +154,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker
+ - 小項整理（第 44 輪）：工具頁「交易成本」預設改為「非當沖」（證交稅 0.3%；點「現股當沖」照舊 0.15%）；工具頁「除權息」帶入股利時，ETF 的提示寫「依發行人公告」；今日頁「我的自選」小卡的報酬率依正負上色；窄螢幕不在「預告」、「4週」「20日」與數字之間、「（百分點）」中間斷行，複利圖座標說明不剩單一「元」。收集：除權除息預告表的 NaN、Infinity 當作待公告；集保股權分散若全部代號都合計不符，改印 ⚠️ 並提示官方格式可能改變。
+ - 名詞說明（第 45 輪，`site/help.js`）：頂欄「?」與頁尾「名詞說明」進入 `#/help`，8 組 41 個名詞（資金流、價量與技術、信用交易、籌碼、基本面、股利、期貨、ETF），定義寫的是本站的算法，部分名詞附「看 X →」連到對應的排行或工具；`#/help/代號`（例如 `#/help/vr`、`#/help/credit`）捲到該名詞或分組並標示，代號不存在時回到 `#/help`。會隨法規改的數字（證交稅、二代健保）不寫進辭典，改連到工具頁。**改算法時要同步修改 `help.js` 的名詞文字**；`tests/test_iter45.py` 會比對名詞文字和 `docs/iterations/45/02-pm.md`，並把 KD、RSI、MACD、量比、券資比、大戶門檻、一年位置的數字和程式常數綁在一起。工具頁「除權息」的固定說明，ETF 寫「不足 1 股依發行人公告折付現金…實際以發行人發放為準」。
+ - ETF 近期表現（第 46 輪）：ETF 個股頁「走勢」分頁 K 線卡之後、配息卡之前加「近期表現（含息）」卡，區間同股票卡（5／20／60／120 日、今年以來、52 週，未滿時加「上市以來／上櫃以來」，從本站第一個成交日起算，不是發行價）；含息報酬用還原收盤：除息日依官方除息表（`etf_events`）的參考價 ÷ 除息前收盤調整之前的價格（等於配息在除息日以參考價再投入同一檔），上市 ETF 另把 `etf_gaps` 中不在除息表的日子（多為分割、合併）一起調整，上櫃不推測；上櫃 ETF 有「前一列有成交、官方漲跌空白、不在除息表」的一天，或還原後相鄰兩個成交日變動超過 ±30% 時不輸出（無法辨識分割）。上市、上櫃 ETF 一律對照加權指數（價格指數，不含股息，長區間的差距會偏向 ETF）；代號尾碼 B（債券）、L／R（槓桿／反向）、U（期貨）在卡片多一行提示。K 線、頁頭 52 週高低仍是原始價。`etfp/{代號}.json` 的 `epf` 格式同股票 `pf`（`[[區間, 基準日, 本檔 %, 加權 %, 差距]]`）；`latest.json` ETF 列加 `r20`、`r60`、`ry`、`rw`（含息 %，缺值不輸出），`etfs.ix` = 加權指數同期 `{"20", "60", "y", "w"}`。ETF 列表加「行情／表現」欄組（只在這次瀏覽記住；表現表：收盤、20 日、60 日、今年以來、52 週），排序加含息 20 日、60 日、今年以來、52 週。
++- 即將除權息提醒（第 47 輪）：`latest.json` 頂層 `nx = {代號: [除權息日, 類型, 每股現金或 null]}`，取自第 40 輪的除權除息預告，每檔只放資料日之後的下一次（空的時候不輸出）。個股／ETF 頁頭在處置／注意標籤之後加「即將除息 12/03」標籤（連到除權息試算，滑過看金額）；自選頁在表格之後加「即將除權息」卡（股票與 ETF 都列，依除權息日排序；現金待公告寫「金額待公告」，現金增資的「權」不寫金額），有填持股時加「估計可領 N 元」= 持股股數 × 預告每股現金，用整數運算、元以下捨去，未扣二代健保補充保費與匯費，配股不估算（R60）；今日頁「我的自選」卡提示行加「即將除權息 N 檔」（算全部自選）。同輪小修：指數卡區間漲跌改寫起算日（「自 08/25 起」）；籌碼分頁「法人5日」卡加「自營 5 日」；期貨夜盤結束時間 = 開始日的隔一個日曆日 05:00（週五夜盤到週六，R61）；自選頁選「表現」時 ETF 表改為含息報酬（20 日、60 日、今年以來、52 週，算法同 ETF 列表「表現」，只有 ETF 時欄組為「行情｜表現｜持股」）；名詞說明加「含息報酬」、改「還原價」（8 組 42 個名詞）。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+diff --git a/docs/iterations/README.md b/docs/iterations/README.md
+index 7e8e53a..21a0211 100644
+--- a/docs/iterations/README.md
++++ b/docs/iterations/README.md
+@@ -36,4 +36,5 @@
+ - 第 44 輪（2026-11-22 使用者選小項整理，五角色、每次交接等確認）。分析師 `44/01-analyst.md`：7 個小項逐一實測（含舊測試影響、375／320 斷行）；D119～D126 = A（同意改 13 行舊測試；F41-3、F43-6 不併入）。PM `44/02-pm.md`：F44-1～F44-7，驗收 23 條；D127 = A（收集程式不等 11/23）。設計 `44/03-design.md`（＋`03-design.diff`）：程式 11 行（`tools.js` 3、`stock.js` 3、`app.js` 1、`app.css` 1、`notices.py` 1、`tdcc.py` 2），舊測試 13 行，新測試 `test_iter44`。PG `44/04-dev.md`：原樣套用，44 個測試全過，8001 冒煙正常。QA `44/05-qa.md` 通過：QA44-01（320 寬「（百分點）」被拆開）已修，`app.css` 同一行加 `.chip-g .stat .s{word-break:keep-all}`（籌碼分頁全部卡片行數、高度不變、沒有溢出）；QA44-02（集保 0 列可寫等兩種情況測試擋不下）已補 `test_iter44`；反證設計 19＋QA 16 種全擋；QA44-03（除權息說明 ETF 仍寫「依公司公告折付現金」）列待辦。
+ - 第 45 輪（2026-11-22 使用者選名詞小辭典 F42-15，五角色、每次交接等確認）。分析師 `45/01-analyst.md`：41 個名詞草稿、入口實測（320 寬搜尋框 208 → 162px）、舊測試實測；D128～D133 = A（併入 QA44-03、只改 `test_iter41:437` 1 行、各處說明連結之後再加、禁用詞只把「借券賣出」當例外）。PM `45/02-pm.md`：F45-1～F45-5，41 個名詞逐字定稿（8 組、24 個連結），驗收 21 條。設計 `45/03-design.md`（＋`03-design.diff`）：新檔 `help.js`（79 行，名詞資料由 PM 表格產生）、`app.js` 2 行、`app.css` 1 行、`tools.js` 1 行、`index.html`（「?」按鈕、頁尾連結、`help.js` 載入、3 個 `?v=`），舊測試 1 行（雜湊 `4aec4a83de78`），新測試 `test_iter45`（反證 19）；PM 頁尾句「不構成投資建議」含禁用詞，改「不是買賣訊號」。PG `45/04-dev.md`：原樣套用，45 個測試全過，8001 冒煙正常（面板顯示時 `#/help/vr` 會自動捲）。QA `45/05-qa.md` 通過：驗收 21 條、320／375／1024 × 淺／深；QA45-01（`test_iter45` 沒鎖本輪 CSS 那一行）使用者選 A 已補 `check_css`，反證共 21 種、QA 反證 18／18。
+ - 第 46 輪（2026-11-22 使用者選 F42-11 ETF 近期表現，五角色、每次交接等確認）。分析師 `46/01-analyst.md`：含息報酬口徑（還原價，官方除息表＋上市推測調整）、手算例 5 檔＋邊界、R51～R58、舊測試鎖定 17 處；D134～D143（D141 = C、其餘 A）。PM `46/02-pm.md`：F46-1～F46-4，畫面文字逐字定稿，驗收 29 條；D138 兩條件只查上櫃、尾碼提示含 B／L／R／U。設計 `46/03-design.md`（＋`03-design.diff`）：`export.py` 新純函式 `etf_perf`（`_price_events` 以 TWSE 呼叫＋`_adj_factors`＋`stock_perf`），`epf` 接在 `E["sh"]` 之後，`latest.json` ETF 列 `r20`～`rw`、`etfs.ix`；`stock.js` `perfHTML` 加 `etf` 參數（股票輸出雜湊不變）；`app.js` `etfPerfHTML` 與「行情／表現」欄組；`app.css` 不改；舊測試 0 行，新測試 `test_iter46`（反證 26）；D144 = A（手機表現表在表格內橫向捲動）。PG `46/04-dev.md`：原樣套用並 `export`（11/20 資料），367 檔都有 `epf`、數字和手算例逐位相同，46 個測試全過。QA `46/05-qa.md` 通過：驗收 29 條、367 檔獨立重算 0 差異；D145 = A 已修 QA46-01（補測試）與 QA46-02（舊 `latest.json` 時不沿用含息排序，`app.js` 3 行），D146 = A 修正反證數。
++- 第 47 輪（2026-11-23 使用者要求分析師全站走一次，五角色、每次交接等確認）。分析師 `47/01-analyst.md`：28 個路由 375／320 寬 0 溢出、主控台 0 錯誤；F47-1～F47-12、R59～R61、D147～D155（全 A：做 F47-1 即將除權息提醒、F47-2 指數卡起算日、F47-3 法人卡自營、F47-4 夜盤時間、F47-6 自選 ETF 表現、F47-7 名詞含息報酬）。PM `47/02-pm.md`：畫面文字逐字定稿、驗收 23 條，估計可領用 BigInt 整數運算；PM 自行決定 12 點使用者全部同意。設計 `47/03-design.md`（＋`03-design.diff`）：`export.py` 新純函式 `nx_latest`、`latest.json` 頂層 `nx`；`stock.js` `nxTag`、法人卡第 4 欄；`app.js` `watchNx`、`etfWatchPerf`、`renderWatch` 接線、今日卡、指數卡、夜盤；`help.js` 2 行；`app.css` 1 行；舊測試只改 `test_iter45` 3 行，新測試 `test_iter47`。
+ - 規範：回應與文件用繁體中文；程式風格比照既有程式碼；只改必要的地方；外部網站請求要經過 `twstock/fetch.py` 的 `request`（有節流）；不要 commit 或 push；不要動 `.env`（建立專案副本時也不要複製 `.env`）；不要安裝排程或改系統設定（launchd、crontab、pmset、docker 設定），這些由使用者自行執行；埠 8000 是使用者自己的伺服器，測試用 8001 並在結束時關掉。改了 `site/` 的 js 或 css 要同步更新 `index.html` 的 `?v=`（sha1 前 8 碼，`test_iter23` 失敗時會印出正確的 3 行）。
+diff --git a/site/app.css b/site/app.css
+index fe2fea9..32c79e5 100644
+--- a/site/app.css
++++ b/site/app.css
+@@ -378,3 +378,4 @@ a.quad{display:block;color:inherit;text-decoration:none}   /* D30-06 */
+ a.pill.grp{cursor:pointer}a.pill.grp:hover,a.pill.grp:focus-visible{border-color:var(--blue);outline:none}   /* 第 42 輪 F42-3：可點的族群標籤（文字顏色不變） */
+ .dv-nx{word-break:keep-all}.tl-lg+.muted.small{text-wrap:pretty}.chip-g .stat .s{word-break:keep-all}   /* 第 44 輪：375 寬不拆「預告」、複利座標說明不剩單字、籌碼卡不拆「（百分點）」（QA44-01） */
+ .help-btn{font-size:16px;font-weight:700;line-height:1;text-decoration:none}.help-g{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.help-t{padding:8px 6px;border-top:1px solid var(--border);scroll-margin-top:calc(var(--top-h,56px) + 8px)}.sec-h+.help-t{border-top:0}.help-t a{color:var(--blue);white-space:nowrap}.help-t.on{background:var(--card2);box-shadow:inset 3px 0 0 var(--blue)}   /* 第 45 輪：名詞說明 */
++.card.w-nx{margin-top:12px}.w-nx .sec-h{margin-bottom:4px}.w-nx .al-row{line-height:1.7}.w-nx a.small{color:var(--blue);white-space:nowrap}a.pill.pill-nx{border-color:var(--blue);color:var(--blue)}   /* 第 47 輪 F47-1：即將除權息卡、頁頭標籤 */
+diff --git a/site/app.js b/site/app.js
+index f6d321c..d333667 100644
+--- a/site/app.js
++++ b/site/app.js
+@@ -324,7 +324,7 @@ function indexCard(x, name, full = true) {   // full = false：省略迷你圖
+       <div class="v num ${cls(x.ch)}">${fmt(x.c, 2)}</div>
+       <div class="s num ${cls(x.ch)}">${x.ch > 0 ? '▲' : x.ch < 0 ? '▼' : ''} ${fmt(Math.abs(x.ch ?? 0), 2)} (${sgn(x.p)}%)</div>
+       ${spark(x.s)}
+-      ${full && x.s.length >= 2 ? `<div class="s"><span class="${x.s.at(-1) >= x.s[0] ? 'up' : 'dn'}">${x.s.length >= 60 ? '近 60 個交易日' : `自 ${md(x.from)} 起`} ${sgn((x.s.at(-1) / x.s[0] - 1) * 100, 1)}%</span>${x.s.length < 60 ? `（${x.s.length} 個交易日）` : ''}</div>` : ''}
++      ${full && x.s.length >= 2 ? `<div class="s"><span class="${x.s.at(-1) >= x.s[0] ? 'up' : 'dn'}">自 ${md(x.from)} 起 ${sgn((x.s.at(-1) / x.s[0] - 1) * 100, 1)}%</span>${x.s.length < 60 ? `（${x.s.length} 個交易日）` : ''}</div>` : ''}
+     </div>`;
+ }
+ 
+@@ -542,8 +542,9 @@ function futuresHTML(F) {
+   let night = '';
+   if (N) {
+     const from = [...F.d].reverse().find(d => d < N.date);
++    const to = from ? new Date(Date.parse(from + 'T00:00:00Z') + 864e5).toISOString().slice(0, 10) : N.date;   // 第 47 輪 F47-4（R61）：開始日的隔一個日曆日，週五夜盤到週六 05:00
+     const np = N.ch != null && N.c !== N.ch ? N.ch / (N.c - N.ch) * 100 : null;
+-    night = `<span class="${old ? 'night-old' : ''}">${old ? '前一夜盤' : '最新夜盤'}（${from ? md(from) + ' 15:00～' : ''}${md(N.date)} 05:00）　收 <b class="num ${cls(N.ch)}">${fmt(N.c)}</b>
++    night = `<span class="${old ? 'night-old' : ''}">${old ? '前一夜盤' : '最新夜盤'}（${from ? md(from) + ' 15:00～' : ''}${md(to)} 05:00）　收 <b class="num ${cls(N.ch)}">${fmt(N.c)}</b>
+       <span class="num ${cls(N.ch)}">${sgn(N.ch, 0)} (${sgn(np)}%)</span></span>`;
+   }
+   const roll = k > 0 && F.m[k] !== F.m[k - 1];                 // 第 14 輪 F14-3：近月和前一個交易日不同 = 今天換月
+@@ -1609,14 +1610,16 @@ function renderWatch() {
+   const ev = list.filter(([, s]) => s.hl || s.dsp || s.ntc);                        // 第 25 輪 D25-09：自選股的近期新訊號、處置／注意
+   const wc = App.screen === null && list.length ? 'flow' : App.watchCols || 'flow';   // 第 32 輪 F32-1：欄位組只記在這次瀏覽；screen.json 不存在時只有資金（只有 ETF 時照樣可選持股）
+   const HV = wc === 'hold' && (list.length || etfs.length) ? holdView() : null;    // 第 42 輪 F42-1：持股欄組（不載入 screen.json）
++  const pf = Object.values(R).some(r => r.r20 != null || r.r60 != null || r.ry != null || r.rw != null), ep = pf && wc === 'perf';   // 第 47 輪 F47-6：同 ETF 列表 hasPf（EPF_COLS 的鍵）
+   $('#view').innerHTML = `<section class="sec watch${App.watchEdit ? ' editing' : ''}">
+       ${App.watchAdd ? watchAddNote(S, R) : ''}${App.watchShare ? `<div class="flow-note">${App.watchShare.ok ? '已複製分享連結。' : '請複製這個連結，'}在另一台裝置開啟，確認後會加入那裡的自選。<input class="w-url" readonly value="${esc(App.watchShare.url)}"></div>` : ''}
+       ${App.watchUndo ? `<div class="flow-note">已從自選移除 ${esc(App.watchUndo.filter(c => !App.watch.has(c)).map(c => (S[c] || R[c])?.n || c).join('、'))}　<button class="chip" id="watchUndo">復原</button></div>` : ''}
+-      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk || HV ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${list.length ? App.screen === null ? '<span class="muted small">表現、基本面資料尚未產生</span>' : segHTML('wcolSeg', [['flow', '資金'], ['perf', '表現'], ['fund', '基本面'], ['hold', '持股']], wc) : etfs.length ? segHTML('wcolSeg', [['flow', '行情'], ['hold', '持股']], HV ? 'hold' : 'flow') : ''}${stk && !list.length ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button><button class="chip" id="watchShare">分享清單</button>` : ''}</div>
++      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk || HV || ep ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${list.length ? App.screen === null ? '<span class="muted small">表現、基本面資料尚未產生</span>' : segHTML('wcolSeg', [['flow', '資金'], ['perf', '表現'], ['fund', '基本面'], ['hold', '持股']], wc) : etfs.length ? segHTML('wcolSeg', [['flow', '行情'], ...pf ? [['perf', '表現']] : [], ['hold', '持股']], HV ? 'hold' : ep ? 'perf' : 'flow') : ''}${stk && !list.length ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button><button class="chip" id="watchShare">分享清單</button>` : ''}</div>
+       ${stk ? `<div class="card">${list.length ? HV ? holdCap(HV, App.latest) + holdTable(HV.s, false, HV) : wc === 'flow' ? stockTable(list, span, true) : watchColTable(list, wc)
+         : '<div class="empty">還沒有自選股。打開任一檔個股或 ETF，按名稱旁的「☆ 加入自選」；或在上方搜尋，按清單右側的 ☆ 直接加入。<div style="margin-top:10px"><button class="chip" id="watchFind">搜尋股票</button></div></div>'}</div>` : ''}
+-      ${etfs.length ? `${stk ? '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2>' + (HV ? '' : '<span class="muted small">當日行情；成交量為張、成交額為億元</span>') + '</div>' : ''}
+-      <div class="card">${HV ? (list.length ? '' : holdCap(HV, App.latest)) + holdTable(HV.e, true, HV) : etfWatchTable(etfs)}</div>` : ''}
++      ${etfs.length ? `${stk ? '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2>' + (HV || ep ? '' : '<span class="muted small">當日行情；成交量為張、成交額為億元</span>') + '</div>' : ''}
++      <div class="card">${HV ? (list.length ? '' : holdCap(HV, App.latest)) + holdTable(HV.e, true, HV) : ep ? etfWatchPerf(etfs, App.latest.etfs.ix) : etfWatchTable(etfs)}</div>` : ''}
++      ${App.latest.nx ? watchNx() : ''}
+       ${ev.length ? `<div class="card w-ev"><div class="sec-h"><h2>近期新訊號、處置／注意</h2><span class="muted small">只描述發生了什麼，不代表之後的走勢</span></div>${ev.map(([c, s]) => {
+         const d = s.dsp, r = s.ntc && App.latest.alerts?.n?.find(x => x[0] === c)?.[1];   // 第 27 輪 D27-08：處置期間（最後一天加註）、注意原因
+         return `<a class="al-row" href="#/stock/${c}"><b>${esc(s.n)}</b>${alertBadge(s)}${d ? `　<span class="small num">${d[0] > App.latest.date ? '即將處置' : '處置'} ${md(d[0])}～${md(d[1])}${d[1] === App.latest.date ? '（最後一天）' : ''}</span>` : ''}` +
+@@ -1746,6 +1749,33 @@ function etfWatchTable(list) {
+       <td class="num">${r.dvd ? md(r.dvd) + `<span class="sub2">${r.dvn != null ? r.dvn + ' 天填息' : r.dvx ? '中斷' : '未填息'}</span>` : '--'}</td></tr>`).join('') + '</tbody></table></div>' +
+     '<div class="muted small h-note">配息率 = 近一年配息 ÷ 今日收盤，股價下跌時會變高；最近除息的第二行是填息狀態，算法同 ETF 列表。</div>';   // 第 42 輪 F42-5
+ }
++// 第 47 輪 F47-6：自選 ETF 表「表現」（含息報酬；欄位、加權同期同 ETF 列表的 EPF_COLS）
++function etfWatchPerf(list, ix) {
++  const line = EPF_COLS.filter(([, k]) => ix && ix[k] != null).map(([, k, l]) => `${l} ${sgn(ix[k])}%`).join('、');
++  const nm = (c, r) => `${wCtl(c)}<b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}`;   // 名稱欄同 etfWatchTable
++  return `<div class="muted small tbl-cap">含息報酬為 ${md(App.latest.date)} 收盤${line ? `；加權指數同期：${line}（價格指數，不含股息）` : ''}</div>` +
++    `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>收盤</th>${EPF_COLS.map(c => `<th>${c[2]}</th>`).join('')}</tr></thead><tbody>` +
++    list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm">${nm(c, r)}</td>` +
++      (r.c == null ? `<td class="num flat">無成交</td>` : `<td class="num ${cls(r.ch)}">${pfmt(r.c)}</td>`) +
++      EPF_COLS.map(([k]) => `<td class="num ${cls(r[k])}">${r[k] == null ? '--' : sgn(r[k]) + '%'}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>' +
++    '<div class="muted small h-note">含息報酬 = 配息在除息日以參考價再投入同一檔，算法同 ETF 列表「表現」，不含手續費與稅' +   // 分兩段：test_iter46 的反證要 ETF_PF_NOTE 那句在 app.js 只出現一次
++      '；「--」= 基準日時本站還沒有這檔的成交；今天無成交時用最後成交的收盤。加權指數是價格指數，不含股息。</div>';
++}
++// 第 47 輪 F47-1c：自選頁「即將除權息」卡（latest.nx = {代號: [日期, 類型, 現金]}；依除權息日、同日依自選順序）。沒有就輸出空字串
++// 估計可領（R60）= 股數 × 預告每股現金，BigInt 整數運算、元以下捨去（0.29 × 100 用浮點會變 28）；現金超過 8 位小數不估計
++const nxKind = t => t === '息' ? '除息' : t === '權' ? '除權' : '除權息';   // 同 stock.js nxText
++function watchNx() {
++  const L = App.latest, NX = L.nx || {}, R = (L.etfs && L.etfs.rows) || {};
++  const W = [...App.watch].filter(c => NX[c] && (L.stocks[c] || R[c])).sort((a, b) => NX[a][0] < NX[b][0] ? -1 : NX[a][0] > NX[b][0] ? 1 : 0);
++  if (!W.length) return '';
++  const H = holdLoad();
++  return '<div class="card w-nx"><div class="sec-h"><h2>即將除權息</h2><span class="muted small">預告，以公司或發行人公告為準</span></div>' + W.map(c => {
++    const [d, t, x] = NX[c], q = x > 0 && H[c] ? tlBig(String(x), 8) : null;
++    return `<div class="al-row"><a href="#/stock/${c}"><b>${esc((L.stocks[c] || R[c]).n)}</b></a>　<span class="nw">${md(d)} ${nxKind(t)}</span>` +
++      (x == null ? '　<span class="nw">金額待公告</span>' : x > 0 ? `　<span class="nw">${L.stocks[c] ? '現金股利' : '配息'} ${dfmt(x, 8)} 元</span>` : '') +
++      (q == null ? '' : `　<span class="nw">估計可領 ${fmt(Number(BigInt(H[c][0]) * q / 10n ** 8n))} 元</span>`) + `　<a class="small" href="#/tools/dv?c=${c}">試算 →</a></div>`; }).join('') +
++    '<div class="muted small">來自證交所、櫃買中心的除權除息預告表，只列資料日之後的下一次；除權息日當天起改看個股頁的股利卡。估計可領 = 持股股數 × 預告每股現金，元以下捨去；未扣二代健保補充保費與匯費，配股不估算股數，以實際入帳為準。</div></div>';
++}
+ // 第 42 輪 F42-1：持股（tw.hold = {代號: [股數, 平均成本（分）]}）。只存在這個瀏覽器，不放進任何網址、不送出（R40）
+ // 讀取時丟掉壞的筆；不在自選（也不在這次可復原的移除）裡的代號一併刪掉並寫回
+ function holdLoad() {
+@@ -1842,6 +1872,8 @@ function holdEdit(sec, c) {
+   sec.querySelector('.h-cap').outerHTML = holdCap(V, L);
+   const al = sec.querySelector('.h-all');
+   if (al) al.innerHTML = holdAll(V);
++  const nx = sec.querySelector('.w-nx');                                           // 第 47 輪 F47-1c：估計可領跟著持股更新
++  if (nx) nx.outerHTML = watchNx();
+ }
+ const holdLine = (V, L) => !V.n ? '' : `<a class="w-hold" href="#/watch">持股 ${V.n} 檔　今日損益 <b class="${cls(Number(V.d))}">${holdY(V.d)}</b> 元　` +
+   `未實現損益 <b class="${cls(Number(V.u))}">${holdY(V.u)}</b> 元（<b class="${cls(Number(V.u))}">${holdP(V.u, V.t)}</b>）${V.k ? `（今日損益不含無成交、除息 ${V.k} 檔）` : ''}</a>` +
+@@ -1852,7 +1884,8 @@ function watchToday(L, rows) {
+   if (!W.length) return '';
+   const S = W.filter(c => L.stocks[c]).map(c => L.stocks[c]), V = holdView().all;
+   const a = S.filter(s => s.hl && s.hl.some(e => HL_KINDS[e[0]])).length, b = S.filter(s => s.dsp || s.ntc).length;
+-  const ev = [a && `近期新訊號 ${a} 檔`, b && `處置／注意 ${b} 檔`].filter(Boolean).join('、');
++  const x = L.nx ? W.filter(c => L.nx[c]).length : 0;                              // 第 47 輪 F47-1d：自選全部（不只前 5 檔）
++  const ev = [a && `近期新訊號 ${a} 檔`, b && `處置／注意 ${b} 檔`, x && `即將除權息 ${x} 檔`].filter(Boolean).join('、');
+   return `<section class="sec card w-today"><div class="sec-h"><h2>我的自選</h2><span class="muted small">${md(L.date)} 收盤${L.flow_date !== L.date ? `、法人 ${md(L.flow_date)}` : ''}</span><span class="sp"></span><a class="chip" href="#/watch">全部 →</a></div>
+     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>自選</th><th>收盤</th><th>漲跌</th><th>法人1日</th></tr></thead><tbody>${W.slice(0, 5).map(c => L.stocks[c] ? rows([[c, L.stocks[c]]])
+       : `<tr data-code="${c}"><td class="nm"><b>${esc(R[c].n)}</b><span>${c}</span></td><td class="num ${cls(R[c].ch)}">${pfmt(R[c].c)}</td>${etfPct(R[c], L.date)}<td class="num">--</td></tr>`).join('')}</tbody></table></div>` +
+diff --git a/site/help.js b/site/help.js
+index 5d8946e..f6d1a5d 100644
+--- a/site/help.js
++++ b/site/help.js
+@@ -8,7 +8,7 @@ const HELP = [   // [組代號, 組名, [[代號, 名詞, 定義, 連結文字,
+     ['aetf', '主動 ETF 與投信買超', '主動 ETF 由經理人選股，持股會隨時調整。投資人申購的資金要拿去買股票，所以投信買超會受主動 ETF 申購影響；個股頁「主動 ETF 持有」卡列出已收錄的部分。', '看主動 ETF 彙總', '#/etf/active'],
+   ]],
+   ['px', '價量與技術', [
+-    ['adj', '還原價', '除權息、減資、面額變更時，用官方參考價把之前的價格等比例調整，最新收盤不變。報酬、乖離、均線、新高新低、KD、RSI 都用還原價；個股 K 線可切換「原始」，ETF 個股頁用原始價。'],
++    ['adj', '還原價', '除權息、減資、面額變更時，用官方參考價把之前的價格等比例調整，最新收盤不變。報酬、乖離、均線、新高新低、KD、RSI 都用還原價；個股 K 線可切換「原始」。ETF 個股頁的 K 線、52 週高低用原始價，近期表現用含息報酬。'],
+     ['vr', '量比', '今日成交額 ÷ 前 20 個交易日平均成交額（無成交日以 0 計）。大於 1 代表今天成交比平常多。', '看量比排行', '#/rank/vr'],
+     ['bias', '均線、乖離', 'MA20 = 近 20 個交易日收盤平均；MA20 乖離 = 收盤 ÷ MA20 − 1（%）。MA60 同理。', '看條件選股', '#/rank/screen'],
+     ['rs', '相對大盤', '個股近 N 個交易日的報酬減掉同期指數報酬（百分點）；上市比加權指數、上櫃比櫃買指數。指數不含股息，區間越長越偏向個股。', '看 20 日相對排行', '#/rank/rs20'],
+@@ -57,6 +57,7 @@ const HELP = [   // [組代號, 組名, [[代號, 名詞, 定義, 連結文字,
+   ['etf', 'ETF', [
+     ['units', 'ETF 單位數', 'ETF 在外流通的受益權單位數；投資人申購時增加、贖回時減少。', '看 ETF 列表', '#/etf'],
+     ['issuer', '發行人', '發行 ETF 的投信。ETF 的配息、配股以發行人公告為準；股票則以公司公告為準。'],
++    ['tr', '含息報酬', '把配息在除息日以參考價再投入同一檔計算的報酬：除息日用證交所、櫃買中心除息表的參考價 ÷ 除息前收盤，調整之前的價格。ETF 個股頁「近期表現（含息）」、ETF 列表與自選的「表現」都用這個算法，不含手續費與稅。加權指數是價格指數，不含股息，區間越長，和指數的差距越偏向 ETF。'],
+   ]],
+ ];
+ 
+diff --git a/site/index.html b/site/index.html
+index 513df24..39badcf 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,13 +7,13 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=7f4315c2">
++<link rel="stylesheet" href="app.css?v=07335b75">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=14621fbf" defer></script>
+-<script src="stock.js?v=10ba5306" defer></script>
++<script src="app.js?v=9b18c12f" defer></script>
++<script src="stock.js?v=7e6c6a13" defer></script>
+ <script src="tools.js?v=64e7360f" defer></script>
+-<script src="help.js?v=55e93876" defer></script>
++<script src="help.js?v=a5a5a7e8" defer></script>
+ </head>
+ <body>
+ <header class="top">
+diff --git a/site/stock.js b/site/stock.js
+index 29f1534..d6813b5 100644
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -81,6 +81,8 @@ function nxText(n, etf) {
+     n.sr ? `含現金增資，認購價${n.sp == null ? '尚未公告' : ` ${dfmt(n.sp, 2)} 元`}` : '', n.c == null ? '金額待公告' : ''].filter(Boolean);
+   return `即將${n.t === '息' ? '除息' : n.t === '權' ? '除權' : '除權息'} ${md(n.d)}：${p.join('、')}（預告，以${etf ? '發行人' : '公司'}公告為準）`;
+ }
++// 第 47 輪 F47-1b：頁頭「即將除息 12/03」標籤（nx 第一筆，連到除權息試算、只帶代號）；沒有 nx 輸出空字串
++const nxTag = (nx, code, etf) => nx && nx.length ? `<a class="pill pill-nx" href="#/tools/dv?c=${code}" title="${esc(nxText(nx[0], etf))}">即將${nxKind(nx[0].t)} ${md(nx[0].d)}</a>` : '';
+ const ETF_DIV_FULL = '填息日 = 除息日起（含當天）第一個收盤大於或等於除息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除息日當天算第 1 天，無成交日也算。' +
+   '除息日、配息與除息前收盤來自證交所、櫃買中心的除息表。上市 ETF 還沒填息就遇到推測的其他價格調整（多為分割）時，寫「不再比較」；上櫃 ETF 無法辨識分割，照常比較。' +
+   '還差 = 除息前收盤 − 最新收盤，% 以最新收盤計算。ETF 的配息來源可能含收益平準金、資本利得，不等於獲利。';
+@@ -260,7 +262,7 @@ window.renderStock = async function (code, sub) {
+   // 第 29 輪 F29-4：外資及陸資持股比率（最近有資料的那天；5 日、20 日變化是百分點）
+   const FH = data.fh, fj = FH ? FH.map((v, i) => v == null ? -1 : i).filter(i => i >= 0).pop() : undefined;
+   const fhd = k => fj - k >= 0 && FH[fj - k] != null ? sgn(FH[fj] - FH[fj - k], 2) : '--';
+-  const inCards = E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')], ['法人5日', yi(s?.n5), cls(s?.n5), ''],
++  const inCards = E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')], ['法人5日', yi(s?.n5), cls(s?.n5), `自營 ${yi(s?.d5)}`],
+     ['外資5日', yi(s?.f5), cls(s?.f5), runTxt(s?.fs, '買', '賣')], ['投信5日', yi(s?.t5), cls(s?.t5), runTxt(s?.ts, '買', '賣')],
+     ...fj == null ? [] : [['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`<span class="nw">5日 ${fhd(5)}</span>　<span class="nw">20日 ${fhd(20)}</span>（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]]];
+   const chipSec = (h, note, cards, chart, foot = '') => !cards.length ? '' : `<section class="sec card chip-g"><div class="sec-h"><h2>${h}</h2><span class="muted small">${note}</span></div>
+@@ -298,7 +300,7 @@ window.renderStock = async function (code, sub) {
+           <div class="tags">
+             ${(data.alerts || []).map(a => a.t === 'disposal'
+               ? `<span class="pill al-d" title="${esc(`處置期間 ${md(a.s)}～${md(a.e)}（${md(a.a)} 公告）\n原因：${a.r || '--'}\n措施：${a.m || '--'}`)}">${a.s > App.latest.date ? `即將處置（${md(a.s)} 起）` : `處置中（至 ${md(a.e)}）`}</span>`
+-              : `<span class="pill al-n" title="${esc(`${md(a.a)} 公布注意交易資訊\n${a.r || ''}`)}">注意</span>`).join('')}
++              : `<span class="pill al-n" title="${esc(`${md(a.a)} 公布注意交易資訊\n${a.r || ''}`)}">注意</span>`).join('')}${nxTag(data.nx, code, E)}
+             <span class="pill">${data.market === 'TWSE' ? '上市' : '上櫃'}</span>${E ? '<span class="pill">ETF</span>' : grpTag('industry', data.industry, esc(data.industry))}
+             ${E && App.latest.holdings?.[code] ? `<a class="pill hold" href="#/etf/${code}">持股 →</a>` : ''}
+             ${tagFold([...(data.chains || []).map(([chain, seg, subs]) => grpTag('chain', chain, `${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}`,
+diff --git a/tests/test_iter45.py b/tests/test_iter45.py
+index ab6c497..b84e8ab 100644
+--- a/tests/test_iter45.py
++++ b/tests/test_iter45.py
+@@ -27,7 +27,7 @@ def _data(src=HELP):
+ 
+ def _want():
+     """02-pm.md 二之一的 8 張表 → [[組代號, 組名, [[代號, 名詞, 定義(, 連結文字, 網址)]]]]"""
+-    sec = PM[PM.index("## 二之一"):PM.index("## 二之二")]
++    sec = re.sub(r"^\| (adj|issuer) \|.*\|$", lambda m, n=re.findall(r"^\| (?:adj|tr) \|.*\|$", (ROOT / "docs" / "iterations" / "47" / "02-pm.md").read_text(encoding="utf-8"), re.M): n[0] if m.group(1) == "adj" else m.group(0) + "\n" + n[1], PM[PM.index("## 二之一"):PM.index("## 二之二")], flags=re.M)   # 第 47 輪 D153：adj 改用 47/02-pm.md、etf 組加 tr
+     parts, out = re.split(r"\n### (.+?)（`(\w+)`）\n", sec)[1:], []
+     for i in range(0, len(parts), 3):
+         rows = []
+@@ -46,7 +46,7 @@ def check_data(src=HELP):
+     bad, ids = [], [g[0] for g in H] + [x[0] for g in H for x in g[2]]
+     if H != _want():
+         bad.append("和 02-pm.md 二之一不同")
+-    if len(H) != 8 or sum(len(g[2]) for g in H) != 41 or len(ids) != len(set(ids)):
++    if len(H) != 8 or sum(len(g[2]) for g in H) != 42 or len(ids) != len(set(ids)):
+         bad.append(("數量或代號重複", len(H), len(ids)))
+     ranks = set(re.findall(r"\['([^']+)', '[^']+', '[^']+', -?1", T._grab(APP, "RANKS")))
+     today = set(re.findall(r"\['(\w+)', '", T._grab(APP, "TODAY_TABS")))
+@@ -119,7 +119,7 @@ console.log(JSON.stringify(out.concat([err])));""", src)
+             bad.append((h, sc, nr))
+         secs = re.findall(r'<section class="sec card" id="help-(\w+)"><div class="sec-h"><h2>(.+?)</h2></div>', html)
+         if not (html.startswith(TOP) and html.endswith(END) and secs == [(g[0], g[1]) for g in _want()] and GRP in html
+-                and html.count('class="help-t') == 41 and html.count(' on"') == (h == "#/help/vr")):
++                and html.count('class="help-t') == 42 and html.count(' on"') == (h == "#/help/vr")):
+             bad.append(("版面", h))
+     if VR not in o[0][1] or VR in o[1][1] or VR.replace(" on", "") not in o[1][1]:
+         bad.append("標示")
+diff --git a/tests/test_iter47.py b/tests/test_iter47.py
+new file mode 100644
+index 0000000..2697316
+--- /dev/null
++++ b/tests/test_iter47.py
+@@ -0,0 +1,461 @@
++"""第 47 輪（不連網、不連資料庫）：即將除權息提醒 F47-1（匯出 nx、頁頭標籤、自選頁卡與估計可領、今日卡）、指數卡起算日 F47-2、
++法人卡自營 F47-3、夜盤時間 F47-4（R61）、自選 ETF 表現 F47-6、名詞「含息報酬」F47-7。
++export.nx_latest 用 notice_export 的自造列測；有 node 時逐字取出 app.js、stock.js 的函式＋整個 tools.js 執行（node 14 可跑）；
++畫面文字和 docs/iterations/47/02-pm.md 二之一逐字比對。最後的 test_contrast 把原始碼改壞（反證），確認對應的檢查會失敗。"""
++import hashlib
++import inspect
++import json
++import re
++import sys
++from datetime import date
++from decimal import Decimal
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tests"))
++from twstock import export  # noqa: E402
++import test_iter32 as T32  # noqa: E402
++import test_iter34 as T  # noqa: E402
++import test_iter42 as T42  # noqa: E402
++import test_iter45 as T45  # noqa: E402
++
++SITE, HTML, APP, STK, CSS, TOOLS = T.SITE, T.HTML, T.APP, T.STK, T.CSS, T.TOOLS
++HELP = T45.HELP
++SRC = (ROOT / "twstock" / "export.py").read_text(encoding="utf-8")
++README = (ROOT / "README.md").read_text(encoding="utf-8")
++PM = (ROOT / "docs" / "iterations" / "47" / "02-pm.md").read_text(encoding="utf-8")
++ADVICE = set(T42.ADVICE) | T45.ADVICE | {"買進", "賣出", "反彈", "見底", "買點", "超賣", "超買", "推薦", "強勢股", "飆股", "勝率", "保證", "穩賺",
++                                         "建議", "便宜", "亮點", "低估", "高估", "跑贏", "跑輸", "領先", "落後", "超額報酬", "搶息", "參加除息"}
++DATE, D = "2026-11-23", date(2026, 11, 23)
++_grab = T32._grab
++
++
++# ─── F47-1a 匯出（驗收 1～3）──────────────────────────────────────
++def _nrow(code, m, etf, d, t, cash, sub=0, price=None, seen=D):
++    return (code, m, etf, d, t, cash, 0, sub, price, seen)
++
++
++NROWS = [_nrow("1437", "TWSE", 0, date(2026, 12, 3), "息", Decimal("0.62465200")),
++         _nrow("1437", "TWSE", 0, date(2027, 1, 5), "息", Decimal("1.00000000")),             # 同一檔較遠的那筆不放
++         _nrow("6523", "TPEx", 0, date(2026, 11, 26), "息", Decimal("4.00000000")),
++         _nrow("2330", "TWSE", 0, D, "息", Decimal("5")),                                      # 資料日當天：notice_export 已濾掉
++         _nrow("2454", "TWSE", 0, date(2026, 12, 1), "息", Decimal("3"), seen=date(2026, 11, 20)),   # last_seen 不是最新
++         _nrow("00953B", "TWSE", 1, date(2026, 12, 3), "息", None),
++         _nrow("2345", "TWSE", 0, date(2026, 12, 4), "權", Decimal("0"), Decimal("0.1"), None)]
++NX_WANT = {"00953B": ["2026-12-03", "息", None], "1437": ["2026-12-03", "息", 0.624652], "2345": ["2026-12-04", "權", 0], "6523": ["2026-11-26", "息", 4]}
++
++
++def check_nx(fn=None):
++    fn, bad = fn or export.nx_latest, []
++    try:
++        got = fn(*export.notice_export(NROWS, {"TWSE": D, "TPEx": D}, D))
++        if got != NX_WANT or list(got) != sorted(NX_WANT):
++            bad.append(("內容", got))
++        if json.dumps(got.get("6523"), ensure_ascii=False) != '["2026-11-26", "息", 4]':
++            bad.append("整數")
++        if fn({}, {}) != {} or fn({"9999": []}, {}) != {}:
++            bad.append("空")
++    except Exception as e:  # noqa: BLE001  反證可能讓函式丟例外
++        bad.append(repr(e))
++    return bad
++
++
++def test_nx():
++    assert check_nx() == []
++
++
++def check_wiring(src=SRC):
++    w = '    if nx := nx_latest(nx_stock, nx_etf):\n        latest["nx"] = nx'
++    return (src.index("def notice_export(") < src.index("def nx_latest(") < src.index("def share_pct(") and src.count("nx_latest(") == 2 and w in src
++            and src.index('latest["etfs"]["ix"] = {') < src.index(w) < src.index('latest["alerts"]["w"] = alert_watch(') < src.index('_write(SITE_DATA_DIR / "latest.json", latest)'))
++
++
++def test_wiring():
++    assert check_wiring()
++    assert hashlib.sha1(inspect.getsource(export.etf_export).encode()).hexdigest()[:12] == "711fa2b7790c"
++    assert SRC.count('**({"nx": nx_stock[code]} if code in nx_stock else {}),') == 1 and SRC.count('                E["nx"] = nx_etf[code]') == 1
++
++
++def test_site_data():
++    p = SITE / "data" / "latest.json"
++    L = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
++    if "nx" not in L:
++        print("  （site/data 尚未用第 47 輪匯出，略過）"); return
++    nx, n = L["nx"], 0
++    assert nx and list(nx) == sorted(nx)
++    for c, v in nx.items():
++        assert len(v) == 3 and v[0] > L["date"] and v[1] in ("息", "權", "權息") and (v[2] is None or v[2] >= 0), (c, v)
++        f = SITE / "data" / ("stocks" if c in L["stocks"] else "etfp") / f"{c}.json"
++        x = json.loads(f.read_text(encoding="utf-8"))["nx"][0]
++        assert [x["d"], x["t"], x["c"]] == v, c                                          # 和個股 JSON 的第一筆相同
++    for d in ("stocks", "etfp"):
++        n += sum(b'"nx":' in f.read_bytes() for f in (SITE / "data" / d).glob("*.json"))
++    assert n == len(nx), (n, len(nx))                                                     # 每檔有 nx 的個股 JSON 都在
++    if L["date"] == DATE:
++        assert len(nx) == 37 and nx["1437"] == ["2026-12-03", "息", 0.624652] and nx["6523"] == ["2026-11-26", "息", 4]
++        assert nx["00901"] == ["2026-11-24", "息", 7] and nx["00953B"] == ["2026-12-03", "息", None] and nx["2345"] == ["2026-12-04", "權", 0]
++
++
++# ─── F47-1b 頁頭標籤（驗收 4）──────────────────────────────────────
++def check_tag(stk=STK, app=APP):
++    js = "\n".join(_grab(app, n) for n in ("esc", "md", "nxKind")) + "\n" + "\n".join(_grab(stk, n) for n in ("dfmt", "nxText", "nxTag")) + """
++const n = (d, t, c, o) => Object.assign({ d, t, c }, o || {});
++console.log(JSON.stringify([nxTag([n('2026-12-03', '息', 0.624652), n('2027-01-05', '息', 1)], '1437', false), nxTag([n('2026-12-03', '息', null)], '00953B', true),
++  nxTag([n('2026-12-04', '權', 0, { sr: 0.1, sp: null })], '2345', false), nxTag([n('2026-12-10', '權息', 1, { s: 50 })], '9999', false), nxTag(undefined, '2330', false), nxTag([], '2330', false)]));"""
++    o = T._node(js)
++    if o is None:
++        return True
++    head = stk[stk.index('<div class="tags">'):stk.index('id="starBtn"')]
++    return (o[0] == '<a class="pill pill-nx" href="#/tools/dv?c=1437" title="即將除息 12/03：現金股利 0.624652 元（預告，以公司公告為準）">即將除息 12/03</a>'
++            and o[1] == '<a class="pill pill-nx" href="#/tools/dv?c=00953B" title="即將除息 12/03：金額待公告（預告，以發行人公告為準）">即將除息 12/03</a>'
++            and o[2] == '<a class="pill pill-nx" href="#/tools/dv?c=2345" title="即將除權 12/04：含現金增資，認購價尚未公告（預告，以公司公告為準）">即將除權 12/04</a>'
++            and o[3].endswith('>即將除權息 12/10</a>') and o[4] == o[5] == ''
++            and "data-gk" not in _grab(stk, "nxTag") and -1 < head.find(".join('')}${nxTag(data.nx, code, E)}") < head.find("<span class=\"pill\">${data.market === 'TWSE'"))
++
++
++def test_tag():
++    assert check_tag()
++
++
++# ─── 自選頁（驗收 5～8、13、14）──────────────────────────────────
++ST = {"i": "電子", "tv": 1.5, "f1": 0, "t1": 0, "d1": 0, "n1": 0, "fs": 0, "ts": 0, "s": 0, "c": 100, "ch": 1, "p": 1.0}
++NAMES = ["勤益控", "達爾膚", "智邦", "如興", "大眾控", "台積電", "聯發科", "穩懋", "富邦金", "測甲", "測乙", "測丙"]
++CODES = ["1437", "6523", "2345", "4414", "3701", "2330", "2454", "3105", "2881", "9901", "9902", "9903"]
++E_ = lambda n, m, c, ch, r: {"n": n, "m": m, "c": c, "ch": ch, "p": 1.0, "v": 1, "tv": 1.0, **dict(zip(("r20", "r60", "ry", "rw"), r))}   # noqa: E731
++LATEST = {"date": DATE, "flow_date": DATE, "holdings": {}, "alerts": {},
++          "stocks": {c: {**ST, "n": n, **({"dsp": [DATE, "2026-11-30"]} if c == "2881" else {})} for c, n in zip(CODES, NAMES)},
++          "etfs": {"rows": {"0050": E_("元大台灣50", "TWSE", 87.0, 2.55, (-18.62, -16.18, 35.31, 48.31)),
++                            "00878": E_("國泰永續高股息", "TWSE", 28.05, 0.02, (-17.28, -10.04, 44.42, 54.23)),
++                            "00679B": E_("元大美債20年", "TPEx", 26.33, 0.18, (2.32, 3.03, 0.83, 0.13)),
++                            "00953B": E_("群益優選非投等債", "TWSE", 9.59, 0.01, (0.84, 1.48, 6.64, 8.64)),
++                            "00901": E_("永豐智能車供應鏈", "TWSE", 34.18, 1.16, (-23.09, -23.0, 36.28, 48.48)),
++                            "00930": E_("永豐ESG低碳高息", "TWSE", 20.18, 0.48, (-13.2, -11.98, 25.41, 30.53)),
++                            "00958B": E_("永豐ESG銀行債15+", "TPEx", 9.08, 0.04, (2.02, 1.23, 0.22, 1.29)),
++                            "00632R": E_("元大台灣50反1", "TWSE", None, None, (None, 1.5, None, None))},
++                   "ix": {"20": -20.05, "60": -17.76, "y": 27.1, "w": 39.25}},
++          "nx": {"1437": ["2026-12-03", "息", 0.624652], "6523": ["2026-11-26", "息", 4], "00953B": ["2026-12-03", "息", None],
++                 "2345": ["2026-12-04", "權", 0], "4414": ["2026-12-08", "息", 0.00915], "3701": ["2026-12-04", "息", 0.199892],
++                 "00901": ["2026-11-24", "息", 7], "00930": ["2026-11-24", "息", 0.75], "00958B": ["2026-11-24", "息", 0.042],
++                 "9901": ["2026-12-01", "息", 0.29], "9902": ["2026-12-01", "息", 0.57], "9903": ["2026-12-01", "息", 0.123456789]}}
++W7 = ["2330", "2454", "3105", "1437", "2881", "6523", "0050", "00878", "00679B", "00953B"]
++SCREEN = {"d": DATE, "rmd": {}, "fqd": {}, "rows": {}}
++W_NAMES = T32.NAMES + [n for n in T42.HOLD if n not in T32.NAMES and n != "shareWatch"] + ["EPF_COLS", "etfWatchPerf", "nxKind", "watchNx"]
++HARN = r"""
++const HL_KINDS = {}; const window = {};
++const view = { innerHTML: '', addEventListener() {} }, els = {};
++const $ = s => s === '#view' ? view : view.innerHTML.includes(`id="${s.slice(1)}"`) ? (els[s] = els[s] || { addEventListener(t, f) { this.f = f; } }) : null;
++let STORE = {}, loads = 0;
++const localStore = (k, f, v) => v === undefined ? (k in STORE ? STORE[k] : f) : (STORE[k] = v, f);
++const onRowClick = () => {}, saveWatch = () => {}, loadScreen = () => { loads++; return new Promise(() => {}); }, location = { hash: '#/watch' };
++const App = { latest: %s, watch: new Set() }, LAT = JSON.parse(JSON.stringify(App.latest)), SCR = %s;
++function run(w, o, hold, lat) { App.latest = lat || LAT; App.watch = new Set(w); App.watchCols = undefined; App.screen = SCR; Object.assign(App, o || {});
++  STORE = hold ? { hold: JSON.stringify(hold) } : {}; for (const k in els) delete els[k]; view.innerHTML = ''; renderWatch(); return view.innerHTML; }
++const card = h => { const i = h.indexOf('<div class="card w-nx">'); return i < 0 ? '' : h.slice(i, h.indexOf('</div></div>', h.lastIndexOf('<div class="muted small">來自')) + 12); };
++"""
++
++
++def _watch(body, app=APP, stk=STK, tools=TOOLS):
++    js = "\n".join(_grab(app, n) for n in W_NAMES) + "\n" + _grab(stk, "dfmt") + "\n" + HARN % (json.dumps(LATEST, ensure_ascii=False), json.dumps(SCREEN)) + tools + "\n" + body
++    return T._node(js)
++
++
++HEAD = '<div class="card w-nx"><div class="sec-h"><h2>即將除權息</h2><span class="muted small">預告，以公司或發行人公告為準</span></div>'
++FOOT = ('<div class="muted small">來自證交所、櫃買中心的除權除息預告表，只列資料日之後的下一次；除權息日當天起改看個股頁的股利卡。估計可領 = 持股股數 × 預告每股現金，元以下捨去；'
++        '未扣二代健保補充保費與匯費，配股不估算股數，以實際入帳為準。</div></div>')
++R6523 = '<div class="al-row"><a href="#/stock/6523"><b>達爾膚</b></a>　<span class="nw">11/26 除息</span>　<span class="nw">現金股利 4 元</span>　<a class="small" href="#/tools/dv?c=6523">試算 →</a></div>'
++R2345 = '<div class="al-row"><a href="#/stock/2345"><b>智邦</b></a>　<span class="nw">12/04 除權</span>　<a class="small" href="#/tools/dv?c=2345">試算 →</a></div>'
++EST = {"6523": (1000, "4,000"), "1437": (2500, "1,561"), "4414": (1000, "9"), "00901": (1000, "7,000"), "00930": (1500, "1,125"), "00958B": (333, "13"),
++       "3701": (1234, "246"), "9901": (100, "29"), "9902": (100, "57"), "9903": (100, None), "00953B": (2000, None), "2345": (100, None), "2330": (500, None)}
++
++
++def _row(card, c):
++    m = re.search(rf'<div class="al-row"><a href="#/stock/{c}">.*?</div>', card)
++    return m.group(0) if m else ""
++
++
++def check_watch(app=APP, stk=STK, tools=TOOLS):
++    o = _watch("""
++const H = %s, H2 = Object.assign({}, H, { '1437': [1000, 100] }), all = Object.keys(H), out = {};
++for (const wc of ['flow', 'perf', 'fund', 'hold']) out[wc] = run(%s, { watchCols: wc });
++out.c7 = card(out.flow); out.est = card(run(all, {}, H)); out.est2 = card(run(all, {}, H2));
++const plain = Object.assign({}, LAT); delete plain.nx;
++out.none = run(%s, {}, null, plain); out.other = run(%s, {}, null, Object.assign({}, plain, { nx: { '9999': ['2026-12-01', '息', 1] } }));
++out.etfPerf = run(['0050', '00679B', '00632R'], { watchCols: 'perf', screen: null }); out.etfFlow = run(['0050'], { screen: null });
++const nopf = JSON.parse(JSON.stringify(plain)); Object.values(nopf.etfs.rows).forEach(r => { delete r.r20; delete r.r60; delete r.ry; delete r.rw; });
++out.nopf = run(['0050'], { watchCols: 'perf', screen: null }, null, nopf); out.loads = loads; out.store = Object.keys(STORE);
++out.wt = etfWatchTable(['0050', '00878', '00679B', '00953B'].map(c => [c, LAT.etfs.rows[c]]));
++console.log(JSON.stringify(out));""" % (json.dumps({c: [q, 1000] for c, (q, _) in EST.items()}), json.dumps(W7), json.dumps(W7), json.dumps(W7)), app, stk, tools)
++    if o is None:
++        return []
++    bad, c7 = [], o["c7"]
++    if not (c7.startswith(HEAD) and c7.endswith(FOOT) and re.findall(r'<div class="al-row"><a href="#/stock/(\w+)">', c7) == ["6523", "1437", "00953B"]):
++        bad.append(("卡片", c7))
++    if _row(c7, "6523") != R6523 or "現金股利 0.624652 元" not in _row(c7, "1437") or "金額待公告" not in _row(c7, "00953B") or "配息" in _row(c7, "00953B") or '"nw">估計可領' in c7:
++        bad.append("列")
++    for wc in ("flow", "perf", "fund", "hold"):                                          # 四個欄組都在 ETF 表之後、w-ev 之前
++        h = o[wc]
++        if not (h.count('class="card w-nx"') == 1 and h.rindex('data-etf="00953B"') < h.index('class="card w-nx"') < h.index('class="card w-ev"')):
++            bad.append(("位置", wc))
++    est, est2 = o["est"], o["est2"]
++    for c, (q, v) in EST.items():
++        r = _row(est, c)
++        if (v is None) != ("估計可領" not in r) or v and f"　<span class=\"nw\">估計可領 {v} 元</span>　<a class=\"small\"" not in r:
++            bad.append(("估計", c, r))
++    if "估計可領 624 元" not in _row(est2, "1437") or _row(est, "2345") != R2345 or "金額待公告" not in _row(est, "00953B") or "估計" in _row(est, "9903") or _row(est, "2330"):
++        bad.append("估計 2")
++    if ("配息 7 元" not in _row(est, "00901") or "配息 0.042 元" not in _row(est, "00958B") or "現金股利 0.00915 元" not in _row(est, "4414")
++            or len(re.findall(r'　<a class="small" href="#/tools/dv\?c=\w+">試算 →</a></div>', est)) != est.count('<div class="al-row">') != 0):
++        bad.append("金額")
++    if "w-nx" in o["none"] or o["none"] != o["other"]:
++        bad.append("沒有 nx 要和改前相同")
++    p = o["perf"]
++    pcap = ('<div class="muted small tbl-cap">含息報酬為 11/23 收盤；加權指數同期：20 日 -20.05%、60 日 -17.76%、今年以來 +27.10%、52 週 +39.25%（價格指數，不含股息）</div>'
++            '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>收盤</th><th>20 日</th><th>60 日</th><th>今年以來</th><th>52 週</th></tr></thead>')
++    pnote = ('<div class="muted small h-note">含息報酬 = 配息在除息日以參考價再投入同一檔，算法同 ETF 列表「表現」，不含手續費與稅；「--」= 基準日時本站還沒有這檔的成交；'
++             '今天無成交時用最後成交的收盤。加權指數是價格指數，不含股息。</div>')
++    r0050 = '<td class="num up">87</td><td class="num dn">-18.62%</td><td class="num dn">-16.18%</td><td class="num up">+35.31%</td><td class="num up">+48.31%</td></tr>'
++    r679 = '<td class="num up">26.33</td><td class="num up">+2.32%</td><td class="num up">+3.03%</td><td class="num up">+0.83%</td><td class="num up">+0.13%</td></tr>'
++    if not (pcap in p and pnote in p and r0050 in p and r679 in p and "<th>成交額</th>" not in p and '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2></div>' in p
++            and o["wt"] in o["flow"] and o["wt"] in o["fund"] and "當日行情" not in p):
++        bad.append("表現：股票＋ETF")
++    e = o["etfPerf"]
++    seg = '<div class="seg" id="wcolSeg"><button data-v="flow" class="">行情</button><button data-v="perf" class="on">表現</button><button data-v="hold" class="">持股</button></div>'
++    if not (seg in e and "存在這個瀏覽器裡，換裝置不會同步</span>" in e and '<td class="num flat">無成交</td><td class="num flat">--</td><td class="num up">+1.50%</td><td class="num flat">--</td>' in e
++            and e.count('data-unwatch="') == 3 and '<tr data-etf="00632R">' in e and "<th>近一年配息</th>" not in e):
++        bad.append(("表現：只有 ETF", e[:400]))
++    if not ('<button data-v="perf" class="">表現</button>' in o["etfFlow"] and "<th>近一年配息</th>" in o["etfFlow"] and "。當日行情；成交量為張" in o["etfFlow"]):
++        bad.append("只有 ETF 行情")
++    if '<div class="seg" id="wcolSeg"><button data-v="flow" class="on">行情</button><button data-v="hold" class="">持股</button></div>' not in o["nopf"] or "<th>20 日</th>" in o["nopf"]:
++        bad.append("舊 latest 沒有含息欄")
++    if o["loads"] != 0 or o["store"] != []:                                                 # 只有 ETF 的表現不載入 screen.json；不寫新鍵
++        bad.append(("載入／儲存", o["loads"], o["store"]))
++    if T42.BAD.search(o["est"] + o["perf"] + e):
++        bad.append("NaN")
++    return bad
++
++
++def test_watch():
++    assert check_watch() == []
++
++
++def check_storage(app=APP):
++    w, n = _grab(app, "renderWatch"), _grab(app, "watchNx")
++    return set(re.findall(r"localStore\('(\w+)'", w)) <= {"rspan"} and "localStore" not in n and "const H = holdLoad();" in n and "if (!W.length) return '';\n  const H" in n
++
++
++def test_storage():
++    assert check_storage()
++
++
++def check_edit(app=APP, tools=TOOLS):
++    lat = json.loads(json.dumps(LATEST))
++    lat["stocks"].update({"1538": {**ST, "n": "正峰"}})
++    edit = T42.EDIT.replace("s === '.h-all' ? all :", "s === '.w-nx' ? nxc : s === '.h-all' ? all :").replace("const IN = {}", "const nxc = { outerHTML: 'x' }, IN = {}")
++    js = T42._src(app, tools, T42.BASE + T42.HOLD + ["nxKind", "watchNx"]) + _grab(STK, "dfmt") + "\nconst App = { latest: %s, watch: new Set() };\n" % json.dumps(lat, ensure_ascii=False)
++    o = T._node(js + edit + """App.watch = new Set(['2330', '1538', '6523']);
++const a = (put('6523', '1000', '50'), nxc.outerHTML), b = (put('6523', '', ''), nxc.outerHTML);
++console.log(JSON.stringify([a, b, STORE.hold]));""")
++    if o is None:
++        return True
++    return "估計可領 4,000 元" in o[0] and "w-nx" in o[1] and '"nw">估計可領' not in o[1] and o[2] == "{}"
++
++
++def test_edit():
++    assert check_edit()
++
++
++# ─── F47-1d 今日卡（驗收 9）─────────────────────────────────────
++def check_today(app=APP, tools=TOOLS):
++    o = T42._run(T42.ROWS + """
++const out = {};
++App.watch = new Set(%s); out.a = watchToday(App.latest, rows);
++App.watch = new Set(['1437']); out.one = watchToday(App.latest, rows);
++App.watch = new Set(['2330', '2454', '3105', '2881', '9901', '6523', '0050', '00878', '4414']); out.late = watchToday(App.latest, rows);
++delete App.latest.nx; App.watch = new Set(['1437']); out.none = watchToday(App.latest, rows);
++console.log(JSON.stringify(out));""" % json.dumps(W7), app, tools, latest=json.loads(json.dumps(LATEST)))
++    if o is None:
++        return True
++    return ('<a class="w-ev-l" href="#/watch">處置／注意 1 檔、即將除權息 3 檔 →</a>' in o["a"] and '<a class="w-ev-l" href="#/watch">即將除權息 1 檔 →</a>' in o["one"]
++            and "處置／注意 1 檔、即將除權息 3 檔 →" in o["late"] and "w-ev-l" not in o["none"])
++
++
++def test_today():
++    assert check_today()
++
++
++# ─── F47-2 指數卡（驗收 10）、F47-3 法人卡（驗收 11）、F47-4 夜盤（驗收 12）──────
++def check_index(app=APP):
++    js = ("Array.prototype.at = function (i) { return this[i < 0 ? this.length + i : i]; };\nconst spark = () => '';\n"
++          + "\n".join(_grab(app, n) for n in ("fmt", "sgn", "cls", "md", "indexCard")) + """
++const App = { latest: { date: '2026-11-23' } };
++const x = (s0, c, n, from) => ({ date: '2026-11-23', c, ch: 1, p: 1, from, s: [s0].concat(Array(n - 2).fill(c), [c]) });
++console.log(JSON.stringify([indexCard(x(45169.46, 36811.89, 60, '2026-08-25'), '加權指數'), indexCard(x(389.41, 270.90, 60, '2026-08-25'), '櫃買指數'),
++  indexCard(x(100, 110, 30, '2026-10-09'), '加權指數'), indexCard(x(45169.46, 36811.89, 60, '2026-08-25'), '加權指數', false)]));""")
++    o = T._node(js)
++    if o is None:
++        return True
++    return ('<div class="s"><span class="dn">自 08/25 起 -18.5%</span></div>' in o[0] and '<span class="dn">自 08/25 起 -30.4%</span></div>' in o[1]
++            and '<span class="up">自 10/09 起 +10.0%</span>（30 個交易日）</div>' in o[2] and " 起 " not in o[3] and "近 60 個交易日" not in app)
++
++
++def test_index():
++    assert check_index()
++
++
++def check_chip(stk=STK):
++    o = T._node("\n".join(_grab(APP, n) for n in ("fmt", "sgn", "cls", "yi")) + "\nconsole.log(JSON.stringify([506.77, 54.21, 0.01, null].map(yi)));")
++    return ("['法人5日', yi(s?.n5), cls(s?.n5), `自營 ${yi(s?.d5)}`]," in stk and "const inCards = E ? [] : [['法人1日'" in stk
++            and (o is None or o == ["+507億", "+54.2億", "0億", "--"]))
++
++
++def test_chip():
++    assert check_chip()
++
++
++def check_night(app=APP):
++    js = "\n".join(_grab(app, n) for n in ("esc", "fmt", "sgn", "cls", "md", "futuresHTML")) + r"""
++const spreadHTML = () => '';
++const F = (d, nd) => ({ name: '台指期', d, c: d.map(() => 34000), ch: d.map(() => 10), m: d.map(() => '202612'), v: d.map(() => 1), oi: d.map(() => 1),
++  night: { date: nd, c: 33919, ch: -1881 } });
++const n = h => (h.match(/夜盤（[^）]*）/) || [''])[0];
++console.log(JSON.stringify([F(['2026-11-19', '2026-11-20', '2026-11-23'], '2026-11-23'), F(['2026-11-18', '2026-11-19', '2026-11-20'], '2026-11-20'),
++  F(['2026-11-27', '2026-11-30', '2026-12-01'], '2026-12-01'), F(['2026-12-30', '2026-12-31', '2027-01-04'], '2027-01-04'),
++  F(['2027-02-04', '2027-02-05', '2027-02-15'], '2027-02-15'), F(['2026-11-23'], '2026-11-23'), F(['2026-11-19', '2026-11-20'], '2026-11-23')].map(f => [n(futuresHTML(f)), futuresHTML(f).includes('前一夜盤')])));"""
++    o = T._node(js)
++    if o is None:
++        return True
++    return o == [["夜盤（11/20 15:00～11/21 05:00）", True], ["夜盤（11/19 15:00～11/20 05:00）", True], ["夜盤（11/30 15:00～12/01 05:00）", True],
++                 ["夜盤（12/31 15:00～01/01 05:00）", True], ["夜盤（02/05 15:00～02/06 05:00）", True], ["夜盤（11/23 05:00）", True], ["夜盤（11/20 15:00～11/21 05:00）", False]]
++
++
++def test_night():
++    assert check_night()
++
++
++# ─── F47-7 名詞（驗收 15）───────────────────────────────────────
++def check_help(src=HELP):
++    if T45.check_data(src) or T45.check_page(src):
++        return False
++    o = T45._page("hash = '#/help/tr'; rafs = []; window.renderHelp('tr'); rafs.forEach(f => f()); console.log(JSON.stringify([hash, view.innerHTML, Object.values(el).filter(e => e.n).map(e => e.id)]));", src)
++    H = T45._data(src)
++    if o is None or H is None:
++        return "ETF 個股頁用原始價" not in src
++    etf = [g for g in H if g[0] == "etf"][0][2]
++    return (o[0] == "#/help/tr" and o[2] == ["help-tr"] and '<div class="help-t on" id="help-tr"><b>含息報酬</b>' in o[1] and o[1].count('class="help-t') == 42
++            and [x[0] for x in etf] == ["units", "issuer", "tr"] and len(etf[2]) == 3 and "ETF 個股頁用原始價" not in src)
++
++
++def test_help():
++    assert check_help()
++
++
++# ─── 用詞、node 14、版本與文件（驗收 16、17、20）─────────────────────
++def _new_segs(app=APP, stk=STK, help_=HELP):
++    seg = "".join(_grab(app, n) for n in ("nxKind", "watchNx", "etfWatchPerf")) + _grab(stk, "nxTag")
++    seg += "".join(l for l in app.splitlines() + stk.splitlines() + CSS.splitlines() if "第 47 輪" in l or "自營 ${yi(s?.d5)}" in l)
++    seg += "".join(l for l in help_.splitlines() if "['tr'," in l or "['adj'," in l)
++    return seg
++
++
++def check_words(app=APP, stk=STK, help_=HELP):
++    seg = _new_segs(app, stk, help_) + "".join(l for l in README.splitlines() + app.splitlines() if "第 47 輪" in l or "自 ${md(x.from)} 起" in l)
++    return all(w not in seg.replace("借券賣出", "") for w in ADVICE)
++
++
++def test_words():
++    assert check_words()
++
++
++def test_node14():
++    seg = _new_segs()
++    for w in (".at(", "replaceAll", "||=", "&&=", "??="):
++        assert w not in seg, w
++
++
++def test_version_and_docs():
++    for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
++    assert "tools.js?v=64e7360f" in HTML and HTML.count("https://") == 2
++    assert "python3 tests/test_iter47.py" in README
++    r = next(l for l in README.splitlines() if l.startswith("- 即將除權息提醒（第 47 輪"))
++    for s in ("`nx", "元以下捨去", "二代健保", "R60", "R61", "自營", "含息報酬", "42 個名詞"):
++        assert s in r, s
++    assert "第 23 輪" not in r
++    assert "第 47 輪" in (ROOT / "docs" / "iterations" / "README.md").read_text(encoding="utf-8")
++
++
++def test_pm_text():
++    """畫面文字和 47/02-pm.md 二之一相同（PM 表格裡的字串出現在程式裡）。"""
++    for s in ("即將除權息", "預告，以公司或發行人公告為準", "金額待公告", "估計可領", "試算 →", "自營 ", "含息報酬為 "):
++        assert s in PM, s
++    assert FOOT[len('<div class="muted small">'):-len("</div></div>")] in PM
++
++
++# ─── 反證：原始碼改壞，對應的檢查要失敗 ─────────────────────────
++def _mut_fn(old, new):
++    src = inspect.getsource(export.nx_latest)
++    assert src.count(old) == 1, old
++    ns = dict(vars(export))
++    exec(src.replace(old, new), ns)
++    return ns["nx_latest"]
++
++
++MUTANTS = [
++    ("匯出放最後一筆", "fn", 'v[0]["d"], v[0]["t"], v[0]["c"]', 'v[-1]["d"], v[-1]["t"], v[-1]["c"]'),
++    ("匯出空陣列也放", "fn", " if v}", "}"),
++    ("匯出空的也輸出 nx", "src", '    if nx := nx_latest(nx_stock, nx_etf):\n        latest["nx"] = nx', '    latest["nx"] = nx_latest(nx_stock, nx_etf)'),
++    ("標籤加 data-gk", "stk", '<a class="pill pill-nx" href=', '<a class="pill pill-nx" data-gk="x" href='),
++    ("標籤用最後一筆", "stk", "title=\"${esc(nxText(nx[0], etf))}\">即將${nxKind(nx[0].t)} ${md(nx[0].d)}", "title=\"${esc(nxText(nx[0], etf))}\">即將${nxKind(nx[nx.length - 1].t)} ${md(nx[nx.length - 1].d)}"),
++    ("標籤放在上市之後", "stk", ".join('')}${nxTag(data.nx, code, E)}\n            <span class=\"pill\">${data.market === 'TWSE' ? '上市' : '上櫃'}</span>",
++     ".join('')}\n            <span class=\"pill\">${data.market === 'TWSE' ? '上市' : '上櫃'}</span>${nxTag(data.nx, code, E)}"),
++    ("估計用浮點", "app", "fmt(Number(BigInt(H[c][0]) * q / 10n ** 8n))", "fmt(Math.floor(H[c][0] * x))"),
++    ("估計四捨五入", "app", "BigInt(H[c][0]) * q / 10n ** 8n", "(BigInt(H[c][0]) * q + 5n * 10n ** 7n) / 10n ** 8n"),
++    ("9 位小數也估計", "app", "tlBig(String(x), 8)", "tlBig(String(x), 9)"),
++    ("不依日期排序", "app", ".sort((a, b) => NX[a][0] < NX[b][0] ? -1 : NX[a][0] > NX[b][0] ? 1 : 0)", ""),
++    ("只列股票", "app", "NX[c] && (L.stocks[c] || R[c])", "NX[c] && L.stocks[c]"),
++    ("現金 0 也寫金額待公告", "app", "(x == null ? '　<span class=\"nw\">金額待公告</span>'", "(!(x > 0) ? '　<span class=\"nw\">金額待公告</span>'"),
++    ("ETF 也寫現金股利", "app", "${L.stocks[c] ? '現金股利' : '配息'}", "現金股利"),
++    ("試算連結帶股數", "app", "<a class=\"small\" href=\"#/tools/dv?c=${c}\">試算 →</a></div>`; })", "<a class=\"small\" href=\"#/tools/dv?c=${c}&q=${H[c] ? H[c][0] : ''}\">試算 →</a></div>`; })"),
++    ("卡片放在 ETF 表之前", "app", "      ${etfs.length ? `${stk ? '<div class=\"sec-h\" style=\"margin-top:12px\"><h2>ETF</h2>'",
++     "      ${App.latest.nx ? watchNx() : ''}${etfs.length ? `${stk ? '<div class=\"sec-h\" style=\"margin-top:12px\"><h2>ETF</h2>'"),
++    ("renderWatch 直接讀持股", "app", "  const pf = Object.values(R)", "  localStore('hold', null); const pf = Object.values(R)"),
++    ("沒有 nx 也先讀持股", "app", "  if (!W.length) return '';\n  const H = holdLoad();", "  const H = holdLoad();\n  if (!W.length) return '';"),
++    ("改持股不更新估計", "app", "  if (nx) nx.outerHTML = watchNx();", "  if (nx) nx.outerHTML;"),
++    ("今日卡只算前 5 檔", "app", "W.filter(c => L.nx[c]).length", "W.slice(0, 5).filter(c => L.nx[c]).length"),
++    ("表現仍用行情表", "app", "ep ? etfWatchPerf(etfs, App.latest.etfs.ix) : etfWatchTable(etfs)", "etfWatchTable(etfs)"),
++    ("舊資料也有表現", "app", "r.rw != null), ep = pf && wc === 'perf';", "r.rw != null) || true, ep = pf && wc === 'perf';"),
++    ("表現仍寫當日行情", "app", "(HV || ep ? '' : '<span class=\"muted small\">當日行情", "(HV ? '' : '<span class=\"muted small\">當日行情"),
++    ("表現缺值顯示 0", "app", "${r[k] == null ? '--' : sgn(r[k]) + '%'}", "${sgn(r[k] == null ? 0 : r[k]) + '%'}"),
++    ("指數卡改回近 60 個交易日", "app", "自 ${md(x.from)} 起 ${sgn(", "${x.s.length >= 60 ? '近 60 個交易日' : `自 ${md(x.from)} 起`} ${sgn("),
++    ("夜盤結束日用歸屬日", "app", "${md(to)} 05:00）", "${md(N.date)} 05:00）"),
++    ("法人卡沒有自營", "stk", "`自營 ${yi(s?.d5)}`]", "'']"),
++    ("名詞 tr 加連結", "help", "和指數的差距越偏向 ETF。'],", "和指數的差距越偏向 ETF。', '看 ETF 列表', '#/etf'],"),
++    ("名詞 adj 改回原文", "help", "個股 K 線可切換「原始」。ETF 個股頁的 K 線、52 週高低用原始價，近期表現用含息報酬。", "個股 K 線可切換「原始」，ETF 個股頁用原始價。"),
++    ("用詞", "app", "以實際入帳為準。", "以實際入帳為準，不是建議。"),
++]
++CHECKS = {"fn": lambda f: not check_nx(f), "src": check_wiring,
++          "stk": lambda s: check_tag(stk=s) and check_chip(s) and check_words(stk=s),
++          "app": lambda a: (not check_watch(app=a) and check_storage(a) and check_edit(app=a) and check_today(app=a) and check_index(a)
++                            and check_night(a) and check_words(app=a)),
++          "help": lambda h: check_help(h) and check_words(help_=h)}
++
++
++def test_contrast():
++    node = T._node("console.log('1')") is not None
++    for name, kind, a, b in MUTANTS:
++        if kind == "fn":
++            assert not CHECKS[kind](_mut_fn(a, b)), "反證沒有擋下：" + name
++            continue
++        src = {"src": SRC, "stk": STK, "app": APP, "help": HELP}[kind]
++        assert src.count(a) == 1, (name, a)
++        ok = CHECKS[kind](src.replace(a, b))
++        assert not ok or not node and kind != "src", "反證沒有擋下：" + name
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")
+diff --git a/twstock/export.py b/twstock/export.py
+index a145353..663b4a7 100644
+--- a/twstock/export.py
++++ b/twstock/export.py
+@@ -912,6 +912,12 @@ def notice_export(rows, on, today) -> tuple:
+     return out
+ 
+ 
++def nx_latest(*parts) -> dict:
++    """第 47 輪 F47-1a：latest.json 頂層 nx = {代號: [除權息日, 類型, 每股現金（None = 待公告）]}，依代號排序；
++    parts = notice_export 的 ({股票: nx}, {ETF: nx})，nx 已依除權息日舊到新、只有資料日之後，每檔只取第一筆（下一次）。"""
++    return {c: [v[0]["d"], v[0]["t"], v[0]["c"]] for c, v in sorted(x for p in parts for x in p.items()) if v}
++
++
+ def share_pct(x: int, t: int):
+     """第 43 輪：x ÷ t × 100 四捨五入到 2 位（整數運算，不經過浮點）；整數去掉小數點（100.0 → 100）。"""
+     q = (2 * x * 10000 + t) // (2 * t)
+@@ -1996,6 +2002,8 @@ def export_all() -> float:
+     }
+     if latest["etfs"] and eix:
+         latest["etfs"]["ix"] = {str(k): eix[k] for k in EPF_KEYS if k in eix}   # 第 46 輪 F46-3：{"20", "60", "y", "w"}
++    if nx := nx_latest(nx_stock, nx_etf):
++        latest["nx"] = nx                                       # 第 47 輪 F47-1a：自選頁、今日卡的即將除權息（空的時候不輸出）
+     # 第 17 輪 F17-2：注意累計預警（推算）；處置中、即將處置不列
+     latest["alerts"]["w"] = alert_watch(watch_notes, watch_days,
+                                         {c for c, v in alerts.items() if any(a["t"] == "disposal" for a in v)})

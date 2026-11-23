@@ -27,7 +27,7 @@ def _data(src=HELP):
 
 def _want():
     """02-pm.md 二之一的 8 張表 → [[組代號, 組名, [[代號, 名詞, 定義(, 連結文字, 網址)]]]]"""
-    sec = PM[PM.index("## 二之一"):PM.index("## 二之二")]
+    sec = re.sub(r"^\| (adj|issuer) \|.*\|$", lambda m, n=re.findall(r"^\| (?:adj|tr) \|.*\|$", (ROOT / "docs" / "iterations" / "47" / "02-pm.md").read_text(encoding="utf-8"), re.M): n[0] if m.group(1) == "adj" else m.group(0) + "\n" + n[1], PM[PM.index("## 二之一"):PM.index("## 二之二")], flags=re.M)   # 第 47 輪 D153：adj 改用 47/02-pm.md、etf 組加 tr
     parts, out = re.split(r"\n### (.+?)（`(\w+)`）\n", sec)[1:], []
     for i in range(0, len(parts), 3):
         rows = []
@@ -46,7 +46,7 @@ def check_data(src=HELP):
     bad, ids = [], [g[0] for g in H] + [x[0] for g in H for x in g[2]]
     if H != _want():
         bad.append("和 02-pm.md 二之一不同")
-    if len(H) != 8 or sum(len(g[2]) for g in H) != 41 or len(ids) != len(set(ids)):
+    if len(H) != 8 or sum(len(g[2]) for g in H) != 42 or len(ids) != len(set(ids)):
         bad.append(("數量或代號重複", len(H), len(ids)))
     ranks = set(re.findall(r"\['([^']+)', '[^']+', '[^']+', -?1", T._grab(APP, "RANKS")))
     today = set(re.findall(r"\['(\w+)', '", T._grab(APP, "TODAY_TABS")))
@@ -119,7 +119,7 @@ console.log(JSON.stringify(out.concat([err])));""", src)
             bad.append((h, sc, nr))
         secs = re.findall(r'<section class="sec card" id="help-(\w+)"><div class="sec-h"><h2>(.+?)</h2></div>', html)
         if not (html.startswith(TOP) and html.endswith(END) and secs == [(g[0], g[1]) for g in _want()] and GRP in html
-                and html.count('class="help-t') == 41 and html.count(' on"') == (h == "#/help/vr")):
+                and html.count('class="help-t') == 42 and html.count(' on"') == (h == "#/help/vr")):
             bad.append(("版面", h))
     if VR not in o[0][1] or VR in o[1][1] or VR.replace(" on", "") not in o[1][1]:
         bad.append("標示")

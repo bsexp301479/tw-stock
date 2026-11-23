@@ -912,6 +912,12 @@ def notice_export(rows, on, today) -> tuple:
     return out
 
 
+def nx_latest(*parts) -> dict:
+    """第 47 輪 F47-1a：latest.json 頂層 nx = {代號: [除權息日, 類型, 每股現金（None = 待公告）]}，依代號排序；
+    parts = notice_export 的 ({股票: nx}, {ETF: nx})，nx 已依除權息日舊到新、只有資料日之後，每檔只取第一筆（下一次）。"""
+    return {c: [v[0]["d"], v[0]["t"], v[0]["c"]] for c, v in sorted(x for p in parts for x in p.items()) if v}
+
+
 def share_pct(x: int, t: int):
     """第 43 輪：x ÷ t × 100 四捨五入到 2 位（整數運算，不經過浮點）；整數去掉小數點（100.0 → 100）。"""
     q = (2 * x * 10000 + t) // (2 * t)
@@ -1996,6 +2002,8 @@ def export_all() -> float:
     }
     if latest["etfs"] and eix:
         latest["etfs"]["ix"] = {str(k): eix[k] for k in EPF_KEYS if k in eix}   # 第 46 輪 F46-3：{"20", "60", "y", "w"}
+    if nx := nx_latest(nx_stock, nx_etf):
+        latest["nx"] = nx                                       # 第 47 輪 F47-1a：自選頁、今日卡的即將除權息（空的時候不輸出）
     # 第 17 輪 F17-2：注意累計預警（推算）；處置中、即將處置不列
     latest["alerts"]["w"] = alert_watch(watch_notes, watch_days,
                                         {c for c, v in alerts.items() if any(a["t"] == "disposal" for a in v)})

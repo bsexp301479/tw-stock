@@ -81,6 +81,8 @@ function nxText(n, etf) {
     n.sr ? `含現金增資，認購價${n.sp == null ? '尚未公告' : ` ${dfmt(n.sp, 2)} 元`}` : '', n.c == null ? '金額待公告' : ''].filter(Boolean);
   return `即將${n.t === '息' ? '除息' : n.t === '權' ? '除權' : '除權息'} ${md(n.d)}：${p.join('、')}（預告，以${etf ? '發行人' : '公司'}公告為準）`;
 }
+// 第 47 輪 F47-1b：頁頭「即將除息 12/03」標籤（nx 第一筆，連到除權息試算、只帶代號）；沒有 nx 輸出空字串
+const nxTag = (nx, code, etf) => nx && nx.length ? `<a class="pill pill-nx" href="#/tools/dv?c=${code}" title="${esc(nxText(nx[0], etf))}">即將${nxKind(nx[0].t)} ${md(nx[0].d)}</a>` : '';
 const ETF_DIV_FULL = '填息日 = 除息日起（含當天）第一個收盤大於或等於除息前收盤的交易日，用原始價、不設期限；第 N 個交易日從除息日當天算第 1 天，無成交日也算。' +
   '除息日、配息與除息前收盤來自證交所、櫃買中心的除息表。上市 ETF 還沒填息就遇到推測的其他價格調整（多為分割）時，寫「不再比較」；上櫃 ETF 無法辨識分割，照常比較。' +
   '還差 = 除息前收盤 − 最新收盤，% 以最新收盤計算。ETF 的配息來源可能含收益平準金、資本利得，不等於獲利。';
@@ -260,7 +262,7 @@ window.renderStock = async function (code, sub) {
   // 第 29 輪 F29-4：外資及陸資持股比率（最近有資料的那天；5 日、20 日變化是百分點）
   const FH = data.fh, fj = FH ? FH.map((v, i) => v == null ? -1 : i).filter(i => i >= 0).pop() : undefined;
   const fhd = k => fj - k >= 0 && FH[fj - k] != null ? sgn(FH[fj] - FH[fj - k], 2) : '--';
-  const inCards = E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')], ['法人5日', yi(s?.n5), cls(s?.n5), ''],
+  const inCards = E ? [] : [['法人1日', yi(s?.n1), cls(s?.n1), runTxt(s?.s, '買', '賣')], ['法人5日', yi(s?.n5), cls(s?.n5), `自營 ${yi(s?.d5)}`],
     ['外資5日', yi(s?.f5), cls(s?.f5), runTxt(s?.fs, '買', '賣')], ['投信5日', yi(s?.t5), cls(s?.t5), runTxt(s?.ts, '買', '賣')],
     ...fj == null ? [] : [['外資持股比率', fmt(FH[fj], 2) + '%', '', subs(`<span class="nw">5日 ${fhd(5)}</span>　<span class="nw">20日 ${fhd(20)}</span>（百分點）`, md(P.d[fj]) !== fd ? md(P.d[fj]) : '')]]];
   const chipSec = (h, note, cards, chart, foot = '') => !cards.length ? '' : `<section class="sec card chip-g"><div class="sec-h"><h2>${h}</h2><span class="muted small">${note}</span></div>
@@ -298,7 +300,7 @@ window.renderStock = async function (code, sub) {
           <div class="tags">
             ${(data.alerts || []).map(a => a.t === 'disposal'
               ? `<span class="pill al-d" title="${esc(`處置期間 ${md(a.s)}～${md(a.e)}（${md(a.a)} 公告）\n原因：${a.r || '--'}\n措施：${a.m || '--'}`)}">${a.s > App.latest.date ? `即將處置（${md(a.s)} 起）` : `處置中（至 ${md(a.e)}）`}</span>`
-              : `<span class="pill al-n" title="${esc(`${md(a.a)} 公布注意交易資訊\n${a.r || ''}`)}">注意</span>`).join('')}
+              : `<span class="pill al-n" title="${esc(`${md(a.a)} 公布注意交易資訊\n${a.r || ''}`)}">注意</span>`).join('')}${nxTag(data.nx, code, E)}
             <span class="pill">${data.market === 'TWSE' ? '上市' : '上櫃'}</span>${E ? '<span class="pill">ETF</span>' : grpTag('industry', data.industry, esc(data.industry))}
             ${E && App.latest.holdings?.[code] ? `<a class="pill hold" href="#/etf/${code}">持股 →</a>` : ''}
             ${tagFold([...(data.chains || []).map(([chain, seg, subs]) => grpTag('chain', chain, `${esc(chain)} › ${esc(subs.length ? subs.slice(0, 2).join('、') + (subs.length > 2 ? '…' : '') : seg)}`,

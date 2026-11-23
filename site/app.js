@@ -324,7 +324,7 @@ function indexCard(x, name, full = true) {   // full = false：省略迷你圖�
       <div class="v num ${cls(x.ch)}">${fmt(x.c, 2)}</div>
       <div class="s num ${cls(x.ch)}">${x.ch > 0 ? '▲' : x.ch < 0 ? '▼' : ''} ${fmt(Math.abs(x.ch ?? 0), 2)} (${sgn(x.p)}%)</div>
       ${spark(x.s)}
-      ${full && x.s.length >= 2 ? `<div class="s"><span class="${x.s.at(-1) >= x.s[0] ? 'up' : 'dn'}">${x.s.length >= 60 ? '近 60 個交易日' : `自 ${md(x.from)} 起`} ${sgn((x.s.at(-1) / x.s[0] - 1) * 100, 1)}%</span>${x.s.length < 60 ? `（${x.s.length} 個交易日）` : ''}</div>` : ''}
+      ${full && x.s.length >= 2 ? `<div class="s"><span class="${x.s.at(-1) >= x.s[0] ? 'up' : 'dn'}">自 ${md(x.from)} 起 ${sgn((x.s.at(-1) / x.s[0] - 1) * 100, 1)}%</span>${x.s.length < 60 ? `（${x.s.length} 個交易日）` : ''}</div>` : ''}
     </div>`;
 }
 
@@ -542,8 +542,9 @@ function futuresHTML(F) {
   let night = '';
   if (N) {
     const from = [...F.d].reverse().find(d => d < N.date);
+    const to = from ? new Date(Date.parse(from + 'T00:00:00Z') + 864e5).toISOString().slice(0, 10) : N.date;   // 第 47 輪 F47-4（R61）：開始日的隔一個日曆日，週五夜盤到週六 05:00
     const np = N.ch != null && N.c !== N.ch ? N.ch / (N.c - N.ch) * 100 : null;
-    night = `<span class="${old ? 'night-old' : ''}">${old ? '前一夜盤' : '最新夜盤'}（${from ? md(from) + ' 15:00～' : ''}${md(N.date)} 05:00）　收 <b class="num ${cls(N.ch)}">${fmt(N.c)}</b>
+    night = `<span class="${old ? 'night-old' : ''}">${old ? '前一夜盤' : '最新夜盤'}（${from ? md(from) + ' 15:00～' : ''}${md(to)} 05:00）　收 <b class="num ${cls(N.ch)}">${fmt(N.c)}</b>
       <span class="num ${cls(N.ch)}">${sgn(N.ch, 0)} (${sgn(np)}%)</span></span>`;
   }
   const roll = k > 0 && F.m[k] !== F.m[k - 1];                 // 第 14 輪 F14-3：近月和前一個交易日不同 = 今天換月
@@ -1609,14 +1610,15 @@ function renderWatch() {
   const ev = list.filter(([, s]) => s.hl || s.dsp || s.ntc);                        // 第 25 輪 D25-09：自選股的近期新訊號、處置／注意
   const wc = App.screen === null && list.length ? 'flow' : App.watchCols || 'flow';   // 第 32 輪 F32-1：欄位組只記在這次瀏覽；screen.json 不存在時只有資金（只有 ETF 時照樣可選持股）
   const HV = wc === 'hold' && (list.length || etfs.length) ? holdView() : null;    // 第 42 輪 F42-1：持股欄組（不載入 screen.json）
+  const pf = Object.values(R).some(r => r.r20 != null || r.r60 != null || r.ry != null || r.rw != null), ep = pf && wc === 'perf';   // 第 47 輪 F47-6：同 ETF 列表 hasPf（EPF_COLS 的鍵）
   $('#view').innerHTML = `<section class="sec watch${App.watchEdit ? ' editing' : ''}">
       ${App.watchAdd ? watchAddNote(S, R) : ''}${App.watchShare ? `<div class="flow-note">${App.watchShare.ok ? '已複製分享連結。' : '請複製這個連結，'}在另一台裝置開啟，確認後會加入那裡的自選。<input class="w-url" readonly value="${esc(App.watchShare.url)}"></div>` : ''}
       ${App.watchUndo ? `<div class="flow-note">已從自選移除 ${esc(App.watchUndo.filter(c => !App.watch.has(c)).map(c => (S[c] || R[c])?.n || c).join('、'))}　<button class="chip" id="watchUndo">復原</button></div>` : ''}
-      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk || HV ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${list.length ? App.screen === null ? '<span class="muted small">表現、基本面資料尚未產生</span>' : segHTML('wcolSeg', [['flow', '資金'], ['perf', '表現'], ['fund', '基本面'], ['hold', '持股']], wc) : etfs.length ? segHTML('wcolSeg', [['flow', '行情'], ['hold', '持股']], HV ? 'hold' : 'flow') : ''}${stk && !list.length ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button><button class="chip" id="watchShare">分享清單</button>` : ''}</div>
+      <div class="sec-h">${stk ? '<h2>自選</h2>' : '<h2>自選 ETF</h2>'}<span class="muted small">存在這個瀏覽器裡，換裝置不會同步${stk || HV || ep ? '' : '。當日行情；成交量為張、成交額為億元'}</span><span class="sp"></span>${list.length ? App.screen === null ? '<span class="muted small">表現、基本面資料尚未產生</span>' : segHTML('wcolSeg', [['flow', '資金'], ['perf', '表現'], ['fund', '基本面'], ['hold', '持股']], wc) : etfs.length ? segHTML('wcolSeg', [['flow', '行情'], ...pf ? [['perf', '表現']] : [], ['hold', '持股']], HV ? 'hold' : ep ? 'perf' : 'flow') : ''}${stk && !list.length ? spanSeg(span) : ''}${list.length || etfs.length ? `<button class="chip" id="watchEdit">${App.watchEdit ? '完成' : '編輯'}</button><button class="chip" id="watchShare">分享清單</button>` : ''}</div>
       ${stk ? `<div class="card">${list.length ? HV ? holdCap(HV, App.latest) + holdTable(HV.s, false, HV) : wc === 'flow' ? stockTable(list, span, true) : watchColTable(list, wc)
         : '<div class="empty">還沒有自選股。打開任一檔個股或 ETF，按名稱旁的「☆ 加入自選」；或在上方搜尋，按清單右側的 ☆ 直接加入。<div style="margin-top:10px"><button class="chip" id="watchFind">搜尋股票</button></div></div>'}</div>` : ''}
-      ${etfs.length ? `${stk ? '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2>' + (HV ? '' : '<span class="muted small">當日行情；成交量為張、成交額為億元</span>') + '</div>' : ''}
-      <div class="card">${HV ? (list.length ? '' : holdCap(HV, App.latest)) + holdTable(HV.e, true, HV) : etfWatchTable(etfs)}</div>` : ''}
+      ${etfs.length ? `${stk ? '<div class="sec-h" style="margin-top:12px"><h2>ETF</h2>' + (HV || ep ? '' : '<span class="muted small">當日行情；成交量為張、成交額為億元</span>') + '</div>' : ''}
+      <div class="card">${HV ? (list.length ? '' : holdCap(HV, App.latest)) + holdTable(HV.e, true, HV) : ep ? etfWatchPerf(etfs, App.latest.etfs.ix) : etfWatchTable(etfs)}</div>` : ''}${App.latest.nx ? watchNx() : ''}
       ${ev.length ? `<div class="card w-ev"><div class="sec-h"><h2>近期新訊號、處置／注意</h2><span class="muted small">只描述發生了什麼，不代表之後的走勢</span></div>${ev.map(([c, s]) => {
         const d = s.dsp, r = s.ntc && App.latest.alerts?.n?.find(x => x[0] === c)?.[1];   // 第 27 輪 D27-08：處置期間（最後一天加註）、注意原因
         return `<a class="al-row" href="#/stock/${c}"><b>${esc(s.n)}</b>${alertBadge(s)}${d ? `　<span class="small num">${d[0] > App.latest.date ? '即將處置' : '處置'} ${md(d[0])}～${md(d[1])}${d[1] === App.latest.date ? '（最後一天）' : ''}</span>` : ''}` +
@@ -1746,6 +1748,33 @@ function etfWatchTable(list) {
       <td class="num">${r.dvd ? md(r.dvd) + `<span class="sub2">${r.dvn != null ? r.dvn + ' 天填息' : r.dvx ? '中斷' : '未填息'}</span>` : '--'}</td></tr>`).join('') + '</tbody></table></div>' +
     '<div class="muted small h-note">配息率 = 近一年配息 ÷ 今日收盤，股價下跌時會變高；最近除息的第二行是填息狀態，算法同 ETF 列表。</div>';   // 第 42 輪 F42-5
 }
+// 第 47 輪 F47-6：自選 ETF 表「表現」（含息報酬；欄位、加權同期同 ETF 列表的 EPF_COLS）
+function etfWatchPerf(list, ix) {
+  const line = EPF_COLS.filter(([, k]) => ix && ix[k] != null).map(([, k, l]) => `${l} ${sgn(ix[k])}%`).join('、');
+  const nm = (c, r) => `${wCtl(c)}<b>${esc(r.n)}</b><span>${c} ${r.m === 'TWSE' ? '上市' : '上櫃'}</span>${holdTag(c)}`;   // 名稱欄同 etfWatchTable
+  return `<div class="muted small tbl-cap">含息報酬為 ${md(App.latest.date)} 收盤${line ? `；加權指數同期：${line}（價格指數，不含股息）` : ''}</div>` +
+    `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ETF</th><th>收盤</th>${EPF_COLS.map(c => `<th>${c[2]}</th>`).join('')}</tr></thead><tbody>` +
+    list.map(([c, r]) => `<tr data-etf="${c}"><td class="nm">${nm(c, r)}</td>` +
+      (r.c == null ? `<td class="num flat">無成交</td>` : `<td class="num ${cls(r.ch)}">${pfmt(r.c)}</td>`) +
+      EPF_COLS.map(([k]) => `<td class="num ${cls(r[k])}">${r[k] == null ? '--' : sgn(r[k]) + '%'}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>' +
+    '<div class="muted small h-note">含息報酬 = 配息在除息日以參考價再投入同一檔，算法同 ETF 列表「表現」，不含手續費與稅' +   // 分兩段：test_iter46 的反證要 ETF_PF_NOTE 那句在 app.js 只出現一次
+      '；「--」= 基準日時本站還沒有這檔的成交；今天無成交時用最後成交的收盤。加權指數是價格指數，不含股息。</div>';
+}
+// 第 47 輪 F47-1c：自選頁「即將除權息」卡（latest.nx = {代號: [日期, 類型, 現金]}；依除權息日、同日依自選順序）。沒有就輸出空字串
+// 估計可領（R60）= 股數 × 預告每股現金，BigInt 整數運算、元以下捨去（0.29 × 100 用浮點會變 28）；現金超過 8 位小數不估計
+const nxKind = t => t === '息' ? '除息' : t === '權' ? '除權' : '除權息';   // 同 stock.js nxText
+function watchNx() {
+  const L = App.latest, NX = L.nx || {}, R = (L.etfs && L.etfs.rows) || {};
+  const W = [...App.watch].filter(c => NX[c] && (L.stocks[c] || R[c])).sort((a, b) => NX[a][0] < NX[b][0] ? -1 : NX[a][0] > NX[b][0] ? 1 : 0);
+  if (!W.length) return '';
+  const H = holdLoad();
+  return '<div class="card w-nx"><div class="sec-h"><h2>即將除權息</h2><span class="muted small">預告，以公司或發行人公告為準</span></div>' + W.map(c => {
+    const [d, t, x] = NX[c], q = x > 0 && H[c] ? tlBig(String(x), 8) : null;
+    return `<div class="al-row"><a href="#/stock/${c}"><b>${esc((L.stocks[c] || R[c]).n)}</b></a>　<span class="nw">${md(d)} ${nxKind(t)}</span>` +
+      (x == null ? '　<span class="nw">金額待公告</span>' : x > 0 ? `　<span class="nw">${L.stocks[c] ? '現金股利' : '配息'} ${dfmt(x, 8)} 元</span>` : '') +
+      (q == null ? '' : `　<span class="nw">估計可領 ${fmt(Number(BigInt(H[c][0]) * q / 10n ** 8n))} 元</span>`) + `　<a class="small" href="#/tools/dv?c=${c}">試算 →</a></div>`; }).join('') +
+    '<div class="muted small">來自證交所、櫃買中心的除權除息預告表，只列資料日之後的下一次；除權息日當天起改看個股頁的股利卡。估計可領 = 持股股數 × 預告每股現金，元以下捨去；未扣二代健保補充保費與匯費，配股不估算股數，以實際入帳為準。</div></div>';
+}
 // 第 42 輪 F42-1：持股（tw.hold = {代號: [股數, 平均成本（分）]}）。只存在這個瀏覽器，不放進任何網址、不送出（R40）
 // 讀取時丟掉壞的筆；不在自選（也不在這次可復原的移除）裡的代號一併刪掉並寫回
 function holdLoad() {
@@ -1842,6 +1871,8 @@ function holdEdit(sec, c) {
   sec.querySelector('.h-cap').outerHTML = holdCap(V, L);
   const al = sec.querySelector('.h-all');
   if (al) al.innerHTML = holdAll(V);
+  const nx = sec.querySelector('.w-nx');                                           // 第 47 輪 F47-1c：估計可領跟著持股更新
+  if (nx) nx.outerHTML = watchNx();
 }
 const holdLine = (V, L) => !V.n ? '' : `<a class="w-hold" href="#/watch">持股 ${V.n} 檔　今日損益 <b class="${cls(Number(V.d))}">${holdY(V.d)}</b> 元　` +
   `未實現損益 <b class="${cls(Number(V.u))}">${holdY(V.u)}</b> 元（<b class="${cls(Number(V.u))}">${holdP(V.u, V.t)}</b>）${V.k ? `（今日損益不含無成交、除息 ${V.k} 檔）` : ''}</a>` +
@@ -1852,7 +1883,8 @@ function watchToday(L, rows) {
   if (!W.length) return '';
   const S = W.filter(c => L.stocks[c]).map(c => L.stocks[c]), V = holdView().all;
   const a = S.filter(s => s.hl && s.hl.some(e => HL_KINDS[e[0]])).length, b = S.filter(s => s.dsp || s.ntc).length;
-  const ev = [a && `近期新訊號 ${a} 檔`, b && `處置／注意 ${b} 檔`].filter(Boolean).join('、');
+  const x = L.nx ? W.filter(c => L.nx[c]).length : 0;                              // 第 47 輪 F47-1d：自選全部（不只前 5 檔）
+  const ev = [a && `近期新訊號 ${a} 檔`, b && `處置／注意 ${b} 檔`, x && `即將除權息 ${x} 檔`].filter(Boolean).join('、');
   return `<section class="sec card w-today"><div class="sec-h"><h2>我的自選</h2><span class="muted small">${md(L.date)} 收盤${L.flow_date !== L.date ? `、法人 ${md(L.flow_date)}` : ''}</span><span class="sp"></span><a class="chip" href="#/watch">全部 →</a></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>自選</th><th>收盤</th><th>漲跌</th><th>法人1日</th></tr></thead><tbody>${W.slice(0, 5).map(c => L.stocks[c] ? rows([[c, L.stocks[c]]])
       : `<tr data-code="${c}"><td class="nm"><b>${esc(R[c].n)}</b><span>${c}</span></td><td class="num ${cls(R[c].ch)}">${pfmt(R[c].c)}</td>${etfPct(R[c], L.date)}<td class="num">--</td></tr>`).join('')}</tbody></table></div>` +
