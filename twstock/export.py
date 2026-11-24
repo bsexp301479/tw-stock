@@ -1211,6 +1211,11 @@ def index_return(idx, b, last):
     return (float(idx[last]) / float(idx[b]) - 1) * 100 if b in idx and last in idx else None
 
 
+def ix_export(days, idx) -> dict:
+    """第 48 輪 F48-1：site/data/ix.json = 交易日 days（p_days）＋對齊的加權指數收盤（idx = idx_close["TWSE"]，沒有值為 None）；比較頁的交易日曆與指數線。"""
+    return {"d": [str(d) for d in days], "TAIEX": [_f(idx.get(d)) for d in days]}
+
+
 def stock_perf(d_, adj, days, idx, w52_start):
     """
     第 23 輪 F23-1：stocks/{代號}.json 的 pf = [[區間, 基準日, 本股 %, 指數 %, 差距（百分點）]]，用法同 price_stats（days 要完整的交易日序列）。
@@ -1761,6 +1766,7 @@ def export_all() -> float:
     insti_otc = {"foreign": 0.0, "trust": 0.0, "dealer": 0.0}     # 上櫃估算（張數 × 收盤）
     bad_all, miss_all, n_ev, n_inferred = [], [], 0, 0
     w52_start = latest_date - timedelta(days=365)
+    _write(SITE_DATA_DIR / "ix.json", ix_export(p_days, idx_close["TWSE"]))   # 第 48 輪 F48-1：比較頁的交易日曆＋加權收盤
     db_first = min(rows[0][0] for rows in prices.values())   # 全市場最早日線
 
     for code, rows in prices.items():

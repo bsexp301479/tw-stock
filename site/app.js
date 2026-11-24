@@ -67,6 +67,7 @@ const routes = {
   stock: (code, sub) => window.renderStock(code, sub),   // 第 25 輪 D25-08：#/stock/代號/分頁
   tools: arg => window.renderTools(arg),                 // 第 34 輪：試算工具 #/tools/dt|cp|pl（tools.js）
   help: arg => window.renderHelp(arg),                   // 第 45 輪：名詞說明 #/help、#/help/代號（help.js）
+  compare: (arg, sub) => window.renderCompare(arg, sub),   // 第 48 輪：報酬率比較 #/compare/代號,代號/區間（compare.js）
 };
 
 // 第 28 輪 D28-03：瀏覽器「返回／前進」回到看過的頁面時還原捲動位置；點連結進新頁才回到頂端。
@@ -85,7 +86,7 @@ async function route() {
   if (page !== 'watch') App.watchShare = App.watchAdd = App.watchUndo = App.watchEdit = null;   // 離開自選頁：清掉復原、結束編輯
   // 第 27 輪 D27-10：瀏覽器分頁標題帶頁面名稱（個股頁由 renderStock 換成「名稱 代號」）
   document.title = ({ today: '今日', bubble: '泡泡圖', rank: { hl: '新訊號', screen: '選股' }[String(arg).split('?')[0]] || '排行',
-    etf: arg === 'active' ? '主動 ETF 彙總' : arg ? arg + ' 持股' : 'ETF', watch: '自選', tools: '工具', help: '名詞說明' }[page] || (page === 'stock' ? arg : '今日')) + '｜台股資金流';
+    etf: arg === 'active' ? '主動 ETF 彙總' : arg ? arg + ' 持股' : 'ETF', watch: '自選', tools: '工具', help: '名詞說明', compare: '報酬率比較' }[page] || (page === 'stock' ? arg : '今日')) + '｜台股資金流';
   document.querySelectorAll('[data-tab]').forEach(a => a.classList.toggle('on', a.dataset.tab === page));
   const view = $('#view');
   if (window.Plotly && $('#bubble')) Plotly.purge('bubble');

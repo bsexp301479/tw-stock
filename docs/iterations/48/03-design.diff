@@ -1,0 +1,709 @@
+diff --git a/README.md b/README.md
+index aed9081..dc49c83 100644
+--- a/README.md
++++ b/README.md
+@@ -90,6 +90,7 @@ python3 tests/test_iter44.py                     # 第 44 輪測試（小項整
+ python3 tests/test_iter45.py                     # 第 45 輪測試（名詞說明）
+ python3 tests/test_iter46.py                     # 第 46 輪測試（ETF 近期表現，含息）
+ python3 tests/test_iter47.py                     # 第 47 輪測試（即將除權息提醒、自選 ETF 表現、指數卡、法人卡、夜盤、名詞）
++python3 tests/test_iter48.py                     # 第 48 輪測試（多檔報酬率比較：ix.json、還原口徑、起點、統計、網址、入口）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -155,6 +156,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker
+ - 名詞說明（第 45 輪，`site/help.js`）：頂欄「?」與頁尾「名詞說明」進入 `#/help`，8 組 41 個名詞（資金流、價量與技術、信用交易、籌碼、基本面、股利、期貨、ETF），定義寫的是本站的算法，部分名詞附「看 X →」連到對應的排行或工具；`#/help/代號`（例如 `#/help/vr`、`#/help/credit`）捲到該名詞或分組並標示，代號不存在時回到 `#/help`。會隨法規改的數字（證交稅、二代健保）不寫進辭典，改連到工具頁。**改算法時要同步修改 `help.js` 的名詞文字**；`tests/test_iter45.py` 會比對名詞文字和 `docs/iterations/45/02-pm.md`，並把 KD、RSI、MACD、量比、券資比、大戶門檻、一年位置的數字和程式常數綁在一起。工具頁「除權息」的固定說明，ETF 寫「不足 1 股依發行人公告折付現金…實際以發行人發放為準」。
+ - ETF 近期表現（第 46 輪）：ETF 個股頁「走勢」分頁 K 線卡之後、配息卡之前加「近期表現（含息）」卡，區間同股票卡（5／20／60／120 日、今年以來、52 週，未滿時加「上市以來／上櫃以來」，從本站第一個成交日起算，不是發行價）；含息報酬用還原收盤：除息日依官方除息表（`etf_events`）的參考價 ÷ 除息前收盤調整之前的價格（等於配息在除息日以參考價再投入同一檔），上市 ETF 另把 `etf_gaps` 中不在除息表的日子（多為分割、合併）一起調整，上櫃不推測；上櫃 ETF 有「前一列有成交、官方漲跌空白、不在除息表」的一天，或還原後相鄰兩個成交日變動超過 ±30% 時不輸出（無法辨識分割）。上市、上櫃 ETF 一律對照加權指數（價格指數，不含股息，長區間的差距會偏向 ETF）；代號尾碼 B（債券）、L／R（槓桿／反向）、U（期貨）在卡片多一行提示。K 線、頁頭 52 週高低仍是原始價。`etfp/{代號}.json` 的 `epf` 格式同股票 `pf`（`[[區間, 基準日, 本檔 %, 加權 %, 差距]]`）；`latest.json` ETF 列加 `r20`、`r60`、`ry`、`rw`（含息 %，缺值不輸出），`etfs.ix` = 加權指數同期 `{"20", "60", "y", "w"}`。ETF 列表加「行情／表現」欄組（只在這次瀏覽記住；表現表：收盤、20 日、60 日、今年以來、52 週），排序加含息 20 日、60 日、今年以來、52 週。
+ - 即將除權息提醒（第 47 輪）：`latest.json` 頂層 `nx = {代號: [除權息日, 類型, 每股現金或 null]}`，取自第 40 輪的除權除息預告，每檔只放資料日之後的下一次（空的時候不輸出）。個股／ETF 頁頭在處置／注意標籤之後加「即將除息 12/03」標籤（連到除權息試算，滑過看金額）；自選頁在表格之後加「即將除權息」卡（股票與 ETF 都列，依除權息日排序；現金待公告寫「金額待公告」，現金增資的「權」不寫金額），有填持股時加「估計可領 N 元」= 持股股數 × 預告每股現金，用整數運算、元以下捨去，未扣二代健保補充保費與匯費，配股不估算（R60）；今日頁「我的自選」卡提示行加「即將除權息 N 檔」（算全部自選）。同輪小修：指數卡區間漲跌改寫起算日（「自 08/25 起」）；籌碼分頁「法人5日」卡加「自營 5 日」；期貨夜盤結束時間 = 開始日的隔一個日曆日 05:00（週五夜盤到週六，R61）；自選頁選「表現」時 ETF 表改為含息報酬（20 日、60 日、今年以來、52 週，算法同 ETF 列表「表現」，只有 ETF 時欄組為「行情｜表現｜持股」）；名詞說明加「含息報酬」、改「還原價」（8 組 42 個名詞）。
++- 多檔報酬率比較（第 48 輪）：新頁 `#/compare/代號,代號/區間`（區間 `20`、`60`、`120`、`y` 今年以來、`w` 52 週，預設 `w`），最多 4 檔股票或 ETF 放在同一段期間比較，起點都是 0%。匯出新增 `site/data/ix.json = {"d": [交易日], "TAIEX": [加權收盤或 null]}`（`d` = 個股日線的完整交易日，約 5.7 KB），當作交易日曆與加權指數線。口徑（R62）：股票用還原價（`ev`），ETF 用含息還原（`dv`＋`gx` 推測調整，參考價 = 收盤 − 官方漲跌），和個股頁「近期表現」、ETF 頁「近期表現（含息）」同一區間的數字相同（顯示時剛好一半取偶數，同匯出）。起點（R63）同近期表現：N 日 = 往前第 N 個交易日、今年以來 = 前一年最後一個交易日、52 週 = 一年前那天（含）以前最後一個交易日；起點沒有成交用之前最後一個成交日。有一檔在起點還沒有成交時，全部（含加權指數）改從最晚那檔的第一個成交日起算並寫明（R64）；無成交的日子線持平，今天無成交寫「最後成交 M/D」（R65）。一律對照加權指數（價格指數，不含股息，R66）。表格依加入順序列區間報酬、最大跌幅（區間內從之前最高點往下的最大跌幅，滑過看日期）、年化波動（相鄰成交日漲跌幅的樣本標準差 × √250，少於 20 個日報酬不計算，R67），不排序、不列差距。網址正規化（R68）：轉大寫、去重、只留今天行情有的代號、最多 4 檔、區間不認得改 `w`，用 `replaceState` 不留瀏覽紀錄；入口是個股／ETF 頁近期表現卡標題列的「比較 →」，比較頁內可搜尋加入、從自選快速加入、按 × 移除。不含手續費、稅與二代健保補充保費。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+diff --git a/docs/iterations/README.md b/docs/iterations/README.md
+index 951584a..ee28807 100644
+--- a/docs/iterations/README.md
++++ b/docs/iterations/README.md
+@@ -37,4 +37,5 @@
+ - 第 45 輪（2026-11-22 使用者選名詞小辭典 F42-15，五角色、每次交接等確認）。分析師 `45/01-analyst.md`：41 個名詞草稿、入口實測（320 寬搜尋框 208 → 162px）、舊測試實測；D128～D133 = A（併入 QA44-03、只改 `test_iter41:437` 1 行、各處說明連結之後再加、禁用詞只把「借券賣出」當例外）。PM `45/02-pm.md`：F45-1～F45-5，41 個名詞逐字定稿（8 組、24 個連結），驗收 21 條。設計 `45/03-design.md`（＋`03-design.diff`）：新檔 `help.js`（79 行，名詞資料由 PM 表格產生）、`app.js` 2 行、`app.css` 1 行、`tools.js` 1 行、`index.html`（「?」按鈕、頁尾連結、`help.js` 載入、3 個 `?v=`），舊測試 1 行（雜湊 `4aec4a83de78`），新測試 `test_iter45`（反證 19）；PM 頁尾句「不構成投資建議」含禁用詞，改「不是買賣訊號」。PG `45/04-dev.md`：原樣套用，45 個測試全過，8001 冒煙正常（面板顯示時 `#/help/vr` 會自動捲）。QA `45/05-qa.md` 通過：驗收 21 條、320／375／1024 × 淺／深；QA45-01（`test_iter45` 沒鎖本輪 CSS 那一行）使用者選 A 已補 `check_css`，反證共 21 種、QA 反證 18／18。
+ - 第 46 輪（2026-11-22 使用者選 F42-11 ETF 近期表現，五角色、每次交接等確認）。分析師 `46/01-analyst.md`：含息報酬口徑（還原價，官方除息表＋上市推測調整）、手算例 5 檔＋邊界、R51～R58、舊測試鎖定 17 處；D134～D143（D141 = C、其餘 A）。PM `46/02-pm.md`：F46-1～F46-4，畫面文字逐字定稿，驗收 29 條；D138 兩條件只查上櫃、尾碼提示含 B／L／R／U。設計 `46/03-design.md`（＋`03-design.diff`）：`export.py` 新純函式 `etf_perf`（`_price_events` 以 TWSE 呼叫＋`_adj_factors`＋`stock_perf`），`epf` 接在 `E["sh"]` 之後，`latest.json` ETF 列 `r20`～`rw`、`etfs.ix`；`stock.js` `perfHTML` 加 `etf` 參數（股票輸出雜湊不變）；`app.js` `etfPerfHTML` 與「行情／表現」欄組；`app.css` 不改；舊測試 0 行，新測試 `test_iter46`（反證 26）；D144 = A（手機表現表在表格內橫向捲動）。PG `46/04-dev.md`：原樣套用並 `export`（11/20 資料），367 檔都有 `epf`、數字和手算例逐位相同，46 個測試全過。QA `46/05-qa.md` 通過：驗收 29 條、367 檔獨立重算 0 差異；D145 = A 已修 QA46-01（補測試）與 QA46-02（舊 `latest.json` 時不沿用含息排序，`app.js` 3 行），D146 = A 修正反證數。
+ - 第 47 輪（2026-11-23 使用者要求分析師全站走一次，五角色、每次交接等確認）。分析師 `47/01-analyst.md`：28 個路由 375／320 寬 0 溢出、主控台 0 錯誤；F47-1～F47-12、R59～R61、D147～D155（全 A：做 F47-1 即將除權息提醒、F47-2 指數卡起算日、F47-3 法人卡自營、F47-4 夜盤時間、F47-6 自選 ETF 表現、F47-7 名詞含息報酬）。PM `47/02-pm.md`：畫面文字逐字定稿、驗收 23 條，估計可領用 BigInt 整數運算；PM 自行決定 12 點使用者全部同意。設計 `47/03-design.md`（＋`03-design.diff`）：`export.py` 新純函式 `nx_latest`、`latest.json` 頂層 `nx`；`stock.js` `nxTag`、法人卡第 4 欄；`app.js` `watchNx`、`etfWatchPerf`、`renderWatch` 接線、今日卡、指數卡、夜盤；`help.js` 2 行；`app.css` 1 行；舊測試只改 `test_iter45` 3 行，新測試 `test_iter47`。PG `47/04-dev.md`：原樣套用並 `export`（11/23 資料），`latest.json` 頂層 `nx` 37 檔、其他匯出檔逐位元組不變，47 個測試全過。QA `47/05-qa.md` 通過：驗收 23 條、`nx` 與估計可領（720 組）獨立核算；D156 = A 已修 QA47-01（沒有 `nx` 時自選頁多一段空白，`app.js` 合併 1 行）；QA47-02（每股現金小於 0.000001 元不估計）列觀察。
++- 第 48 輪（2026-11-24 使用者選 F42-10 多檔報酬率比較，五角色、每次交接等確認）。分析師 `48/01-analyst.md`：前端用 `ev`／`dv`＋`gx` 重算和 `pf`／`epf` 14,260 列相同、新增 `ix.json`、手算例 6 組、R62～R70、舊測試鎖定 14 組；D157～D167 全 A。PM `48/02-pm.md`：畫面文字逐字定稿、驗收 30 條；PM 自行決定 17 點使用者全部同意。設計 `48/03-design.md`（＋`03-design.diff`）：`export.py` 新純函式 `ix_export` 寫 `ix.json`；新檔 `compare.js`（純函式＋比較頁）；`app.js` 路由與標題各 1 行；`stock.js` 近期表現卡「比較 →」2 行；`app.css` 4 行；舊測試 0 行，新測試 `test_iter48`。
+ - 規範：回應與文件用繁體中文；程式風格比照既有程式碼；只改必要的地方；外部網站請求要經過 `twstock/fetch.py` 的 `request`（有節流）；不要 commit 或 push；不要動 `.env`（建立專案副本時也不要複製 `.env`）；不要安裝排程或改系統設定（launchd、crontab、pmset、docker 設定），這些由使用者自行執行；埠 8000 是使用者自己的伺服器，測試用 8001 並在結束時關掉。改了 `site/` 的 js 或 css 要同步更新 `index.html` 的 `?v=`（sha1 前 8 碼，`test_iter23` 失敗時會印出正確的 3 行）。
+diff --git a/site/app.css b/site/app.css
+index 32c79e5..6a79fdd 100644
+--- a/site/app.css
++++ b/site/app.css
+@@ -7,6 +7,7 @@
+   --up-bg:rgba(214,69,69,.10);--dn-bg:rgba(48,164,108,.12);
+   --q-rise:rgba(214,69,69,.07);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.07);--q-ebb:rgba(48,164,108,.07);
+   --radius:10px;--shadow:0 1px 2px rgba(0,0,0,.04);
++  --cmp1:#4c6ef5;--cmp2:#c56a00;--cmp3:#ae3ec9;--cmp4:#0c8599;   /* 第 48 輪 F48-3：比較頁 4 色（不用漲跌色；卡片底對比 ≥ 3:1） */
+   color-scheme:light;
+ }
+ @media (prefers-color-scheme:dark){
+@@ -17,6 +18,7 @@
+     --up:#ef5b5b;--dn:#349f6a;--flat:#8a8a8a;--amber:#e8a33d;--blue:#488bd9;--violet:#7f77dd;--on-fill:#111;
+     --up-bg:rgba(239,91,91,.14);--dn-bg:rgba(52,159,106,.14);
+     --q-rise:rgba(239,91,91,.08);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.09);--q-ebb:rgba(52,159,106,.08);
++    --cmp1:#748ffc;--cmp2:#ff922b;--cmp3:#da77f2;--cmp4:#3bc9db;
+     color-scheme:dark;
+   }
+ }
+@@ -27,6 +29,7 @@
+   --up:#ef5b5b;--dn:#349f6a;--flat:#8a8a8a;--amber:#e8a33d;--blue:#488bd9;--violet:#7f77dd;--on-fill:#111;
+   --up-bg:rgba(239,91,91,.14);--dn-bg:rgba(52,159,106,.14);
+   --q-rise:rgba(239,91,91,.08);--q-rot:rgba(232,163,61,.08);--q-watch:rgba(59,130,214,.09);--q-ebb:rgba(52,159,106,.08);
++  --cmp1:#748ffc;--cmp2:#ff922b;--cmp3:#da77f2;--cmp4:#3bc9db;
+   color-scheme:dark;
+ }
+ html{-webkit-text-size-adjust:100%}
+@@ -379,3 +382,4 @@ a.pill.grp{cursor:pointer}a.pill.grp:hover,a.pill.grp:focus-visible{border-color
+ .dv-nx{word-break:keep-all}.tl-lg+.muted.small{text-wrap:pretty}.chip-g .stat .s{word-break:keep-all}   /* 第 44 輪：375 寬不拆「預告」、複利座標說明不剩單字、籌碼卡不拆「（百分點）」（QA44-01） */
+ .help-btn{font-size:16px;font-weight:700;line-height:1;text-decoration:none}.help-g{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.help-t{padding:8px 6px;border-top:1px solid var(--border);scroll-margin-top:calc(var(--top-h,56px) + 8px)}.sec-h+.help-t{border-top:0}.help-t a{color:var(--blue);white-space:nowrap}.help-t.on{background:var(--card2);box-shadow:inset 3px 0 0 var(--blue)}   /* 第 45 輪：名詞說明 */
+ .card.w-nx{margin-top:12px}.w-nx .sec-h{margin-bottom:4px}.w-nx .al-row{line-height:1.7}.w-nx a.small{color:var(--blue);white-space:nowrap}a.pill.pill-nx{border-color:var(--blue);color:var(--blue)}   /* 第 47 輪 F47-1：即將除權息卡、頁頭標籤 */
++.cmp-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px;flex:none}.cmp-ix{background:var(--text2)}.cmp i.dash{background:none;height:0;border-top:2px dashed var(--text2);border-radius:0}.cmp-pick{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 6px}.cmp-c{display:inline-flex;align-items:center}.cmp-x{border:none;background:none;margin-left:4px;padding:0 2px;color:var(--text2);font-size:15px;line-height:1}.cmp-q{position:relative;flex:0 1 220px}.cmp-q input{width:100%;padding:6px 12px;border-radius:999px;border:1px solid var(--border2);background:var(--card);color:var(--text);font-size:14px;outline:none}.cmp-q input:focus{border-color:var(--blue)}.cmp-q .qlist{z-index:30}.cmp-w{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px}.cmp .seg{margin-top:6px;max-width:100%;overflow-x:auto}.cmp .seg button{white-space:nowrap}.cmp-s{margin:6px 0 2px}.cmp-ch{height:260px;cursor:crosshair}.cmp-tbl td:first-child{white-space:normal}@media (max-width:720px){.cmp-q{flex:1 1 100%}.cmp-q input{font-size:16px}.cmp-ch{height:220px}}@media (max-width:360px){.cmp .seg button{padding:4px 6px}}   /* 第 48 輪 F48-3：報酬率比較頁 */
+diff --git a/site/app.js b/site/app.js
+index d4a74f6..06eed49 100644
+--- a/site/app.js
++++ b/site/app.js
+@@ -67,6 +67,7 @@ const routes = {
+   stock: (code, sub) => window.renderStock(code, sub),   // 第 25 輪 D25-08：#/stock/代號/分頁
+   tools: arg => window.renderTools(arg),                 // 第 34 輪：試算工具 #/tools/dt|cp|pl（tools.js）
+   help: arg => window.renderHelp(arg),                   // 第 45 輪：名詞說明 #/help、#/help/代號（help.js）
++  compare: (arg, sub) => window.renderCompare(arg, sub),   // 第 48 輪：報酬率比較 #/compare/代號,代號/區間（compare.js）
+ };
+ 
+ // 第 28 輪 D28-03：瀏覽器「返回／前進」回到看過的頁面時還原捲動位置；點連結進新頁才回到頂端。
+@@ -85,7 +86,7 @@ async function route() {
+   if (page !== 'watch') App.watchShare = App.watchAdd = App.watchUndo = App.watchEdit = null;   // 離開自選頁：清掉復原、結束編輯
+   // 第 27 輪 D27-10：瀏覽器分頁標題帶頁面名稱（個股頁由 renderStock 換成「名稱 代號」）
+   document.title = ({ today: '今日', bubble: '泡泡圖', rank: { hl: '新訊號', screen: '選股' }[String(arg).split('?')[0]] || '排行',
+-    etf: arg === 'active' ? '主動 ETF 彙總' : arg ? arg + ' 持股' : 'ETF', watch: '自選', tools: '工具', help: '名詞說明' }[page] || (page === 'stock' ? arg : '今日')) + '｜台股資金流';
++    etf: arg === 'active' ? '主動 ETF 彙總' : arg ? arg + ' 持股' : 'ETF', watch: '自選', tools: '工具', help: '名詞說明', compare: '報酬率比較' }[page] || (page === 'stock' ? arg : '今日')) + '｜台股資金流';
+   document.querySelectorAll('[data-tab]').forEach(a => a.classList.toggle('on', a.dataset.tab === page));
+   const view = $('#view');
+   if (window.Plotly && $('#bubble')) Plotly.purge('bubble');
+diff --git a/site/compare.js b/site/compare.js
+new file mode 100644
+index 0000000..eb2dd96
+--- /dev/null
++++ b/site/compare.js
+@@ -0,0 +1,170 @@
++// 第 48 輪 F42-10：報酬率比較 #/compare/代號,代號/區間（最多 4 檔，起點都是 0%）。股票用還原價（ev）、ETF 含息（dv＋gx，同 epf），
++// 對照加權指數（data/ix.json：交易日＋加權收盤）。純函式在前（測試用 node 執行），畫面在後；圖表放在 stock.js 的 charts，換頁時 disposeStockCharts 一併釋放
++'use strict';
++
++const CMP_MAX = 4, CMP_KEYS = [['20', '20 日'], ['60', '60 日'], ['120', '120 日'], ['y', '今年以來'], ['w', '52 週']];
++
++// 還原事件（R62）：股票 = ev（已是生效的資料列）；ETF = dv ＋ gx 中不在 dv 的日子（參考價 = 收盤 − 官方漲跌，漲跌 null 時 = 收盤；前收 = 前一列收盤）。
++// 套用規則同匯出 _price_events：對到事件日當天或之後第一列，第 0 列或最後一列之後略過；同一列只用第一筆（官方先）；係數 0.02～20 以外略過
++function cmpEvents(data) {
++  const P = data.prices, ev = data.ev || data.dv || [], ex = new Set(ev.map(e => e.d)), at = {};
++  const gx = data.ev ? [] : (data.gx || []).filter(g => !ex.has(g)).map(g => { const i = P.d.indexOf(g);
++    return { d: g, p: P.c[i - 1], r: P.ch[i] == null ? P.c[i] : Math.round((P.c[i] - P.ch[i]) * 100) / 100 }; });
++  ev.map(e => ({ d: e.d, p: e.p, r: e.r })).concat(gx).sort((a, b) => a.d < b.d ? -1 : a.d > b.d ? 1 : 0).forEach(e => {
++    const i = P.d.findIndex(d => d >= e.d);
++    if (i > 0 && !at[i] && e.r / e.p >= 0.02 && e.r / e.p <= 20) at[i] = { d: P.d[i], p: e.p, r: e.r };
++  });
++  return Object.keys(at).map(Number).sort((a, b) => a - b).map(i => at[i]);
++}
++// 還原收盤 = 收盤 × adjFactors（stock.js）；無成交為 null
++function cmpAdj(data) {
++  const P = data.prices, af = adjFactors(P.d, cmpEvents(data));
++  return P.c.map((c, i) => c == null ? null : c * af[i]);
++}
++// 起點日（R63，同 stock_perf）：N 日 = 往前第 N 個交易日；y = 前一年最後一個交易日；w = 終點往前 365 天（含）以前最後一個交易日
++function cmpBase(days, k) {
++  const n = days.length, last = days[n - 1];
++  if (k !== 'y' && k !== 'w') return n > +k ? days[n - 1 - k] : null;
++  const t = k === 'y' ? last.slice(0, 4) + '-01-01' : new Date(Date.parse(last + 'T00:00:00Z') - 365 * 864e5).toISOString().slice(0, 10);
++  const b = days.filter(d => k === 'y' ? d < t : d <= t);
++  return b.length ? b[b.length - 1] : null;
++}
++// 某日（含）以前最後一個有成交的 [日期, 還原收盤]；沒有 → null
++function cmpAt(d_, adj, b) {
++  for (let i = d_.length - 1; i >= 0; i--) if (d_[i] <= b && adj[i] != null) return [d_[i], adj[i]];
++  return null;
++}
++// 統計（R67）：pts = [[日期, 值]]，第一點是起點。區間報酬 %；最大跌幅 [%, 高點日, 低點日]（沒有下跌 → [0, null, null]）；
++// 年化波動 = 相鄰兩點報酬的樣本標準差（n − 1）× √250 × 100，日報酬少於 20 個 → null
++function cmpStats(pts) {
++  const v = pts.map(p => p[1]), r = v.slice(1).map((x, i) => x / v[i] - 1), n = r.length, m = r.reduce((a, b) => a + b, 0) / n;
++  let hi = 0, dd = [0, null, null];
++  v.forEach((x, i) => { if (x > v[hi]) hi = i; const y = (x / v[hi] - 1) * 100; if (y < dd[0]) dd = [y, pts[hi][0], pts[i][0]]; });
++  return { ret: (v[n] / v[0] - 1) * 100, dd, vol: n < 20 ? null : Math.sqrt(r.reduce((a, b) => a + (b - m) * (b - m), 0) / (n - 1)) * Math.sqrt(250) * 100 };
++}
++// 一條線：起點 b 到終點每個交易日 [日期, %, 無成交]（無成交沿用之前的值，R65）；統計只用起點那一點＋之後有成交的日子
++function cmpLine(days, d_, adj, b) {
++  const base = cmpAt(d_, adj, b), at = {}, pts = [base];
++  d_.forEach((d, i) => { if (adj[i] != null) at[d] = adj[i]; if (adj[i] != null && d > b) pts.push([d, adj[i]]); });
++  let v = base[1];
++  const line = days.filter(d => d >= b).map(d => { if (d > b && d in at) v = at[d]; return [d, (v / base[1] - 1) * 100, !(d in at)]; });
++  return { line, last: pts[pts.length - 1][0], ...cmpStats(pts) };
++}
++// 比較（R63～R66）：ix = {d, TAIEX}；S = [{c, d_, adj}]（網址順序）。有一檔在起點日（含）以前沒有成交 → 全部從各檔第一個成交日中最晚的那天起算
++function cmpCalc(ix, S, k) {
++  const D = ix.d, first = S.map(s => s.d_[s.adj.findIndex(a => a != null)]);
++  let b = cmpBase(D, k) || D[0];
++  const late = first.some(f => f > b) ? first.reduce((a, f) => f > a ? f : a) : null;
++  if (late) b = late;
++  return { b, end: D[D.length - 1], late: late ? S.filter((s, j) => first[j] === late).map(s => s.c) : [],
++    rows: S.map(s => Object.assign({ c: s.c }, cmpLine(D, s.d_, s.adj, b))), ix: cmpLine(D, D, ix.TAIEX, b) };
++}
++// 搜尋（同頂欄 pick）：代號開頭 → 名稱開頭 → 名稱包含（後兩組依成交額），排除已選的
++function cmpPick(all, q, skip) {
++  const byTv = (a, b) => (b[1].tv ?? 0) - (a[1].tv ?? 0), nm = s => s.n.toLowerCase(), a = all.filter(([c]) => !skip.includes(c));
++  const rest = a.filter(([c]) => !c.toLowerCase().startsWith(q));
++  return a.filter(([c]) => c.toLowerCase().startsWith(q)).concat(rest.filter(([, s]) => nm(s).startsWith(q)).sort(byTv), rest.filter(([, s]) => !nm(s).startsWith(q) && nm(s).includes(q)).sort(byTv));
++}
++// 網址正規化（R68）：轉大寫、去重、去空項、只留今天行情有的代號、最多 4 檔；區間不認得 → w
++function cmpNorm(arg, sub, L) {
++  const R = L.etfs?.rows || {}, all = [...new Set((arg || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean))];
++  const ok = all.filter(c => L.stocks[c] || R[c]), msg = [];
++  if (ok.length < all.length) msg.push(`找不到 ${all.filter(c => !ok.includes(c)).join('、')}，已從比較清單移除`);
++  if (ok.length > CMP_MAX) msg.push(`最多比較 ${CMP_MAX} 檔，已保留前 ${CMP_MAX} 檔`);
++  return { list: ok.slice(0, CMP_MAX), k: CMP_KEYS.some(([v]) => v === sub) ? sub : 'w', msg };
++}
++// 顯示用：四捨五入到 2 位，二進位值剛好一半時取偶數（同 Python round，和個股頁近期表現 pf 的數字相同，例 -15.625 → -15.62、2.675 → 2.67）
++function cmpR(v) {
++  const f = Math.floor(v * 100);
++  return /\.\d\d50*$/.test(Math.abs(v).toFixed(20)) ? (f + (f & 1)) / 100 : Number(v.toFixed(2));
++}
++const pc = v => sgn(v == null ? v : cmpR(v));
++const cmpUrl = (list, k) => list.length ? `#/compare/${list.join(',')}/${k}` : '#/compare';
++
++// ─── 畫面 ───────────────────────────────────────────────
++window.renderCompare = async (arg, sub) => {
++  disposeKCharts();
++  const L = App.latest, R = L.etfs?.rows || {}, view = $('#view'), nm = c => (L.stocks[c] || R[c]).n;
++  let { list, k, msg } = cmpNorm(arg, sub, L);
++  const ix = App.cmpIx || (App.cmpIx = await getJSON('data/ix.json').catch(() => null));
++  const data = ix ? await Promise.all(list.map(c => loadStock(c, L.stocks[c] ? 'stocks' : 'etfp'))) : [];
++  const no = list.filter((c, j) => ix && !L.stocks[c] && !data[j].epf);       // ETF 沒有 epf（第 46 輪 D138 防呆）不列入
++  if (no.length) msg.push(`本站無法確認 ${no.join('、')} 的價格調整，暫不比較`);
++  const S = list.map((c, j) => ({ c, d_: ix ? data[j].prices.d : [], adj: ix ? cmpAdj(data[j]) : [] })).filter(s => !no.includes(s.c));
++  list = S.map(s => s.c);
++  if (location.hash !== cmpUrl(list, k)) history.replaceState(history.state, '', cmpUrl(list, k));
++  const go = (l, v) => { history.replaceState(null, '', cmpUrl(l, v)); window.renderCompare(l.join(','), v); };
++  const X = ix && S.length ? cmpCalc(ix, S, k) : null, col = j => `var(--cmp${j + 1})`, full = list.length >= CMP_MAX;
++  const W = [...App.watch].filter(c => (L.stocks[c] || R[c]) && !list.includes(c)).slice(0, 8);
++  const short = '股票用還原價（含股息）、ETF 含配息；加權指數不含股息';      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
++  const note = X && `每條線 = 還原收盤 ÷ 起點的還原收盤 − 1。股票的還原價和個股頁 K 線、近期表現相同（除權息、減資、現金增資依官方參考價調整）；ETF 的含息報酬和 ETF 頁「近期表現（含息）」相同（配息在除息日以參考價再投入同一檔，上市 ETF 推測的分割、合併也一起調整）。不含手續費、稅與二代健保補充保費。` +
++    'N 日 = 從往前第 N 個交易日的收盤起算（20 日約 1 個月、60 日約 3 個月、120 日約 6 個月）；今年以來從前一年最後一個交易日起算；52 週從一年前那天（含）以前最後一個交易日起算。' +
++    `起點那天沒有成交時，用之前最後一個成交日的收盤；有一檔在起點還沒有成交時，全部改從最晚那檔的第一個成交日起算（不是發行價，本站日線從 ${ix.d[0]} 起）。無成交的日子線持平，今天無成交時用最後成交的收盤。` +
++    '最大跌幅 = 區間內從之前的最高點往下的最大跌幅（含起點）；年化波動 = 相鄰兩個成交日漲跌幅的標準差 × √250，數字越大代表每天起伏越大，少於 20 個交易日不計算。' +
++    '加權指數是價格指數，不含股息，區間越長影響越大；上櫃股票的個股頁對照櫃買指數，這裡一律對照加權指數。債券、海外、槓桿／反向、期貨 ETF 和股價指數走勢不同。以上都是過去區間的數字，不代表之後的走勢。';
++  const td = s => `<td class="num ${cls(s.ret)}">${pc(s.ret)}%</td>` + (s.dd[1] ? `<td class="num" title="${s.dd[1]} 高點 → ${s.dd[2]}">${pc(s.dd[0])}%</td>` : '<td class="num">0.00%</td>') +
++    `<td class="num">${s.vol == null ? '--' : fmt(cmpR(s.vol), 2) + '%'}</td>`;
++  view.innerHTML = `<section class="sec card cmp"><div class="sec-h"><h2>報酬率比較</h2><span class="muted small">至 ${md(ix ? ix.d[ix.d.length - 1] : L.date)}</span></div>
++    <div class="muted small">把最多 4 檔股票或 ETF 放在同一段期間比較，起點都是 0%。</div>
++    <div class="cmp-pick">${list.map((c, j) => `<span class="chip cmp-c"><i class="cmp-dot" style="background:${col(j)}"></i>${c} ${esc(nm(c))}<button type="button" class="cmp-x" data-x="${c}" aria-label="移除 ${c}">×</button></span>`).join('')}
++      <div class="cmp-q">${full ? '<input id="cmpQ" type="search" placeholder="已滿 4 檔" autocomplete="off" disabled>' : '<input id="cmpQ" type="search" placeholder="加入代號或名稱" autocomplete="off">'}<div id="cmpList" class="qlist" hidden></div></div></div>
++    ${W.length && !full ? `<div class="cmp-w small"><span class="muted">自選：</span>${W.map(c => `<a href="#" class="chip" data-add="${c}">${c} ${esc(nm(c))}</a>`).join('')}</div>` : ''}
++    ${msg.map(t => `<div class="muted small cmp-msg">${t}</div>`).join('')}
++    ${!ix ? '<div class="empty">找不到交易日資料（data/ix.json），重新匯出資料後才能比較</div>' : !X ? '<div class="empty">輸入代號或名稱，加入要比較的股票或 ETF（最多 4 檔）。也可以從個股頁、ETF 頁的「近期表現」卡點「比較 →」進來。</div>' : `
++    ${segHTML('cmpSeg', CMP_KEYS, k)}
++    <div class="muted small cmp-s">自 ${X.b} 收盤起算，至 ${X.end} 收盤</div>
++    ${X.late.length ? `<div class="muted small cmp-late">${X.late.join('、')} 在本站 ${X.b} 才有成交，比較起點改為 ${X.b}（各檔與加權指數都從這天起算）</div>` : ''}
++    <div class="kleg" id="cmpL"></div><div id="cmpC" class="chart-box cmp-ch"></div>
++    <div class="kleg"><span class="lg"><i class="dash"></i>加權指數（不含息）</span><span class="lg">實線 = 各檔（股票還原價、ETF 含息）</span></div>
++    <div class="tbl-wrap"><table class="tbl cmp-tbl"><thead><tr><th>名稱</th><th>區間報酬</th><th>最大跌幅</th><th>年化波動</th></tr></thead><tbody>` +
++    X.rows.map((r, j) => `<tr><td><i class="cmp-dot" style="background:${col(j)}"></i><b>${esc(nm(r.c))}</b> <span class="muted small">${r.c}</span>${r.last < X.end ? `<div class="muted small">最後成交 ${md(r.last)}</div>` : ''}</td>${td(r)}</tr>`).join('') +
++    `<tr><td><i class="cmp-dot cmp-ix"></i><b>加權指數（不含息）</b></td>${td(X.ix)}</tr></tbody></table></div>
++    <div class="muted small">表格依加入順序排列。最大跌幅滑過可看高點與低點日期；年化波動在區間內少於 20 個交易日時不計算（--）。</div>
++    <div class="muted small" style="margin-top:6px">${noteHTML(short, note)}</div>`}</section>`;
++  const sec = $('#view .cmp'), input = $('#cmpQ'), box = $('#cmpList');
++  sec.addEventListener('click', e => { const a = e.target.closest('[data-add]'), x = e.target.closest('[data-x]');
++    if (a) { e.preventDefault(); go(list.concat(a.dataset.add), k); } else if (x) go(list.filter(c => c !== x.dataset.x), k); });
++  let hits = [], on = -1;
++  const draw = () => { const q = input.value.trim();
++    box.innerHTML = hits.map(([c, s], i) => `<a href="#" data-add="${c}"${i === on ? ' class="on"' : ''}><span class="code">${c}</span><span class="qn">${esc(s.n)}</span><span class="muted small">${esc(s.i ?? 'ETF')}</span></a>`).join('') ||
++      (q ? `<div class="qnone">找不到「${esc(q)}」，可輸入代號或名稱的一部分</div>` : '');
++    box.hidden = !box.innerHTML; };
++  input.addEventListener('input', () => { const q = input.value.trim().toLowerCase();
++    hits = q ? cmpPick(Object.entries(L.stocks), q, list).concat(cmpPick(Object.entries(R), q, list)).slice(0, 8) : []; on = -1; draw(); });
++  input.addEventListener('keydown', e => {
++    if (e.isComposing || e.keyCode === 229) return;                     // 注音、倉頡選字中的 Enter 不送出
++    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { const n = hits.length;
++      if (n) on = e.key === 'ArrowDown' ? (on + 1) % n : (on <= 0 ? n : on) - 1;
++      draw(); e.preventDefault();
++    } else if (e.key === 'Enter') { e.preventDefault();
++      const q = input.value.trim().toLowerCase(), h = hits[on] || hits.filter(([c]) => c.toLowerCase() === q)[0];
++      if (h) go(list.concat(h[0]), k);
++    } else if (e.key === 'Escape') { box.hidden = true; input.blur(); }
++  });
++  box.addEventListener('mousedown', e => e.preventDefault());           // 點清單時輸入框不失焦，點其他地方才關閉
++  input.addEventListener('blur', () => { box.hidden = true; });
++  if (!X) return;
++  onSeg('cmpSeg', v => go(list, v));
++  const show = i => { $('#cmpL').innerHTML = `<span><b>${X.ix.line[i][0].split('-').join('/')}</b></span>` +
++    X.rows.map((r, j) => `<span><i class="cmp-dot" style="background:${col(j)}"></i>${r.c} <b>${pc(r.line[i][1])}%</b>${r.line[i][2] ? '（無成交）' : ''}</span>`).join('') +
++    `<span><i class="cmp-dot cmp-ix"></i>加權 <b>${pc(X.ix.line[i][1])}%</b></span>`; };
++  const LC = window.LightweightCharts, T = X.ix.line.length;
++  show(T - 1);
++  if (!LC) return;
++  const dt = t => typeof t === 'string' ? t : [t.year, t.month, t.day].map(x => String(x).padStart(2, '0')).join('-');
++  const c = LC.createChart($('#cmpC'), { autoSize: true, handleScroll: false, handleScale: false,
++    layout: { background: { type: 'solid', color: 'transparent' }, textColor: css('--text2'), fontSize: 11, attributionLogo: false },
++    grid: { vertLines: { visible: false }, horzLines: { color: css('--border') } },
++    rightPriceScale: { borderVisible: false, minimumWidth: 76, entireTextOnly: true },
++    timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true,
++      tickMarkFormatter: (t, type) => { const [y, m, d] = dt(t).split('-').map(Number); return type === 0 ? String(y) : type === 1 ? `${m}月` : `${m}/${d}`; } },
++    localization: { locale: 'zh-TW', timeFormatter: t => dt(t).split('-').join('/') } });
++  const px = { type: 'custom', minMove: 0.01, formatter: v => sgn(v) + '%' };
++  const add = (s, color, st, w) => { const x = c.addLineSeries({ color, lineStyle: st, lineWidth: w, priceFormat: px, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
++    x.setData(s.line.map(([d, v]) => ({ time: d, value: v }))); return x; };
++  add(X.ix, css('--text2'), 2, 1).createPriceLine({ price: 0, color: css('--border2'), lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: '' });
++  X.rows.forEach((r, j) => add(r, css(`--cmp${j + 1}`), 0, 2));
++  charts = [c];                                                          // stock.js：route() 換頁時 disposeStockCharts 釋放
++  c.timeScale().fitContent();
++  c.subscribeCrosshairMove(p => { const i = p.logical == null ? -1 : Math.round(p.logical); show(p.time !== undefined && i >= 0 && i < T ? i : T - 1); });
++};
+diff --git a/site/index.html b/site/index.html
+index 865b682..2e3cd22 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,13 +7,14 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=07335b75">
++<link rel="stylesheet" href="app.css?v=1ae7bbed">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=5548b620" defer></script>
+-<script src="stock.js?v=7e6c6a13" defer></script>
++<script src="app.js?v=d273c8c5" defer></script>
++<script src="stock.js?v=29bc6522" defer></script>
+ <script src="tools.js?v=64e7360f" defer></script>
+ <script src="help.js?v=a5a5a7e8" defer></script>
++<script src="compare.js?v=6652dcfe" defer></script>
+ </head>
+ <body>
+ <header class="top">
+diff --git a/site/stock.js b/site/stock.js
+index d6813b5..755a0c8 100644
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -375,6 +375,8 @@ window.renderStock = async function (code, sub) {
+   const dvh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '配息與填息' : '股利與填息'))[0];   // 第 39 輪 F39-3：連結加在 divHTML 外，卡片字面不變
+   if (dvh) dvh.insertAdjacentHTML('afterend', `<span class="sp"></span><a class="small dv-go" href="#/tools/dv?c=${code}">試算 →</a>`);
+   if (dvh && data.nx) dvh.parentElement.insertAdjacentHTML('afterend', data.nx.map(n => `<div class="small dv-nx">${esc(nxText(n, E))}</div>`).join(''));   // 第 40 輪 F40-3：卡片標題列下一行
++  const pfh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '近期表現（含息）' : '近期表現'))[0];   // 第 48 輪 F48-4：連結加在 perfHTML 外，卡片字面不變
++  if (pfh) pfh.parentElement.insertAdjacentHTML('beforeend', `<span class="sp"></span><a class="small cmp-go" href="#/compare/${code}">比較 →</a>`);
+   onSeg('stockTabSeg', v => { App.ptStuck = $('#view .s-head').getBoundingClientRect().bottom <= topH(); localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
+   $('#hlMore')?.addEventListener('click', e => e.currentTarget.parentElement.classList.add('open'));
+   $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });
+diff --git a/tests/test_iter48.py b/tests/test_iter48.py
+new file mode 100644
+index 0000000..77a49e7
+--- /dev/null
++++ b/tests/test_iter48.py
+@@ -0,0 +1,384 @@
++"""第 48 輪（不連網、不連資料庫）：多檔報酬率比較 F42-10（F48-1 匯出 ix.json、F48-2 compare.js 純函式、F48-3 比較頁、F48-4 入口）。
++export.ix_export 用自造資料測；有 node 時取出 compare.js 的函式＋stock.js 的 adjFactors 執行（node 14 可跑）：全部 pf／epf 逐列比對、
++docs/iterations/48/02-pm.md 的手算例逐位、網址正規化、假 DOM 跑 renderCompare 比對畫面文字。最後的 test_contrast 把原始碼改壞（反證），確認對應的檢查會失敗。"""
++import hashlib
++import inspect
++import json
++import re
++import subprocess
++import sys
++from datetime import date
++from decimal import Decimal
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tests"))
++from twstock import export  # noqa: E402
++import test_iter34 as T  # noqa: E402
++import test_iter47 as T47  # noqa: E402
++
++SITE, HTML, APP, STK = T.SITE, T.HTML, T.APP, T.STK
++CMP = (SITE / "compare.js").read_text(encoding="utf-8")
++DATA = SITE / "data"
++SRC = (ROOT / "twstock" / "export.py").read_text(encoding="utf-8")
++README = (ROOT / "README.md").read_text(encoding="utf-8")
++PM = (ROOT / "docs" / "iterations" / "48" / "02-pm.md").read_text(encoding="utf-8")
++ADVICE = set(T47.ADVICE) | {"利多", "利空", "看多", "看空", "轉強", "轉弱", "強於大盤", "弱於大盤", "贏過", "輸給", "抗跌", "獲利能力佳", "惡化"}
++DATE = "2026-11-24"
++_grab = T._grab
++FNS = ("cmpEvents", "cmpAdj", "cmpBase", "cmpAt", "cmpStats", "cmpLine", "cmpCalc", "cmpPick", "cmpNorm", "cmpR")
++
++
++def _node(js):
++    """node 執行；反證可能讓程式丟例外 → "ERR"（檢查失敗），沒有 node → None（略過）。"""
++    try:
++        return T._node(js)
++    except subprocess.CalledProcessError:
++        return "ERR"
++
++
++def _js(cmp=CMP, stk=STK, app=APP):
++    """node 片段：app.js 的格式函式＋stock.js 的 adjFactors＋compare.js 的純函式與常數。"""
++    return "\n".join([_grab(app, n) for n in ("fmt", "sgn", "cls", "esc", "md")] + [_grab(stk, "adjFactors")] +
++                     [_grab(cmp, n) for n in ("CMP_MAX",) + FNS + ("cmpUrl", "pc")]) + "\nconst fs = require('fs');\n"
++
++
++# ─── F48-1 匯出 ix.json（驗收 1、2）────────────────────────────────
++def check_ix(fn=None):
++    fn = fn or export.ix_export
++    d = [date(2025, 10, 30), date(2025, 10, 31), date(2025, 11, 3)]
++    got = fn(d, {d[0]: Decimal("28287.53"), d[2]: Decimal("28500.10")})
++    return (list(got) == ["d", "TAIEX"] and got == {"d": ["2025-10-30", "2025-10-31", "2025-11-03"], "TAIEX": [28287.53, None, 28500.1]}
++            and json.dumps(got, separators=(",", ":")) == '{"d":["2025-10-30","2025-10-31","2025-11-03"],"TAIEX":[28287.53,null,28500.1]}')
++
++
++def test_ix_export():
++    assert check_ix()
++
++
++def check_wiring(src=SRC):
++    w = '    _write(SITE_DATA_DIR / "ix.json", ix_export(p_days, idx_close["TWSE"]))'
++    i = src.find(w)
++    return (src.count(w) == 1 and src.count("ix_export(") == 2 and src.index("def index_return(") < src.index("def ix_export(") < src.index("def stock_perf(")
++            and src.index("    w52_start = latest_date - timedelta(days=365)") < i < src.index("    for code, rows in prices.items():\n        info = stocks.get(code)")
++            and all(w not in src[src.index("def etf_export("):src.index("def _load_holdings(")] for w in ("ix.json", "ix_export")))
++
++
++def test_wiring():
++    assert check_wiring()
++    assert hashlib.sha1(inspect.getsource(export.etf_export).encode()).hexdigest()[:12] == "711fa2b7790c"
++    assert SRC.count("sh_stock") == 3 and SRC.count("sh_etf") == 3 and SRC.count('E["epf"] = epf') == 1
++
++
++def test_site_data():
++    f = DATA / "ix.json"
++    if not f.exists():
++        print("  （尚未用第 48 輪匯出，略過 ix.json）")
++        return
++    ix, L = json.loads(f.read_text(encoding="utf-8")), json.loads((DATA / "latest.json").read_text(encoding="utf-8"))
++    days = sorted({d for p in (DATA / "stocks").glob("*.json") for d in json.loads(p.read_text(encoding="utf-8"))["prices"]["d"]})
++    assert list(ix) == ["d", "TAIEX"] and ix["d"] == days and len(ix["TAIEX"]) == len(days) and ix["d"][-1] == L["date"]
++    assert f.stat().st_size <= 8 * 1024
++    if L["date"] == DATE:
++        assert len(days) == 259 and ix["d"][0] == "2025-10-30" and ix["TAIEX"][0] == 28287.53 and ix["TAIEX"][-1] == 40122.35 and None not in ix["TAIEX"]
++
++
++# ─── F48-2 純函式（驗收 3、11、12）─────────────────────────────────
++FULL = r"""
++const L = JSON.parse(fs.readFileSync(DIR + '/latest.json'));
++let files = 0, rows = 0; const bad = [];
++for (const [dir, codes, key] of [['stocks', Object.keys(L.stocks), 'pf'], ['etfp', Object.keys(L.etfs.rows), 'epf']]) for (const c of codes) {
++  const d = JSON.parse(fs.readFileSync(`${DIR}/${dir}/${c}.json`)); if (!d[key]) continue; files++;
++  const adj = cmpAdj(d), last = cmpAt(d.prices.d, adj, '9999-12-31');
++  for (const r of d[key]) { rows++; const b = r[1] && d.prices.d[0] <= r[1] ? cmpAt(d.prices.d, adj, r[1]) : null;
++    if (pc(b ? (last[1] / b[1] - 1) * 100 : null) !== sgn(r[2])) bad.push([c, r[0]]); }
++}
++console.log(JSON.stringify([files, rows, bad.slice(0, 5), bad.length]));"""
++
++
++def check_full(cmp=CMP, stk=STK):
++    """全部 pf／epf：純函式算的區間報酬顯示字串和匯出相同（R62；驗收 3）。"""
++    if not (DATA / "latest.json").exists():
++        return True
++    o = _node(_js(cmp, stk) + f"const DIR = {json.dumps(str(DATA))};" + FULL)
++    if o is None or o == "ERR":
++        return o is None
++    if json.loads((DATA / "latest.json").read_text(encoding="utf-8"))["date"] == DATE and o[:2] != [2354, 14260]:
++        return False
++    return o[3] == 0 and o[0] > 0
++
++
++def test_full():
++    assert check_full()
++
++
++UNIT = r"""
++const D = ['2025-11-20', '2025-11-21', '2025-11-24', '2025-11-25', '2025-12-31', '2026-01-02', '2026-11-23', '2026-11-24'];
++const P = (d, c, ch) => ({ prices: { d, c, ch: ch || c.map(() => 0) } });
++// ETF：dv 在非交易日 → 對到下一列；gx 漲跌 null → 參考價 = 收盤；gx 和 dv 同一列 → 只用官方；係數不合理略過；第 0 列略過
++const e1 = Object.assign(P(['a1', 'a3', 'a4', 'a6', 'a7'], [10, 10, 20, 20, 5], [0, 0, null, 0, 0]), { dv: [{ d: 'a0', p: 9, r: 8 }, { d: 'a2', p: 10, r: 9 }, { d: 'a6', p: 20, r: 19 }], gx: ['a4', 'a6'] });
++const e2 = Object.assign(P(['a1', 'a2', 'a3'], [10, 0.1, 0.1]), { dv: [{ d: 'a2', p: 10, r: 0.1 }], gx: [] });
++const e3 = Object.assign(P(['a1', 'a2'], [10, 5]), { ev: [{ d: 'a2', t: '減', p: 10, r: 5 }], gx: ['a2'] });
++const cl = [106.6, 108.65, 107.25, 104.95, 104.1, 100.6, 99.85, 97.15, 92.5, 97.45, 99.7, 103.2, 100.95, 102.5, 96.45, 94.0, 94.1, 90.2, 84.45, 87.0, 95.7];
++const dd = cl.map((_, i) => 'b' + String(i).padStart(2, '0')), S = cmpStats(cl.map((v, i) => [dd[i], v]));
++const ln = cmpLine(dd, dd, cl, dd[0]), up = cmpStats([1, 2, 3].map(v => ['x' + v, v]));
++const gap = cmpLine(['c1', 'c2', 'c3', 'c4'], ['c0', 'c2', 'c4'], [50, 55, 60], 'c1');
++const C4 = ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'], calc = cmpCalc({ d: C4, TAIEX: [100, 110, 120, 130] }, [{ c: 'A', d_: C4, adj: [10, 11, 12, 13] }, { c: 'B', d_: C4, adj: [null, null, 5, 6] }, { c: 'C', d_: C4.slice(2), adj: [7, 8] }], 'w');
++const fx = v => Math.round(v * 1e6) / 1e6;
++console.log(JSON.stringify({
++  e1: cmpEvents(e1), e2: cmpEvents(e2), e3: cmpEvents(e3), adj: cmpAdj(e1).map(fx),
++  base: ['20', '60', 'y', 'w', '5'].map(k => cmpBase(D, k)), base2: cmpBase(D, '2'),
++  vol: [fx(S.vol), pc(S.ret), pc(S.dd[0]), S.dd[1], S.dd[2], fmt(cmpR(S.vol), 2), cmpStats(cl.slice(1).map((v, i) => [dd[i], v])).vol],
++  ln: [fmt(cmpR(ln.vol), 2), ln.line.length, ln.last], up: up.dd, gap: gap.line.map(x => [x[0], fx(x[1]), x[2]]).concat([gap.last, fx(gap.ret)]),
++  calc: [calc.b, calc.late, calc.rows.map(r => [r.c, fx(r.ret)]), fx(calc.ix.ret)],
++  r: [-15.625, 15.625, -3.125, 53.125, 0.285, 1.005, 2.675].map(v => sgn(cmpR(v)))
++}));"""
++UNIT_WANT = {
++    "e1": [{"d": "a3", "p": 10, "r": 9}, {"d": "a4", "p": 10, "r": 20}, {"d": "a6", "p": 20, "r": 19}], "e2": [], "e3": [{"d": "a2", "p": 10, "r": 5}],
++    "adj": [17.1, 19, 19, 20, 5], "base": [None, None, "2025-12-31", "2025-11-24", "2025-11-24"], "base2": "2026-01-02",
++    "vol": [63.874281, "-10.23", "-22.27", "b01", "b18", "63.87", None], "ln": ["63.87", 21, "b20"], "up": [0, None, None],
++    "gap": [["c1", 0, True], ["c2", 10, False], ["c3", 10, True], ["c4", 20, False], "c4", 20],
++    "calc": ["2026-01-07", ["B", "C"], [["A", 8.333333], ["B", 20], ["C", 14.285714]], 8.333333],
++    "r": ["-15.62", "+15.62", "-3.12", "+53.12", "+0.28", "+1.00", "+2.67"]}
++
++
++def check_unit(cmp=CMP, stk=STK):
++    """自造資料：事件對列、推測調整參考價、起點日、樣本標準差（驗收 12：63.87、少一個收盤 --、母體 62.26 要失敗）、最大跌幅（驗收 11）、共同起點、半數取偶。"""
++    o = _node(_js(cmp, stk) + UNIT)
++    return o is None or o == UNIT_WANT
++
++
++def test_unit():
++    assert check_unit()
++
++
++EX = r"""
++const L = JSON.parse(fs.readFileSync(DIR + '/latest.json')), ix = JSON.parse(fs.readFileSync(DIR + '/ix.json'));
++const ld = c => JSON.parse(fs.readFileSync(`${DIR}/${L.stocks[c] ? 'stocks' : 'etfp'}/${c}.json`));
++console.log(JSON.stringify(CASES.map(([codes, k]) => { const S = codes.split(',').map(c => { const d = ld(c); return { c, d_: d.prices.d, adj: cmpAdj(d) }; });
++  const X = cmpCalc(ix, S, k), f = r => [pc(r.ret), r.dd[1] ? pc(r.dd[0]) : '0.00', r.dd[1], r.dd[2], r.vol == null ? '--' : fmt(cmpR(r.vol), 2), r.last];
++  return [X.b, X.late, X.rows.map(f), f(X.ix), X.rows.map(r => r.line.filter(p => ['2025-11-24', '2025-11-26', '2026-11-05', '2026-11-24'].includes(p[0])).map(p => [p[0], pc(p[1]), p[2]]))]; })));"""
++EX_CASES = [("2330,2454,0050", "w"), ("2330,2454,0050", "y"), ("2330,2454,0050", "60"), ("2330,2454,0050", "20"), ("2330,2454,0050", "120"),
++            ("0056,00878,00919", "w"), ("0052,0050", "w"), ("00679B,00687B,0050", "w"), ("0050,00991A", "w"), ("0050,00991A", "20"), ("0050,009833", "20"), ("00625K,0050", "w")]
++
++
++def check_examples(cmp=CMP, stk=STK):
++    """02-pm.md 二之四驗收 4～13（資料日 2026-11-24 才核對數字）。"""
++    if not (DATA / "ix.json").exists() or json.loads((DATA / "latest.json").read_text(encoding="utf-8"))["date"] != DATE:
++        print("  （資料日不是 2026-11-24 或沒有 ix.json，略過手算例）")
++        return True
++    o = _node(_js(cmp, stk) + f"const DIR = {json.dumps(str(DATA))}, CASES = {json.dumps(EX_CASES)};" + EX)
++    if o is None or o == "ERR":
++        return o is None
++    ret = lambda x: [r[0] for r in x[2]] + [x[3][0]]   # noqa: E731
++    w, y, s60, s20, s120, hi, p52, bd, late, late20, n4, nt = o
++    return (w[0] == "2025-11-24" and w[1] == [] and w[2][0][:5] == ["+64.17", "-22.63", "2026-10-06", "2026-11-20", "34.93"]
++            and w[2][1][:5] == ["+261.15", "-36.61", "2026-09-24", "2026-11-20", "68.82"] and w[2][2][:2] + [w[2][2][4]] == ["+63.97", "-27.51", "33.51"]
++            and w[3][:2] + [w[3][4]] == ["+51.38", "-27.68", "31.93"]
++            and y[0] == "2025-12-31" and ret(y) == ["+45.15", "+190.43", "+48.84", "+38.53"] and s60[0] == "2026-08-25" and ret(s60) == ["-6.81", "+8.43", "-8.33", "-11.17"]
++            and s20[0] == "2026-10-27" and ret(s20) == ["-7.08", "+2.27", "-10.23", "-12.96"] and s20[2][2][1:5] == ["-22.27", "2026-10-28", "2026-11-20", "63.87"] and s20[3][4] == "61.48"
++            and s120[0] == "2026-05-29" and ret(s120) == ["-4.77", "-5.47", "-8.65", "-10.31"]
++            and [r[:5:4] for r in hi[2]] == [["+57.63", "27.16"], ["+67.51", "24.39"], ["+56.81", "22.05"]] and hi[2][0][1:3] == ["-23.41", "2026-10-14"] and hi[2][2][1:4] == ["-17.57", "2026-10-28", "2026-11-23"]
++            and p52[2][0][:2] + [p52[2][0][4]] == ["+61.26", "-28.77", "35.60"] and p52[4][0][:2] == [["2025-11-24", "0.00", True], ["2025-11-26", "+0.88", False]] and p52[2][0][5] == DATE
++            and bd[2][0][:4] == ["+0.04", "-11.34", "2026-03-02", "2026-10-07"] and bd[2][0][4] == "10.19" and bd[2][1][:2] + [bd[2][1][4]] == ["+0.17", "-11.31", "10.18"]
++            and late[:2] == ["2025-12-18", ["00991A"]] and ret(late) == ["+57.74", "+34.21", "+46.07"] and [r[4] for r in late[2]] + [late[3][4]] == ["34.60", "52.83", "32.94"]
++            and late[2][1][1:3] == ["-49.49", "2026-06-22"] and late20[:2] == ["2026-10-27", []]
++            and n4[:2] == ["2026-11-19", ["009833"]] and ret(n4) == ["+6.10", "-0.10", "+4.41"] and [r[1] for r in n4[2]] + [n4[3][1]] == ["-6.37", "-6.84", "-6.23"]
++            and [r[4] for r in n4[2]] + [n4[3][4]] == ["--"] * 3 and n4[2][1][3] == "2026-11-23"
++            and nt[:2] == ["2025-12-05", ["00625K"]] and ret(nt) == ["-9.54", "+55.60", "+43.39"] and nt[2][0][5] == "2026-11-05" and nt[4][0][-1] == ["2026-11-24", "-9.54", True])
++
++
++def test_examples():
++    assert check_examples()
++
++
++# ─── F48-3 網址正規化（驗收 14）與畫面（驗收 15～18、22）────────────────
++NORM = [("2330,2454,0050", None, "#/compare/2330,2454,0050/w", []), ("00981a,2330", "y", "#/compare/00981A,2330/y", []),
++        ("2330,2330,0050", "60", "#/compare/2330,0050/60", []), ("2330,,0050,", "20", "#/compare/2330,0050/20", []),
++        ("2330,9999,1589", "20", "#/compare/2330/20", ["找不到 9999、1589，已從比較清單移除"]),
++        ("2330,2454,0050,0056,00878", "w", "#/compare/2330,2454,0050,0056/w", ["最多比較 4 檔，已保留前 4 檔"]),
++        ("2330", "5", "#/compare/2330/w", []), ("2330", "abc", "#/compare/2330/w", []), ("", None, "#/compare", []), ("", "w", "#/compare", []),
++        ("9999", None, "#/compare", ["找不到 9999，已從比較清單移除"])]
++NL = {"stocks": {c: {"n": n, "tv": tv} for c, n, tv in (("2330", "台積電", 9), ("2454", "聯發科", 5), ("2303", "聯電", 3), ("3711", "日月光投控", 2))},
++      "etfs": {"rows": {c: {"n": n, "tv": tv} for c, n, tv in (("0050", "元大台灣50", 8), ("0056", "元大高股息", 4), ("00878", "國泰永續高股息", 6), ("00981A", "主動統一台股增長", 7))}}}
++
++
++def check_norm(cmp=CMP):
++    o = _node(_js(cmp) + f"const L = {json.dumps(NL)}, N = {json.dumps([n[:2] for n in NORM])};" + r"""
++console.log(JSON.stringify({ n: N.map(([a, s]) => { const x = cmpNorm(a, s, L); return [cmpUrl(x.list, x.k), x.msg]; }),
++  s: [cmpPick(Object.entries(L.stocks), '台積', []).map(x => x[0]), cmpPick(Object.entries(L.stocks), '2', ['2454']).map(x => x[0]), cmpPick(Object.entries(L.stocks), '聯', []).map(x => x[0])] }));""")
++    return o is None or (o["n"] == [list(n[2:]) for n in NORM] and o["s"] == [["2330"], ["2303", "2330"], ["2454", "2303"]])
++
++
++def test_norm():
++    assert check_norm()
++
++
++DOM = r"""
++const E = {}, el = k => E[k] || (E[k] = { innerHTML: '', value: '', addEventListener() {} });
++const $ = s => el(s), document = {}, window = {}, REP = [];
++const location = { hash: '' }, history = { state: null, replaceState(s, t, u) { REP.push(u); location.hash = u; } };
++let charts = [], IXOK = true; const disposeKCharts = () => {}, css = () => '';
++const day = i => new Date(Date.UTC(2025, 9, 30 + i)).toISOString().slice(0, 10), DD = Array.from({ length: 30 }, (_, i) => day(i));
++const IX = { d: DD, TAIEX: DD.map((_, i) => 100 + i) }, mk = (k, f) => ({ prices: { d: DD, c: DD.map((_, i) => 10 * (1 + k * i)), ch: DD.map(() => 0) }, ...f });
++const DATA = { '2330': mk(0.01, { ev: [] }), '2454': mk(0.03, { ev: [] }), '0050': mk(0.02, { dv: [], epf: [] }), '0056': mk(-0.01, { dv: [], epf: [] }), '00878': mk(0, { dv: [], epf: [] }), '00981A': mk(0.01, { dv: [] }) };
++async function getJSON(u) { if (u === 'data/ix.json' && IXOK) return IX; throw new Error('404 ' + u); }
++const loadStock = async (c, dir) => DATA[c];
++const App = { latest: Object.assign(LL, { date: DD[29] }), watch: new Set(['0056', '2330', '9999', '00878']), stockCache: {} };
++""" + "\n".join(_grab(APP, n) for n in ("segHTML", "onSeg", "noteHTML")) + "\n"
++DOM_RUN = r"""
++(async () => { const out = [];
++  for (const [h, a, s, ok] of CASES) { location.hash = h; REP.length = 0; IXOK = ok; App.cmpIx = null; await window.renderCompare(a, s);
++    out.push([E['#view'].innerHTML, REP.slice(), E['#cmpL'] ? E['#cmpL'].innerHTML : '']); delete E['#cmpL']; }
++  console.log(JSON.stringify(out)); })();"""
++DOM_CASES = [("#/compare/0050,2454,2330/w", "0050,2454,2330", "w", True), ("#/compare/2330", "2330", None, True), ("#/compare/2330,00981A/w", "2330,00981A", "w", True),
++             ("#/compare", "", None, True), ("#/compare/2330/w", "2330", "w", False), ("#/compare/2330,2454,0050,0056/w", "2330,2454,0050,0056", "w", True)]
++NOTE_PM = PM[PM.index("- 全文（"):]
++NOTE_PM = NOTE_PM[NOTE_PM.index("```\n") + 4:NOTE_PM.index("\n```", NOTE_PM.index("```\n") + 4)].replace("${ix.d[0]}", "2025-10-30")
++PM_TXT = ["報酬率比較", "把最多 4 檔股票或 ETF 放在同一段期間比較，起點都是 0%。", "股票用還原價（含股息）、ETF 含配息；加權指數不含股息",
++          "表格依加入順序排列。最大跌幅滑過可看高點與低點日期；年化波動在區間內少於 20 個交易日時不計算（--）。",
++          '<span class="lg"><i class="dash"></i>加權指數（不含息）</span><span class="lg">實線 = 各檔（股票還原價、ETF 含息）</span>',
++          "<th>名稱</th><th>區間報酬</th><th>最大跌幅</th><th>年化波動</th>", '<td><i class="cmp-dot cmp-ix"></i><b>加權指數（不含息）</b></td>']
++
++
++def check_dom(cmp=CMP):
++    js = "\n".join([_grab(APP, n) for n in ("fmt", "sgn", "cls", "esc", "md")] + [_grab(STK, "adjFactors")]) + "\n"
++    o = _node(js + f"const LL = {json.dumps(NL)}, CASES = {json.dumps(DOM_CASES)};" + DOM + cmp + DOM_RUN)
++    if o is None or o == "ERR":
++        return o is None
++    (h1, r1, l1), (h2, r2, _), (h3, r3, _), (h4, r4, _), (h5, _, _), (h6, _, _) = o
++    rows = re.findall(r'<td><i class="cmp-dot"[^>]*></i><b>([^<]+)</b> <span class="muted small">(\w+)</span>', h1)
++    chip = ('<span class="chip cmp-c"><i class="cmp-dot" style="background:var(--cmp3)"></i>2330 台積電<button type="button" class="cmp-x" data-x="2330" '
++            'aria-label="移除 2330">×</button></span>')
++    return (all(s in h1 for s in PM_TXT) and f"<div>{NOTE_PM}</div>" in h1 and "<summary>股票用還原價（含股息）、ETF 含配息；加權指數不含股息<i>說明</i>" in h1
++            and [r[1] for r in rows] == ["0050", "2454", "2330"] and h1.index('cmp-ix"></i><b>加權指數') > h1.index("2330</span>") and chip in h1
++            and "差距" not in h1 and "名次" not in h1 and r1 == [] and '<input id="cmpQ" type="search" placeholder="加入代號或名稱" autocomplete="off">' in h1
++            and '<div class="cmp-w small"><span class="muted">自選：</span><a href="#" class="chip" data-add="0056">0056 元大高股息</a><a href="#" class="chip" data-add="00878">0878 國泰永續高股息</a></div>'.replace(">0878", ">00878") in h1
++            and "<span><b>2025/11/28</b></span>" in l1 and '<i class="cmp-dot" style="background:var(--cmp1)"></i>0050 <b>' in l1 and "加權 <b>+29.00%</b>" in l1
++            and '<button data-v="w" class="on">52 週</button>' in h1 and "自 2025-10-30 收盤起算，至 2025-11-28 收盤" in h1
++            and r2 == ["#/compare/2330/w"] and r3 == ["#/compare/2330/w"] and '<div class="muted small cmp-msg">本站無法確認 00981A 的價格調整，暫不比較</div>' in h3
++            and r4 == [] and '<div class="empty">輸入代號或名稱，加入要比較的股票或 ETF（最多 4 檔）。也可以從個股頁、ETF 頁的「近期表現」卡點「比較 →」進來。</div>' in h4
++            and "<table" not in h4 and "cmpSeg" not in h4 and '<div class="empty">找不到交易日資料（data/ix.json），重新匯出資料後才能比較</div>' in h5 and "<table" not in h5
++            and '<input id="cmpQ" type="search" placeholder="已滿 4 檔" autocomplete="off" disabled>' in h6 and "cmp-w" not in h6)
++
++
++def test_dom():
++    assert check_dom()
++
++
++def test_pm_text():
++    for s in PM_TXT[:4] + ["找不到交易日資料（data/ix.json），重新匯出資料後才能比較", "本站無法確認 ${代號} 的價格調整，暫不比較", "最多比較 4 檔，已保留前 4 檔",
++                           "已從比較清單移除", "才有成交，比較起點改為", "（各檔與加權指數都從這天起算）", "比較 →"]:
++        assert s in PM, s
++    assert NOTE_PM.startswith("每條線 = 還原收盤") and NOTE_PM.endswith("不代表之後的走勢。")
++
++
++# ─── F48-4 入口、路由、版本與文件（驗收 19、20、23～27）─────────────────
++def check_entry(stk=STK):
++    a = "  const pfh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '近期表現（含息）' : '近期表現'))[0];"
++    b = "  if (pfh) pfh.parentElement.insertAdjacentHTML('beforeend', `<span class=\"sp\"></span><a class=\"small cmp-go\" href=\"#/compare/${code}\">比較 →</a>`);"
++    return (stk.count(a) == stk.count(b) == 1 and stk.index("if (dvh && data.nx) dvh.parentElement") < stk.index(a) < stk.index(b) < stk.index("  onSeg('stockTabSeg'")
++            and "cmp-go" not in _grab(stk, "perfHTML"))
++
++
++def test_entry():
++    assert check_entry()
++
++
++def check_route(app=APP, html=HTML):
++    r = "  compare: (arg, sub) => window.renderCompare(arg, sub),"
++    s = [m.group(1) for m in re.finditer(r'<script src="(\w+)\.js', html)]
++    return (app.count(r) == 1 and app.index("  help: arg => window.renderHelp(arg),") < app.index(r) < app.index("\n};", app.index("const routes = {"))
++            and "help: '名詞說明', compare: '報酬率比較' }[page]" in app and s == ["app", "stock", "tools", "help", "compare"] and html.count("compare.js") == 1)
++
++
++def test_route_and_version():
++    assert check_route()
++    for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js", "compare.js"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
++    assert "tools.js?v=64e7360f" in HTML and "help.js?v=a5a5a7e8" in HTML and HTML.count("https://") == 2
++    assert "python3 tests/test_iter48.py" in README and "第 48 輪" in (ROOT / "docs" / "iterations" / "README.md").read_text(encoding="utf-8")
++    r = next(l for l in README.splitlines() if l.startswith("- 多檔報酬率比較（第 48 輪"))
++    for s in ("ix.json", "#/compare/", "R62", "R64", "R67", "R68", "√250", "二代健保"):
++        assert s in r, s
++    assert "第 23 輪" not in r
++
++
++def _new_segs(cmp=CMP, stk=STK, app=APP):
++    return cmp + "".join(l for l in stk.splitlines() + app.splitlines() if "第 48 輪" in l)
++
++
++def check_words(cmp=CMP, stk=STK, app=APP):
++    seg = _new_segs(cmp, stk, app)
++    rd = next(l for l in README.splitlines() if l.startswith("- 多檔報酬率比較（第 48 輪"))
++    return all(w not in seg + rd for w in ADVICE) and all(w not in seg for w in ("差距", "名次", "第一名"))
++
++
++def test_words():
++    assert check_words()
++
++
++def test_node14():
++    for w in (".at(", "replaceAll", "||=", "&&=", "??="):
++        assert w not in _new_segs(), w
++
++
++# ─── 反證：原始碼改壞，對應的檢查要失敗 ─────────────────────────
++def _mut_fn(old, new):
++    src = inspect.getsource(export.ix_export)
++    assert src.count(old) == 1, old
++    ns = dict(vars(export))
++    exec(src.replace(old, new), ns)
++    return ns["ix_export"]
++
++
++MUTANTS = [
++    ("匯出缺值補 0", "fn", "_f(idx.get(d))", "_f(idx.get(d, 0))"),
++    ("沒有寫 ix.json", "src", '    _write(SITE_DATA_DIR / "ix.json", ix_export(p_days, idx_close["TWSE"]))   # 第 48 輪 F48-1：比較頁的交易日曆＋加權收盤\n', ""),
++    ("ETF 不加 gx 推測調整", "cmp", ".concat(gx)", ""),
++    ("推測調整漲跌 null 時不用收盤", "cmp", "P.ch[i] == null ? P.c[i] :", "P.ch[i] == null ? P.c[i - 1] :"),
++    ("事件不對到下一列", "cmp", "P.d.findIndex(d => d >= e.d)", "P.d.indexOf(e.d)"),
++    ("係數不合理也採用", "cmp", "e.r / e.p >= 0.02 && e.r / e.p <= 20", "e.r / e.p > 0"),
++    ("顯示不取偶數", "cmp", "(f + (f & 1)) / 100 :", "Number(v.toFixed(2)) :"),
++    ("年化波動用母體標準差", "cmp", "/ (n - 1)", "/ n"),
++    ("統計少了起點那一點", "cmp", "pts = [base];", "pts = [];"),
++    ("無成交不標記", "cmp", "!(d in at)]", "false]"),
++    ("共同起點只移晚上市那一檔", "cmp", "  if (late) b = late;\n", ""),
++    ("52 週少一天", "cmp", "365 * 864e5", "364 * 864e5"),
++    ("網址不轉大寫", "cmp", ".map(s => s.trim().toUpperCase())", ".map(s => s.trim())"),
++    ("不去重", "cmp", "[...new Set((arg || '').split(',')", "[...((arg || '').split(',')"),
++    ("表格依報酬排序", "cmp", "X.rows.map((r, j) => `<tr>", "X.rows.slice().sort((a, b) => b.ret - a.ret).map((r, j) => `<tr>"),
++    ("自選列出已選的檔", "cmp", "(L.stocks[c] || R[c]) && !list.includes(c)", "(L.stocks[c] || R[c])"),
++    ("ETF 沒有 epf 也比較", "cmp", "ix && !L.stocks[c] && !data[j].epf", "false"),
++    ("說明寫差距", "cmp", "區間越長影響越大", "區間越長差距越大"),
++    ("用詞", "cmp", "不代表之後的走勢。", "不代表之後的走勢，不是建議。"),
++    ("入口加在卡片外", "stk", "pfh.parentElement.insertAdjacentHTML('beforeend'", "pfh.parentElement.insertAdjacentHTML('afterend'"),
++    ("路由沒有標題", "app", ", compare: '報酬率比較' }[page]", " }[page]"),
++    ("compare.js 放在 help.js 之前", "html", '<script src="help.js?v=a5a5a7e8" defer></script>\n<script src="compare.js', '<script src="compare.js'),
++]
++CHECKS = {"fn": lambda f: check_ix(f), "src": check_wiring, "stk": check_entry, "app": lambda a: check_route(app=a), "html": lambda h: check_route(html=h),
++          "cmp": lambda c: check_unit(c) and check_full(c) and check_examples(c) and check_norm(c) and check_dom(c) and check_words(cmp=c)}
++
++
++def test_contrast():
++    node = T._node("console.log('1')") is not None
++    for name, kind, a, b in MUTANTS:
++        if kind == "fn":
++            assert not CHECKS[kind](_mut_fn(a, b)), "反證沒有擋下：" + name
++            continue
++        src = {"src": SRC, "stk": STK, "app": APP, "html": HTML, "cmp": CMP}[kind]
++        if kind == "html":                                        # 把 compare.js 那一行移到 help.js 之前
++            c = re.search(r'<script src="compare\.js\?v=\w+" defer></script>\n', src).group(0)
++            a, b = a + c[len('<script src="compare.js'):], c + a[:-len('\n<script src="compare.js')] + "\n"
++        assert src.count(a) == 1, (name, a)
++        ok = CHECKS[kind](src.replace(a, b))
++        assert not ok or not node and kind == "cmp", "反證沒有擋下：" + name
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            print("==", n); f()
++    print("全部通過")
+diff --git a/twstock/export.py b/twstock/export.py
+index 663b4a7..631f789 100644
+--- a/twstock/export.py
++++ b/twstock/export.py
+@@ -1211,6 +1211,11 @@ def index_return(idx, b, last):
+     return (float(idx[last]) / float(idx[b]) - 1) * 100 if b in idx and last in idx else None
+ 
+ 
++def ix_export(days, idx) -> dict:
++    """第 48 輪 F48-1：site/data/ix.json = 交易日 days（p_days）＋對齊的加權指數收盤（idx = idx_close["TWSE"]，沒有值為 None）；比較頁的交易日曆與指數線。"""
++    return {"d": [str(d) for d in days], "TAIEX": [_f(idx.get(d)) for d in days]}
++
++
+ def stock_perf(d_, adj, days, idx, w52_start):
+     """
+     第 23 輪 F23-1：stocks/{代號}.json 的 pf = [[區間, 基準日, 本股 %, 指數 %, 差距（百分點）]]，用法同 price_stats（days 要完整的交易日序列）。
+@@ -1761,6 +1766,7 @@ def export_all() -> float:
+     insti_otc = {"foreign": 0.0, "trust": 0.0, "dealer": 0.0}     # 上櫃估算（張數 × 收盤）
+     bad_all, miss_all, n_ev, n_inferred = [], [], 0, 0
+     w52_start = latest_date - timedelta(days=365)
++    _write(SITE_DATA_DIR / "ix.json", ix_export(p_days, idx_close["TWSE"]))   # 第 48 輪 F48-1：比較頁的交易日曆＋加權收盤
+     db_first = min(rows[0][0] for rows in prices.values())   # 全市場最早日線
+ 
+     for code, rows in prices.items():

@@ -375,6 +375,8 @@ window.renderStock = async function (code, sub) {
   const dvh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '配息與填息' : '股利與填息'))[0];   // 第 39 輪 F39-3：連結加在 divHTML 外，卡片字面不變
   if (dvh) dvh.insertAdjacentHTML('afterend', `<span class="sp"></span><a class="small dv-go" href="#/tools/dv?c=${code}">試算 →</a>`);
   if (dvh && data.nx) dvh.parentElement.insertAdjacentHTML('afterend', data.nx.map(n => `<div class="small dv-nx">${esc(nxText(n, E))}</div>`).join(''));   // 第 40 輪 F40-3：卡片標題列下一行
+  const pfh = [...document.querySelectorAll('#view .sec-h h2')].filter(h => h.textContent === (E ? '近期表現（含息）' : '近期表現'))[0];   // 第 48 輪 F48-4：連結加在 perfHTML 外，卡片字面不變
+  if (pfh) pfh.parentElement.insertAdjacentHTML('beforeend', `<span class="sp"></span><a class="small cmp-go" href="#/compare/${code}">比較 →</a>`);
   onSeg('stockTabSeg', v => { App.ptStuck = $('#view .s-head').getBoundingClientRect().bottom <= topH(); localStore('stockTab', null, v); history.replaceState(null, '', `#/stock/${code}/${v}`); window.disposeStockCharts(); window.renderStock(code); });
   $('#hlMore')?.addEventListener('click', e => e.currentTarget.parentElement.classList.add('open'));
   $('#tagMore')?.addEventListener('click', e => { const r = $('#view .tag-rest'), b = e.currentTarget; r.hidden = !r.hidden; b.textContent = r.hidden ? b.dataset.n : '收合'; });
