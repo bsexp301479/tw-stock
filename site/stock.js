@@ -593,9 +593,10 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
   // 第 27 輪 D27-06：最新價標籤依漲跌（日線 = 收盤對昨收，和頁首同色；週／月線 = 對上一根）上色，不依 K 棒（收盤對開盤）
   const [lastCh] = barChange(raw, raw.length - 1, mode, adj);
   kSer.createPriceLine({ price: C[C.length - 1], color: NT[NT.length - 1] || !lastCh ? FLAT : lastCh > 0 ? UP : DN, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, axisLabelTextColor: css('--on-fill'), title: '' });
-  // 無成交的一字線用灰色
+  // 無成交的一字線用灰色；收盤 = 開盤（十字、T 字、跌停一字）依漲跌上色（日線 = 對昨收，週／月線 = 對上一根），平盤灰色
+  const eqC = i => { const [d] = barChange(raw, i, mode, adj); return !d ? FLAT : d > 0 ? UP : DN; };
   kSer.setData(raw.map((r, i) => ({ time: T[i], open: O[i], high: H[i], low: L[i], close: C[i],
-    ...(NT[i] ? { color: FLAT, borderColor: FLAT, wickColor: FLAT } : {}) })));
+    ...(NT[i] ? { color: FLAT, borderColor: FLAT, wickColor: FLAT } : C[i] === O[i] ? (c => ({ color: c, borderColor: c, wickColor: c }))(eqC(i)) : {}) })));
   // 除權息、減資、面額變更標記（還原／原始都顯示）；週／月線同一根有多筆時合併文字，第 19 輪 F19-2：週／月線寫事件日「M/D 類型」
   const mdn = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
   const mkPos = mode === '日' ? { position: 'belowBar', shape: 'arrowUp' } : { position: 'aboveBar', shape: 'arrowDown' };   // 第 23 輪 F23-4b：週／月 K 標記在 K 棒上方
@@ -625,7 +626,7 @@ function buildCharts(raw, mode, G, adj, osc = 'MACD', E = null) {
 
   const vc = mk('vC', false);
   const vSer = vc.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
-  vSer.setData(raw.map((r, i) => ({ time: T[i], value: V[i], color: NT[i] ? FLAT + '99' : C[i] >= O[i] ? UP + '99' : DN + '99' })));
+  vSer.setData(raw.map((r, i) => ({ time: T[i], value: V[i], color: (NT[i] ? FLAT : C[i] === O[i] ? eqC(i) : C[i] > O[i] ? UP : DN) + '99' })));
 
   // 堆疊：買超與賣超各自累加，先畫最外層（合計），再畫內層蓋上去
   const ic = $('#iC') ? mk('iC', false) : null;      // 第 15 輪：ETF 頁沒有法人圖
