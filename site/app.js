@@ -26,8 +26,9 @@ const psgn = n => n == null ? '--' : (n > 0 ? '+' : '') + pfmt(n);              
 const sgn = (n, d = 2) => n == null ? '--' : (n > 0 ? '+' : '') + fmt(n, d);
 const cls = n => n > 0 ? 'up' : n < 0 ? 'dn' : 'flat';
 // 表格的漲跌欄；今天無成交的股票顯示「無成交」（收盤價為最後成交日）；前一交易日無成交時 tooltip 註明相對日期
+// 第 50 輪 F50-1（R73）：有成交且收在漲停價／跌停價（匯出的 lm = 1／-1）時，百分比下面加小字「漲停」「跌停」
 const pctCell = s => s.nt ? `<td class="flat small" title="最後成交 ${s.nt}">無成交</td>`
-  : `<td class="num ${cls(s.p)}${s.rel ? ' rel' : ''}"${s.rel ? ` title="相對 ${md(s.rel)} 收盤（前一交易日無成交）"` : ''}>${sgn(s.p)}%</td>`;
+  : `<td class="num ${cls(s.p)}${s.rel ? ' rel' : ''}"${s.rel ? ` title="相對 ${md(s.rel)} 收盤（前一交易日無成交）"` : ''}>${sgn(s.p)}%${s.lm === 1 ? '<span class="sub2">漲停</span>' : s.lm === -1 ? '<span class="sub2">跌停</span>' : ''}</td>`;
 // 不到 0.05 億四捨五入後是 0，避免顯示「-0.0億」
 // 第 30 輪 D30-10：ycls 是 yi 數字的漲跌色，顯示「0億」時為灰色（顏色跟著顯示的數字）
 const yi = n => n == null ? '--' : Math.abs(n) < 0.05 ? '0億' : sgn(n, Math.abs(n) >= 100 ? 0 : 1) + '億', ycls = n => cls(n != null && Math.abs(n) < 0.05 ? 0 : n);
@@ -1014,6 +1015,7 @@ async function renderRank(arg) {
   }
   if (!foot) foot = '金額 = 買賣超張數 × 當日收盤，不含 ETF。成交額門檻以資料日成交額篩選，套用到所有排行。「1日／5日」只切換法人、外資、投信、自營買賣超排行與表格法人欄位的天數；漲幅、跌幅、成交額與連買排行不受影響。連買為連續買超天數，天數相同時以近 5 日金額排序。' +
     (by === 'dv' ? '近期除息 = 近 90 天內除息或除權息，依除息日由近到遠。' + DV_NOTE : '') +
+    (by === 'p+' || by === 'p-' ? '漲跌欄的「漲停」「跌停」= 收盤等於當天的漲停價、跌停價（本站依參考價 ±10% 與升降單位推算，和官方家數偶爾差 1 檔）；新上市前 5 個交易日沒有漲跌幅限制，不標。' : '') +
     (S ? '量比、創新高、相對強勢、營收、估值排行的資料日見「選股」頁；殖利率、本益比排行已排除虧損（官方本益比空白）與 90 天內股本變動的股票。週轉率 = 今日成交股數 ÷ 目前發行股數，市值 = 收盤 × 目前發行股數；增資、減資前後可能失真。' : '');
   $('#view').innerHTML = `<section class="sec">
       <div class="sec-h">${modeSeg('rank')}<span class="sp"></span>
@@ -1227,6 +1229,7 @@ const SCREEN_CONDS = [
   { id: 'mc', g: '流動性', label: '市值 ≥ {v} 億', opts: [50, 100, 500, 1000], def: 100, f: scrGe('mc'), cols: ['mc'], title: '收盤 × 目前發行股數' },
   { id: 'to', g: '流動性', label: '週轉率 ≥ {v}%', opts: [1, 3, 5, 10], def: 3, f: scrGe('to'), cols: ['to'], title: '今日成交股數 ÷ 目前發行股數；增資、減資前後可能失真' },
   { id: 'p', g: '價量', label: '今日漲幅 ≥ {v}%', opts: 'num', def: 3, f: scrGe('p') },
+  { id: 'lm', g: '價量', label: '今日收在{v}', opts: [[1, '漲停價'], [-1, '跌停價']], def: 1, f: (x, v) => x.lm === v, title: '收盤等於當天的漲停價或跌停價（本站依參考價 ±10% 與升降單位推算，和官方家數偶爾差 1 檔）；新上市前 5 個交易日沒有漲跌幅限制、今日無成交，都不列入' },   // 第 50 輪 F50-1（R73）
   { id: 'r5', g: '價量', label: '5 日報酬 ≥ {v}%', opts: 'num', def: 10, f: scrGe('r5'), cols: ['r5'] },
   { id: 'r20', g: '價量', label: '20 日報酬 ≥ {v}%', opts: 'num', def: 10, f: scrGe('r20'), cols: ['r20'] },
   { id: 'r60', g: '價量', label: '60 日報酬 ≥ {v}%', opts: 'num', def: 20, f: scrGe('r60'), cols: ['r60'] },
@@ -1595,7 +1598,7 @@ async function renderHoldings(code) {
       <div class="sec-h"><h2>${esc(H.n)}</h2><span class="muted small">${code}　${H.m === 'TWSE' ? '上市' : '上櫃'}　持股日 ${md(S.d)}${H.delay ? '（跨境，晚一個交易日公布）' : ''}</span>
         <span class="sp"></span><a class="muted small" href="#/stock/${code}">行情 →</a>　<a class="muted small" href="#/etf">← ETF 列表</a></div>
       <div class="grid g-stats">
-        ${[['淨資產', fmt(S.nav, 1) + ' 億'], ['每單位淨值', fmt(S.nu, 2) + ' 元'], ['股票權重合計', fmt(S.sw, 2) + '%'], ['持股檔數', fmt(S.n) + ' 檔'],
+        ${[['淨資產', fmt(S.nav, 1) + ' 億'], ['每單位淨值', fmt(S.nu, 2) + ' 元', S.pm == null ? '' : `${md(S.d)} 收盤 ${fmt(S.pc, 2)}，${S.pm > 0 ? '溢價' : S.pm < 0 ? '折價' : '折溢價'} ${fmt(Math.abs(S.pm), 2)}%`], ['股票權重合計', fmt(S.sw, 2) + '%'], ['持股檔數', fmt(S.n) + ' 檔'],
            ['單位數 1 日', S.u1 == null ? '--' : sgn(S.u1) + '%', prev ? `相對 ${md(prev)}` : ''],
            ['期貨', S.fl ? `${fmt(S.fl)} 口（${fmt(S.fa, 1)} 億）` : '無']].map(([l, v, sub]) => `<div class="card stat"><div class="l">${l}</div><div class="v num" style="font-size:16px">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`).join('')}
       </div></section>
@@ -1610,7 +1613,7 @@ async function renderHoldings(code) {
         H.out.map(r => `<tr${r.tw ? ` data-code="${esc(r.c)}"` : ''}><td class="nm">${name(r)}</td><td class="num">${fmt(r.l)} ${unit(r)}</td><td class="num">${fmt(r.pw, 2)}%</td></tr>`).join('') +
         '</tbody></table></div>' : ''}
       <div class="muted small" style="margin-top:6px">資料來源：${esc(H.trust || '統一')}投信每日申購買回清單。台股為張、海外為股；權重為占基金淨資產 %，權重變化為百分點。
-        本基金為現金申購買回：申購進來的資金由經理人買進股票，所以<b>申購多的日子加碼會偏多</b>、贖回多的日子減碼會偏多。${S.u1 == null ? '' : `${S.d === App.latest.date ? '今天' : md(S.d) + ' '}單位數 1 日 ${sgn(S.u1)}%，張數增幅接近這個比例的持股，多半是跟著申購買進；明顯超過的才比較像經理人的判斷。`}權重變化另含股價漲跌的影響（張數不變、權重也會變）。標「新」= 前一持股日沒有持有。</div></section>`;
+        本基金為現金申購買回：申購進來的資金由經理人買進股票，所以<b>申購多的日子加碼會偏多</b>、贖回多的日子減碼會偏多。${S.u1 == null ? '' : `${S.d === App.latest.date ? '今天' : md(S.d) + ' '}單位數 1 日 ${sgn(S.u1)}%，張數增幅接近這個比例的持股，多半是跟著申購買進；明顯超過的才比較像經理人的判斷。`}權重變化另含股價漲跌的影響（張數不變、權重也會變）。標「新」= 前一持股日沒有持有。${S.pm == null ? '' : '折溢價 = 持股日收盤 ÷ 每單位淨值 − 1，正值為溢價、負值為折價；每單位淨值只有兩位小數，折溢價可能有約 0.1 個百分點的誤差。跨境 ETF 的淨值晚一個交易日公布，比的是同一個持股日的收盤。'}</div></section>`;
   onSeg('holdSeg', v => { localStore('holdSort', null, v); renderHoldings(code); });
   $('#view').addEventListener('click', onRowClick);
 }

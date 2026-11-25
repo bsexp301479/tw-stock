@@ -19,6 +19,7 @@ from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR   # 第 50 輪 F50-1：漲停價捨去、跌停價進位
 
 from . import db
 from .analysis.flow import LONG, group_flows, load_concepts, streak
@@ -252,6 +253,24 @@ def _tick_round(price: float) -> float:
     p = Decimal(str(price))
     tick = next(t for limit, t in _TICKS if p < limit)
     return float((p / tick).quantize(Decimal(1), rounding=ROUND_HALF_UP) * tick)
+
+
+def limit_flag(close, change, new=False):
+    """第 50 輪 F50-1（R73）：收盤 = 漲停價 → 1、= 跌停價 → -1；其他、無成交、漲跌為 None、參考價 ≤ 0、
+    new（新上市前 5 個交易日，無漲跌幅限制）→ None。參考價 = 收盤 − 漲跌；漲停價 = 參考價 × 1.1 依升降單位捨去、
+    跌停價 = 參考價 × 0.9 依升降單位進位，升降單位依漲跌停價本身所在級距（_TICKS）；用 Decimal 計算。"""
+    if close is None or change is None or new:
+        return None
+    c = Decimal(str(close))
+    ref = c - Decimal(str(change))
+    if ref <= 0:
+        return None
+    for sign, k, rnd in ((1, Decimal("1.1"), ROUND_FLOOR), (-1, Decimal("0.9"), ROUND_CEILING)):
+        x = ref * k
+        tick = next(t for limit, t in _TICKS if x < limit)
+        if c == (x / tick).quantize(Decimal(1), rounding=rnd) * tick:
+            return sign
+    return None
 
 
 def _changes(d_, c, ch, market, ev):
@@ -1027,14 +1046,16 @@ def holding_table(dates, held, tw):
     return rows, out
 
 
-def holding_export(code, dates, summary, held, tw, name, market):
+def holding_export(code, dates, summary, held, tw, name, market, close=None):
     """etfs/{代號}.json。金額單位：億元；nu 每單位淨值（元）；sw 股票權重合計（%）；fl 期貨口數。"""
+    # 第 50 輪 F50-12：close = 持股日收盤；有值且每單位淨值 > 0 時 sum 加 pc（收盤，元）、pm（折溢價 % = 收盤 ÷ 每單位淨值 − 1，正 = 溢價）
     nav, nu, n, sw, fl, fa = summary[dates[-1]][:6]
     rows, out = holding_table(dates, held, tw)
     f = HOLDINGS[code]
     return {"code": code, "n": name, "m": market, "fund": f.fund, "delay": f.delay, "trust": f.trust, "dates": [str(d) for d in dates],
             "sum": {"d": str(dates[-1]), "nav": _f(float(nav) / YI), "nu": _f(nu), "n": n, "sw": _f(sw),
-                    "fl": fl, "fa": _f(float(fa) / YI), **({"u1": u} if (u := unit_change(summary, dates)) is not None else {})},
+                    "fl": fl, "fa": _f(float(fa) / YI), **({"u1": u} if (u := unit_change(summary, dates)) is not None else {}),
+                    **({"pc": _f(close), "pm": round((float(close) / float(nu) - 1) * 100, 2)} if close is not None and nu and nu > 0 else {})},
             "rows": rows, "out": out}
 
 
@@ -1746,7 +1767,8 @@ def export_all() -> float:
     # ── ETF 持股檔（台股 = stocks 表的代號）──
     tw = set(stocks)
     for code, (hdates, summary, held) in holdings.items():
-        _write(SITE_DATA_DIR / "etfs" / f"{code}.json", holding_export(code, hdates, summary, held, tw, *etf_names[code]))
+        _write(SITE_DATA_DIR / "etfs" / f"{code}.json", holding_export(code, hdates, summary, held, tw, *etf_names[code],
+                                                                          close=dict(etf_px.get(code, ())).get(hdates[-1])))   # 第 50 輪 F50-12：持股日當天的收盤（沒有 → None，不拿別天補）
     active = stock_active(holdings, tw)
     act_lots = active_trust(holdings, tw, dates[-1])            # B16（第 8 輪 F8-1）
     hl_act = highlight_active(holdings, tw, b_days[-HL_DAYS])   # 第 21 輪 F21-1
@@ -1895,6 +1917,7 @@ def export_all() -> float:
             "c": _f(c[j]), "ch": None if no_trade else chs[-1], "p": _f(pct),
             **({"nt": str(d_[j])} if no_trade else {}),
             **({"rel": str(rel[-1])} if not no_trade and rel[-1] else {}),
+            **({"lm": lm} if (lm := None if no_trade else limit_flag(c[-1], chs[-1], d_[0] > db_first and len(d_) <= 5)) else {}),   # 第 50 輪 F50-1（R73）：收在漲停 1、跌停 -1
             "v": round((v[-1] or 0) / 1000), "tv": _f((tv[-1] or 0) / YI),
             "n1": _f(net_value[-1]) if net_value else None,
             "n5": _f(sum(net_value[-5:])), "n20": _f(sum(net_value[-20:])),
@@ -2023,6 +2046,10 @@ def export_all() -> float:
           "、".join(f"{k[:4]}/{k[4:]} {v:,} 檔" for k, v in S["rmd"].items()) + "；季報 " +
           ("、".join(f"{k[:4]}Q{k[5]} {v:,} 檔" for k, v in S["fqd"].items()) or "無") + "）")
     print(f"  📌 還原事件 {n_ev} 筆（上櫃反推 {n_inferred} 筆）")
+    lm_n = lambda m, v: sum(x["m"] == m and x.get("lm") == v for x in snapshot.values())   # 第 50 輪 F50-1：本站推算家數
+    lm_o = lambda m, k: "--" if (official_breadth.get(m) or {}).get(k) is None else official_breadth[m][k]   # 官方家數（沒有 → --）
+    print(f"  📌 收在漲停 上市 {lm_n('TWSE', 1)}／上櫃 {lm_n('TPEx', 1)}、跌停 上市 {lm_n('TWSE', -1)}／上櫃 {lm_n('TPEx', -1)}"
+          f"（本站推算；官方 漲停 上市 {lm_o('TWSE', 'ul')}／上櫃 {lm_o('TPEx', 'ul')}、跌停 上市 {lm_o('TWSE', 'dl')}／上櫃 {lm_o('TPEx', 'dl')}）")
     print(f"  📌 ETF 個股 {n_etf} 檔，{kb_etf / 1024:.1f} MB（etfp/，原始價）")
     if bad_all:
         print(f"⚠️  還原係數超出 {ADJ_MIN}～{ADJ_MAX}，未採用 {len(bad_all)} 筆：" +

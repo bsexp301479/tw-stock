@@ -296,6 +296,7 @@ window.renderStock = async function (code, sub) {
             ${noTrade ? '<span class="s-chg flat">無成交</span>' : gxLast ? (dvLast ? '<span class="s-chg flat" title="除息日的開盤參考價扣掉配息，收盤減前一日收盤會含配息">不比價（今天除息）</span>'
               : '<span class="s-chg flat" title="官方漲跌為 0、收盤和前一日收盤不同：推測是除息等價格調整">不比價（推測價格調整）</span>')
               : `<span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span>`}
+            ${!noTrade && !gxLast && s?.lm ? `<span class="small ${s.lm > 0 ? 'up' : 'dn'}" style="white-space:nowrap" title="收盤等於本站依參考價推算的${s.lm > 0 ? '漲停價' : '跌停價'}">${s.lm > 0 ? '收在漲停價' : '收在跌停價'}</span>` : ''}
             ${!noTrade && s?.rel ? `<span class="muted small">相對 ${md(s.rel)} 收盤（前一交易日無成交）</span>` : ''}</div>
           <div class="tags">
             ${(data.alerts || []).map(a => a.t === 'disposal'
