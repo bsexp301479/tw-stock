@@ -302,7 +302,7 @@ function tlDvLoad(d, e) {
   if (n && !N[0]) h.push(N[1]);
   const ev = (d.ev || []).filter(v => v.d === x.d && v.t === x.t)[0], R = x.r != null ? x.r : ev && ev.r;
   if (R != null && x.p != null) h.push(`上次官方參考價 ${pfmt(R)}（${md(x.d)}，前收 ${pfmt(x.p)}）；前收改成 ${pfmt(x.p)} 可對照`);
-  h.push(k ? `近一年現金股利 = ${md(from)} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${md(from)} 以後的現金股利官方表沒有分項，請自行確認` : `${md(from)} 以後沒有現金股利`);
+  h.push(k ? `近一年現金股利 = ${from.replace(/-/g, '/')} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${from.replace(/-/g, '/')} 以後的現金股利官方表沒有分項，請自行確認` : `${from.replace(/-/g, '/')} 以後沒有現金股利`);
   return [o, h];
 }
 // 第 41 輪 F41-1：平均成本（多筆合計）。金額 BigInt（分）、手續費與證交稅為元（Number），o = { dz 折扣千分之, m 整股最低, mo 零股最低, r 證交稅萬分之 }

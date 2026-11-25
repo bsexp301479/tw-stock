@@ -377,7 +377,7 @@ def test_version_and_docs():
     for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js"):
         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
         assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
-    assert "tools.js?v=64e7360f" in HTML and HTML.count("https://") == 2
+    assert HTML.count("https://") == 2
     assert "python3 tests/test_iter47.py" in README
     r = next(l for l in README.splitlines() if l.startswith("- 即將除權息提醒（第 47 輪"))
     for s in ("`nx", "元以下捨去", "二代健保", "R60", "R61", "自營", "含息報酬", "42 個名詞"):

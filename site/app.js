@@ -754,7 +754,7 @@ function renderBubble() {
     </section>
     <section class="sec grid g2">
       ${list ? '' : `<div class="card"><div class="sec-h"><h2 id="gTitle">點泡泡看成分股</h2><span class="sp"></span><span id="gMeta" class="muted small"></span></div>
-        <div class="tbl-wrap panel-list"><table class="tbl" id="gTable"></table></div></div>`}
+        <div class="tbl-wrap panel-list"><table class="tbl" id="gTable"></table></div><div class="muted small g-z" id="gZ"></div></div>`}
       <div class="card"><div class="sec-h"><h2>象限說明</h2></div>
         <div class="small" style="line-height:1.9">
           <div><b class="up">漲潮</b>：近 5 日淨流入，而且比 20 日平均更積極 → 資金正在加速進場</div>
@@ -782,6 +782,7 @@ function renderBubble() {
     else if (App.blHit) requestAnimationFrame(() => $('#blBox tr.q-hit')?.scrollIntoView());   // 從今日頁點族群進來：捲到展開的那一列（route() 捲到頂端之後）
     return;
   }
+  $('#gZ').addEventListener('click', e => { if (e.target.closest('[data-gz]')) { App.gzAll = !App.gzAll; gzFoot(); } });   // 第 49 輪 F47-10
   drawBubble(groups, L.dates);
   showGroup(groups.find(g => g.name === focus) || groups[0]);
 }
@@ -908,7 +909,7 @@ function groupRows(g) {   // D28-04：泡泡明細卡與手機清單展開共用
   const S = App.latest.stocks;
   const rows = g.codes.filter(c => S[c]).sort((a, b) => (S[b].n5 ?? 0) - (S[a].n5 ?? 0));
   return `<thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>法人1日</th><th>法人5日</th></tr></thead><tbody>` +
-    rows.map(c => { const s = S[c]; return `<tr data-code="${c}"><td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
+    rows.map(c => { const s = S[c]; return `<tr data-code="${c}"${yi(s.n1) === '0億' && yi(s.n5) === '0億' ? ' class="z"' : ''}><td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
       <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num ${ycls(s.n1)}">${yi(s.n1)}</td><td class="num ${ycls(s.n5)}">${yi(s.n5)}</td></tr>`; }).join('') + '</tbody>';
 }
@@ -917,6 +918,13 @@ function showGroup(g) {
   $('#gTitle').textContent = g.name;
   $('#gMeta').innerHTML = groupMeta(g);
   $('#gTable').innerHTML = groupRows(g);
+  gzFoot();
+}
+// 第 49 輪 F47-10（R72）：點泡泡看成分股卡，法人 1 日、5 日都顯示 0億 的列（tr.z）預設收起，表尾可展開；只在這次瀏覽記住
+function gzFoot() {
+  const t = $('#gTable'), z = t.querySelectorAll('tr.z').length, n = t.querySelectorAll('tbody tr').length;
+  t.classList.toggle('gz', !App.gzAll);
+  $('#gZ').innerHTML = z ? `${App.gzAll ? '含 ' : z < n ? '另有 ' : ''}${z} 檔法人 1 日、5 日都是 0億　<button type="button" class="chip" data-gz>${App.gzAll ? '收合' : '顯示'}</button>` : '';
 }
 
 // ─── 排行 / 自選 ────────────────────────────────────────
@@ -1112,6 +1120,8 @@ function screenRow(code, st, S) {             // st = latest.json stocks 的一�
     x.dva = Math.round((Date.parse(S.d) - Date.parse(x.dvd)) / 864e5);
     x.dvg = !isNum(x.dvn) && !x.dvx && isNum(x.c) && x.dvp > 0 ? (x.c / x.dvp - 1) * 100 : null;
   }
+  const n = S && App.latest?.nx?.[code];   // 第 49 輪 F47-12（R71）：預告表的下一次除息（日曆天，相對選股資料日）；「權」不算
+  if (n && (n[1] === '息' || n[1] === '權息')) { x.nxd = n[0]; x.nxt = n[1]; x.nxa = Math.round((Date.parse(n[0]) - Date.parse(S.d)) / 864e5); }
   for (const n of [1, 5]) {
     const v = x['m' + n];
     x['ma' + n] = isNum(v) && isNum(x.c) ? v * 1000 * x.c / 1e8 : null;
@@ -1175,6 +1185,7 @@ const SCR_COLS = {
   // 第 35 輪 F35-3：最近除息（排序 = 除息至今天數，近的在前）；第二行為填息狀態
   dv: ['最近除息', x => x.dva, (v, x) => md(x.dvd) + `<span class="sub2">${isNum(x.dvn) ? x.dvn + ' 天填息' : x.dvx ? '中斷（' + x.dvx + '）' : '未填息'}</span>`, 1],
   dvg: ['距填息價', x => x.dvg, spct, 1],
+  nx: ['即將除息', x => x.nxa, (v, x) => md(x.nxd) + '<span class="sub2">' + v + ' 天後' + (x.nxt === '權息' ? '（權息）' : '') + '</span>', 1],   // 第 49 輪 F47-12：排序 = 距除息天數，近的在前
   mc: ['市值', x => x.mc, v => fmt(v, 0) + '億'], to: ['週轉率', x => x.to, v => fmt(v, 2) + '%'],   // 第 12 輪 B11
   lb: ['借券餘額', x => x.lb, v => fmt(v)], l5: ['借券5日', x => x.l5, v => sgn(v, 0)], lp: ['借券占股本', x => x.lp, v => fmt(v, 2) + '%'],
 };
@@ -1270,6 +1281,7 @@ const SCREEN_CONDS = [
   { id: 'dvf', g: '基本面', label: '最近一次已填息', sw: true, f: x => isNum(x.dvn), cols: ['dv'], title: DV_TITLE },
   { id: 'dvu', g: '基本面', label: '最近一次尚未填息', sw: true, f: x => !!x.dvd && !isNum(x.dvn) && !x.dvx, cols: ['dv', 'dvg'], title: DV_TITLE },
   { id: 'dvr', g: '基本面', label: '近 {v} 天內除息', opts: [30, 60, 90], def: 60, f: (x, v) => isNum(x.dva) && x.dva <= v, cols: ['dv'] },
+  { id: 'nxd', g: '基本面', label: '{v} 天內將除息', opts: [7, 14, 30], def: 14, f: (x, v) => isNum(x.nxa) && x.nxa <= v, cols: ['nx'], title: '證交所、櫃買中心除權除息預告表中，資料日之後的下一次除息或除權息；天數為日曆天；只有除權（多為現金增資）的不算；以公司公告為準' },   // 第 49 輪 F47-12（R71）
   { id: 'pb', g: '基本面', label: '淨值比 ≤ {v}', opts: [1, 1.5, 2], def: 1, val: true, f: (x, v, st) => isNum(x.pb) && x.pb > 0 && x.pb <= v && valGuard(x, st), cols: ['pb'] },
   { id: 'pbp', g: '基本面', label: '淨值比一年位置 ≤ {v}%', opts: [10, 20, 30], def: 20, val: true, title: '近 242 個交易日中，淨值比小於或等於今天的天數比例',
     f: (x, v, st) => isNum(x.pbp) && x.pbp <= v && valGuard(x, st), cols: ['pb', 'pbp'] },

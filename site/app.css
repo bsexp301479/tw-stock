@@ -147,7 +147,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 /* 個股頁 */
 .s-head{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
 .s-name{font-size:22px;font-weight:600}
-.s-code{color:var(--text2);margin-left:6px}
+.s-code{color:var(--text2);margin-left:6px;display:inline-block}
 .s-price{font-size:34px;font-weight:600;line-height:1.1;margin-top:4px}
 .s-chg{font-size:16px;margin-left:8px}
 .star{margin-left:auto;border:1px solid var(--border2);background:var(--card);border-radius:999px;padding:6px 14px}
@@ -308,6 +308,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
   .sec-h .seg button{padding:4px 9px}.kleg{font-size:11px;gap:2px 8px}
   .datebar .fd-eq{display:none}.wdel,.wh{position:relative}.wdel::after,.wh::after{content:'';position:absolute;inset:-10px}   /* D27-09 觸控範圍 ≥ 40px，圖示不變大 */
 }
+@media (max-width:374px){.s-name{font-size:17px}}   /* 第 49 輪 F47-11 */
 @media (max-width:520px){
   .tbl th,.tbl td{padding:8px 6px}
   .tbl td.nm{white-space:normal;min-width:84px;max-width:124px}.tbl td.nm>span{display:block;margin-left:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:0;min-width:100%}   /* D25-06 名稱欄兩行；D27-10 產業名過長截斷 */
@@ -383,3 +384,4 @@ a.pill.grp{cursor:pointer}a.pill.grp:hover,a.pill.grp:focus-visible{border-color
 .help-btn{font-size:16px;font-weight:700;line-height:1;text-decoration:none}.help-g{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.help-t{padding:8px 6px;border-top:1px solid var(--border);scroll-margin-top:calc(var(--top-h,56px) + 8px)}.sec-h+.help-t{border-top:0}.help-t a{color:var(--blue);white-space:nowrap}.help-t.on{background:var(--card2);box-shadow:inset 3px 0 0 var(--blue)}   /* 第 45 輪：名詞說明 */
 .card.w-nx{margin-top:12px}.w-nx .sec-h{margin-bottom:4px}.w-nx .al-row{line-height:1.7}.w-nx a.small{color:var(--blue);white-space:nowrap}a.pill.pill-nx{border-color:var(--blue);color:var(--blue)}   /* 第 47 輪 F47-1：即將除權息卡、頁頭標籤 */
 .cmp-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px;flex:none}.cmp-ix{background:var(--text2)}.cmp i.dash{background:none;height:0;border-top:2px dashed var(--text2);border-radius:0}.cmp-pick{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 6px}.cmp-c{display:inline-flex;align-items:center}.cmp-x{border:none;background:none;margin-left:4px;padding:0 2px;color:var(--text2);font-size:15px;line-height:1}.cmp-q{position:relative;flex:0 1 220px}.cmp-q input{width:100%;padding:6px 12px;border-radius:999px;border:1px solid var(--border2);background:var(--card);color:var(--text);font-size:14px;outline:none}.cmp-q input:focus{border-color:var(--blue)}.cmp-q .qlist{z-index:30}.cmp-w{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px}.cmp .seg{margin-top:6px;max-width:100%;overflow-x:auto}.cmp .seg button{white-space:nowrap}.cmp-s{margin:6px 0 2px}.cmp-ch{height:260px;cursor:crosshair}.cmp-tbl td:first-child{white-space:normal}@media (max-width:720px){.cmp-q{flex:1 1 100%}.cmp-q input{font-size:16px}.cmp-ch{height:220px}}@media (max-width:360px){.cmp .seg button{padding:4px 6px}}   /* 第 48 輪 F48-3：報酬率比較頁 */
+#gTable.gz tr.z{display:none}.g-z{margin-top:6px}   /* 第 49 輪 F47-10 */

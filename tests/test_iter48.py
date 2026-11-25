@@ -298,7 +298,7 @@ def test_route_and_version():
     for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js", "compare.js"):
         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
         assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
-    assert "tools.js?v=64e7360f" in HTML and "help.js?v=a5a5a7e8" in HTML and HTML.count("https://") == 2
+    assert "help.js?v=a5a5a7e8" in HTML and HTML.count("https://") == 2
     assert "python3 tests/test_iter48.py" in README and "第 48 輪" in (ROOT / "docs" / "iterations" / "README.md").read_text(encoding="utf-8")
     r = next(l for l in README.splitlines() if l.startswith("- 多檔報酬率比較（第 48 輪"))
     for s in ("ix.json", "#/compare/", "R62", "R64", "R67", "R68", "√250", "二代健保"):

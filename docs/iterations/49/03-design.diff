@@ -1,0 +1,544 @@
+diff --git a/README.md b/README.md
+index dc49c83..331d11b 100644
+--- a/README.md
++++ b/README.md
+@@ -91,6 +91,7 @@ python3 tests/test_iter45.py                     # 第 45 輪測試（名詞說
+ python3 tests/test_iter46.py                     # 第 46 輪測試（ETF 近期表現，含息）
+ python3 tests/test_iter47.py                     # 第 47 輪測試（即將除權息提醒、自選 ETF 表現、指數卡、法人卡、夜盤、名詞）
+ python3 tests/test_iter48.py                     # 第 48 輪測試（多檔報酬率比較：ix.json、還原口徑、起點、統計、網址、入口）
++python3 tests/test_iter49.py                     # 第 49 輪測試（除權息試算起日年份、泡泡圖 0 億列收合、窄螢幕頁頭、即將除息條件）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -157,6 +158,7 @@ python -m twstock backup --direct --out D:\backups   # SQL Server 不在 Docker
+ - ETF 近期表現（第 46 輪）：ETF 個股頁「走勢」分頁 K 線卡之後、配息卡之前加「近期表現（含息）」卡，區間同股票卡（5／20／60／120 日、今年以來、52 週，未滿時加「上市以來／上櫃以來」，從本站第一個成交日起算，不是發行價）；含息報酬用還原收盤：除息日依官方除息表（`etf_events`）的參考價 ÷ 除息前收盤調整之前的價格（等於配息在除息日以參考價再投入同一檔），上市 ETF 另把 `etf_gaps` 中不在除息表的日子（多為分割、合併）一起調整，上櫃不推測；上櫃 ETF 有「前一列有成交、官方漲跌空白、不在除息表」的一天，或還原後相鄰兩個成交日變動超過 ±30% 時不輸出（無法辨識分割）。上市、上櫃 ETF 一律對照加權指數（價格指數，不含股息，長區間的差距會偏向 ETF）；代號尾碼 B（債券）、L／R（槓桿／反向）、U（期貨）在卡片多一行提示。K 線、頁頭 52 週高低仍是原始價。`etfp/{代號}.json` 的 `epf` 格式同股票 `pf`（`[[區間, 基準日, 本檔 %, 加權 %, 差距]]`）；`latest.json` ETF 列加 `r20`、`r60`、`ry`、`rw`（含息 %，缺值不輸出），`etfs.ix` = 加權指數同期 `{"20", "60", "y", "w"}`。ETF 列表加「行情／表現」欄組（只在這次瀏覽記住；表現表：收盤、20 日、60 日、今年以來、52 週），排序加含息 20 日、60 日、今年以來、52 週。
+ - 即將除權息提醒（第 47 輪）：`latest.json` 頂層 `nx = {代號: [除權息日, 類型, 每股現金或 null]}`，取自第 40 輪的除權除息預告，每檔只放資料日之後的下一次（空的時候不輸出）。個股／ETF 頁頭在處置／注意標籤之後加「即將除息 12/03」標籤（連到除權息試算，滑過看金額）；自選頁在表格之後加「即將除權息」卡（股票與 ETF 都列，依除權息日排序；現金待公告寫「金額待公告」，現金增資的「權」不寫金額），有填持股時加「估計可領 N 元」= 持股股數 × 預告每股現金，用整數運算、元以下捨去，未扣二代健保補充保費與匯費，配股不估算（R60）；今日頁「我的自選」卡提示行加「即將除權息 N 檔」（算全部自選）。同輪小修：指數卡區間漲跌改寫起算日（「自 08/25 起」）；籌碼分頁「法人5日」卡加「自營 5 日」；期貨夜盤結束時間 = 開始日的隔一個日曆日 05:00（週五夜盤到週六，R61）；自選頁選「表現」時 ETF 表改為含息報酬（20 日、60 日、今年以來、52 週，算法同 ETF 列表「表現」，只有 ETF 時欄組為「行情｜表現｜持股」）；名詞說明加「含息報酬」、改「還原價」（8 組 42 個名詞）。
+ - 多檔報酬率比較（第 48 輪）：新頁 `#/compare/代號,代號/區間`（區間 `20`、`60`、`120`、`y` 今年以來、`w` 52 週，預設 `w`），最多 4 檔股票或 ETF 放在同一段期間比較，起點都是 0%。匯出新增 `site/data/ix.json = {"d": [交易日], "TAIEX": [加權收盤或 null]}`（`d` = 個股日線的完整交易日，約 5.7 KB），當作交易日曆與加權指數線。口徑（R62）：股票用還原價（`ev`），ETF 用含息還原（`dv`＋`gx` 推測調整，參考價 = 收盤 − 官方漲跌），和個股頁「近期表現」、ETF 頁「近期表現（含息）」同一區間的數字相同（顯示時剛好一半取偶數，同匯出）。起點（R63）同近期表現：N 日 = 往前第 N 個交易日、今年以來 = 前一年最後一個交易日、52 週 = 一年前那天（含）以前最後一個交易日；起點沒有成交用之前最後一個成交日。有一檔在起點還沒有成交時，全部（含加權指數）改從最晚那檔的第一個成交日起算並寫明（R64）；無成交的日子線持平，今天無成交寫「最後成交 M/D」（R65）。一律對照加權指數（價格指數，不含股息，R66）。表格依加入順序列區間報酬、最大跌幅（區間內從之前最高點往下的最大跌幅，滑過看日期）、年化波動（相鄰成交日漲跌幅的樣本標準差 × √250，少於 20 個日報酬不計算，R67），不排序、不列差距。網址正規化（R68）：轉大寫、去重、只留今天行情有的代號、最多 4 檔、區間不認得改 `w`，用 `replaceState` 不留瀏覽紀錄；入口是個股／ETF 頁近期表現卡標題列的「比較 →」，比較頁內可搜尋加入、從自選快速加入、按 × 移除。不含手續費、稅與二代健保補充保費。
++- 第 49 輪小項：除權息試算「近一年現金股利 = YYYY/MM/DD 以後 N 次合計」起日寫出年份（口徑不變，仍是資料日往前 365 天、不含當天）。泡泡圖「點泡泡看成分股」卡（電腦版與手機「圖」模式）預設收起法人 1 日、5 日都顯示 `0億` 的股票（R72：以畫面上的字為準，`--` 不算），表尾寫「另有 N 檔…」，按「顯示」展開、「收合」收回，只在這次瀏覽記住；手機「清單」模式不變。個股頁頭代號整塊換行、374 寬以下名稱 17px，名稱不在中文字中間斷開。選股基本面加「{v} 天內將除息」（7／14／30 日曆天，預設 14），用 `latest.json` 的 `nx`（預告表的下一次）、相對選股資料日計算，只算「息」「權息」，只有「權」的不算（R71）；結果多「即將除息」欄（日期與「N 天後」，近的在前）。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+diff --git a/docs/iterations/README.md b/docs/iterations/README.md
+index 8439240..0021aac 100644
+--- a/docs/iterations/README.md
++++ b/docs/iterations/README.md
+@@ -38,4 +38,5 @@
+ - 第 46 輪（2026-11-22 使用者選 F42-11 ETF 近期表現，五角色、每次交接等確認）。分析師 `46/01-analyst.md`：含息報酬口徑（還原價，官方除息表＋上市推測調整）、手算例 5 檔＋邊界、R51～R58、舊測試鎖定 17 處；D134～D143（D141 = C、其餘 A）。PM `46/02-pm.md`：F46-1～F46-4，畫面文字逐字定稿，驗收 29 條；D138 兩條件只查上櫃、尾碼提示含 B／L／R／U。設計 `46/03-design.md`（＋`03-design.diff`）：`export.py` 新純函式 `etf_perf`（`_price_events` 以 TWSE 呼叫＋`_adj_factors`＋`stock_perf`），`epf` 接在 `E["sh"]` 之後，`latest.json` ETF 列 `r20`～`rw`、`etfs.ix`；`stock.js` `perfHTML` 加 `etf` 參數（股票輸出雜湊不變）；`app.js` `etfPerfHTML` 與「行情／表現」欄組；`app.css` 不改；舊測試 0 行，新測試 `test_iter46`（反證 26）；D144 = A（手機表現表在表格內橫向捲動）。PG `46/04-dev.md`：原樣套用並 `export`（11/20 資料），367 檔都有 `epf`、數字和手算例逐位相同，46 個測試全過。QA `46/05-qa.md` 通過：驗收 29 條、367 檔獨立重算 0 差異；D145 = A 已修 QA46-01（補測試）與 QA46-02（舊 `latest.json` 時不沿用含息排序，`app.js` 3 行），D146 = A 修正反證數。
+ - 第 47 輪（2026-11-23 使用者要求分析師全站走一次，五角色、每次交接等確認）。分析師 `47/01-analyst.md`：28 個路由 375／320 寬 0 溢出、主控台 0 錯誤；F47-1～F47-12、R59～R61、D147～D155（全 A：做 F47-1 即將除權息提醒、F47-2 指數卡起算日、F47-3 法人卡自營、F47-4 夜盤時間、F47-6 自選 ETF 表現、F47-7 名詞含息報酬）。PM `47/02-pm.md`：畫面文字逐字定稿、驗收 23 條，估計可領用 BigInt 整數運算；PM 自行決定 12 點使用者全部同意。設計 `47/03-design.md`（＋`03-design.diff`）：`export.py` 新純函式 `nx_latest`、`latest.json` 頂層 `nx`；`stock.js` `nxTag`、法人卡第 4 欄；`app.js` `watchNx`、`etfWatchPerf`、`renderWatch` 接線、今日卡、指數卡、夜盤；`help.js` 2 行；`app.css` 1 行；舊測試只改 `test_iter45` 3 行，新測試 `test_iter47`。PG `47/04-dev.md`：原樣套用並 `export`（11/23 資料），`latest.json` 頂層 `nx` 37 檔、其他匯出檔逐位元組不變，47 個測試全過。QA `47/05-qa.md` 通過：驗收 23 條、`nx` 與估計可領（720 組）獨立核算；D156 = A 已修 QA47-01（沒有 `nx` 時自選頁多一段空白，`app.js` 合併 1 行）；QA47-02（每股現金小於 0.000001 元不估計）列觀察。
+ - 第 48 輪（2026-11-24 使用者選 F42-10 多檔報酬率比較，五角色、每次交接等確認）。分析師 `48/01-analyst.md`：前端用 `ev`／`dv`＋`gx` 重算和 `pf`／`epf` 14,260 列相同、新增 `ix.json`、手算例 6 組、R62～R70、舊測試鎖定 14 組；D157～D167 全 A。PM `48/02-pm.md`：畫面文字逐字定稿、驗收 30 條；PM 自行決定 17 點使用者全部同意。設計 `48/03-design.md`（＋`03-design.diff`）：`export.py` 新純函式 `ix_export` 寫 `ix.json`；新檔 `compare.js`（純函式＋比較頁）；`app.js` 路由與標題各 1 行；`stock.js` 近期表現卡「比較 →」2 行；`app.css` 4 行；舊測試 0 行，新測試 `test_iter48`。PG `48/04-dev.md`：原樣套用並 `export`（11/24 資料），`ix.json` 5,692 bytes、259 天，其他匯出檔只有 `latest.json` 匯出時間不同，48 個測試全過。QA `48/05-qa.md` 通過：驗收 30 條、自行還原 23,590 列 0 差異；D168 = A 已修 QA48-01（網址列手打代號時解碼，提示加跳脫，`compare.js` 2 行）；QA48-02～04 列觀察。
++- 第 49 輪（2026-11-25 使用者選第 47 輪剩下的小項 F47-9～F47-12，小項輪）。分析師 `49/01-analyst.md`：R71、R72、Q49-1～Q49-3，D169～D175 全 A。PM `49/02-pm.md`：畫面文字逐字定稿、驗收 29 條；PM 自行決定 11 點使用者全部同意。設計 `49/03-design.md`（＋`03-design.diff`）：`tools.js` 1 行、`app.js` 成分股表 `class="z"`＋表尾 `gzFoot`、選股 `nxd` 條件與 `nx` 欄、`app.css` 3 行；舊測試 8 行（使用者已同意），新測試 `test_iter49`。
+ - 規範：回應與文件用繁體中文；程式風格比照既有程式碼；只改必要的地方；外部網站請求要經過 `twstock/fetch.py` 的 `request`（有節流）；不要 commit 或 push；不要動 `.env`（建立專案副本時也不要複製 `.env`）；不要安裝排程或改系統設定（launchd、crontab、pmset、docker 設定），這些由使用者自行執行；埠 8000 是使用者自己的伺服器，測試用 8001 並在結束時關掉。改了 `site/` 的 js 或 css 要同步更新 `index.html` 的 `?v=`（sha1 前 8 碼，`test_iter23` 失敗時會印出正確的 3 行）。
+diff --git a/site/app.css b/site/app.css
+index 6a79fdd..93b627a 100644
+--- a/site/app.css
++++ b/site/app.css
+@@ -147,7 +147,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+ /* 個股頁 */
+ .s-head{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
+ .s-name{font-size:22px;font-weight:600}
+-.s-code{color:var(--text2);margin-left:6px}
++.s-code{color:var(--text2);margin-left:6px;display:inline-block}
+ .s-price{font-size:34px;font-weight:600;line-height:1.1;margin-top:4px}
+ .s-chg{font-size:16px;margin-left:8px}
+ .star{margin-left:auto;border:1px solid var(--border2);background:var(--card);border-radius:999px;padding:6px 14px}
+@@ -308,6 +308,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+   .sec-h .seg button{padding:4px 9px}.kleg{font-size:11px;gap:2px 8px}
+   .datebar .fd-eq{display:none}.wdel,.wh{position:relative}.wdel::after,.wh::after{content:'';position:absolute;inset:-10px}   /* D27-09 觸控範圍 ≥ 40px，圖示不變大 */
+ }
++@media (max-width:374px){.s-name{font-size:17px}}   /* 第 49 輪 F47-11 */
+ @media (max-width:520px){
+   .tbl th,.tbl td{padding:8px 6px}
+   .tbl td.nm{white-space:normal;min-width:84px;max-width:124px}.tbl td.nm>span{display:block;margin-left:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:0;min-width:100%}   /* D25-06 名稱欄兩行；D27-10 產業名過長截斷 */
+@@ -383,3 +384,4 @@ a.pill.grp{cursor:pointer}a.pill.grp:hover,a.pill.grp:focus-visible{border-color
+ .help-btn{font-size:16px;font-weight:700;line-height:1;text-decoration:none}.help-g{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.help-t{padding:8px 6px;border-top:1px solid var(--border);scroll-margin-top:calc(var(--top-h,56px) + 8px)}.sec-h+.help-t{border-top:0}.help-t a{color:var(--blue);white-space:nowrap}.help-t.on{background:var(--card2);box-shadow:inset 3px 0 0 var(--blue)}   /* 第 45 輪：名詞說明 */
+ .card.w-nx{margin-top:12px}.w-nx .sec-h{margin-bottom:4px}.w-nx .al-row{line-height:1.7}.w-nx a.small{color:var(--blue);white-space:nowrap}a.pill.pill-nx{border-color:var(--blue);color:var(--blue)}   /* 第 47 輪 F47-1：即將除權息卡、頁頭標籤 */
+ .cmp-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px;flex:none}.cmp-ix{background:var(--text2)}.cmp i.dash{background:none;height:0;border-top:2px dashed var(--text2);border-radius:0}.cmp-pick{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 6px}.cmp-c{display:inline-flex;align-items:center}.cmp-x{border:none;background:none;margin-left:4px;padding:0 2px;color:var(--text2);font-size:15px;line-height:1}.cmp-q{position:relative;flex:0 1 220px}.cmp-q input{width:100%;padding:6px 12px;border-radius:999px;border:1px solid var(--border2);background:var(--card);color:var(--text);font-size:14px;outline:none}.cmp-q input:focus{border-color:var(--blue)}.cmp-q .qlist{z-index:30}.cmp-w{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px}.cmp .seg{margin-top:6px;max-width:100%;overflow-x:auto}.cmp .seg button{white-space:nowrap}.cmp-s{margin:6px 0 2px}.cmp-ch{height:260px;cursor:crosshair}.cmp-tbl td:first-child{white-space:normal}@media (max-width:720px){.cmp-q{flex:1 1 100%}.cmp-q input{font-size:16px}.cmp-ch{height:220px}}@media (max-width:360px){.cmp .seg button{padding:4px 6px}}   /* 第 48 輪 F48-3：報酬率比較頁 */
++#gTable.gz tr.z{display:none}.g-z{margin-top:6px}   /* 第 49 輪 F47-10 */
+diff --git a/site/app.js b/site/app.js
+index 06eed49..fdb8334 100644
+--- a/site/app.js
++++ b/site/app.js
+@@ -754,7 +754,7 @@ function renderBubble() {
+     </section>
+     <section class="sec grid g2">
+       ${list ? '' : `<div class="card"><div class="sec-h"><h2 id="gTitle">點泡泡看成分股</h2><span class="sp"></span><span id="gMeta" class="muted small"></span></div>
+-        <div class="tbl-wrap panel-list"><table class="tbl" id="gTable"></table></div></div>`}
++        <div class="tbl-wrap panel-list"><table class="tbl" id="gTable"></table></div><div class="muted small g-z" id="gZ"></div></div>`}
+       <div class="card"><div class="sec-h"><h2>象限說明</h2></div>
+         <div class="small" style="line-height:1.9">
+           <div><b class="up">漲潮</b>：近 5 日淨流入，而且比 20 日平均更積極 → 資金正在加速進場</div>
+@@ -782,6 +782,7 @@ function renderBubble() {
+     else if (App.blHit) requestAnimationFrame(() => $('#blBox tr.q-hit')?.scrollIntoView());   // 從今日頁點族群進來：捲到展開的那一列（route() 捲到頂端之後）
+     return;
+   }
++  $('#gZ').addEventListener('click', e => { if (e.target.closest('[data-gz]')) { App.gzAll = !App.gzAll; gzFoot(); } });   // 第 49 輪 F47-10
+   drawBubble(groups, L.dates);
+   showGroup(groups.find(g => g.name === focus) || groups[0]);
+ }
+@@ -908,7 +909,7 @@ function groupRows(g) {   // D28-04：泡泡明細卡與手機清單展開共用
+   const S = App.latest.stocks;
+   const rows = g.codes.filter(c => S[c]).sort((a, b) => (S[b].n5 ?? 0) - (S[a].n5 ?? 0));
+   return `<thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>法人1日</th><th>法人5日</th></tr></thead><tbody>` +
+-    rows.map(c => { const s = S[c]; return `<tr data-code="${c}"><td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
++    rows.map(c => { const s = S[c]; return `<tr data-code="${c}"${yi(s.n1) === '0億' && yi(s.n5) === '0億' ? ' class="z"' : ''}><td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
+       <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
+       <td class="num ${ycls(s.n1)}">${yi(s.n1)}</td><td class="num ${ycls(s.n5)}">${yi(s.n5)}</td></tr>`; }).join('') + '</tbody>';
+ }
+@@ -917,6 +918,13 @@ function showGroup(g) {
+   $('#gTitle').textContent = g.name;
+   $('#gMeta').innerHTML = groupMeta(g);
+   $('#gTable').innerHTML = groupRows(g);
++  gzFoot();
++}
++// 第 49 輪 F47-10（R72）：點泡泡看成分股卡，法人 1 日、5 日都顯示 0億 的列（tr.z）預設收起，表尾可展開；只在這次瀏覽記住
++function gzFoot() {
++  const t = $('#gTable'), z = t.querySelectorAll('tr.z').length, n = t.querySelectorAll('tbody tr').length;
++  t.classList.toggle('gz', !App.gzAll);
++  $('#gZ').innerHTML = z ? `${App.gzAll ? '含 ' : z < n ? '另有 ' : ''}${z} 檔法人 1 日、5 日都是 0億　<button type="button" class="chip" data-gz>${App.gzAll ? '收合' : '顯示'}</button>` : '';
+ }
+ 
+ // ─── 排行 / 自選 ────────────────────────────────────────
+@@ -1112,6 +1120,8 @@ function screenRow(code, st, S) {             // st = latest.json stocks 的一
+     x.dva = Math.round((Date.parse(S.d) - Date.parse(x.dvd)) / 864e5);
+     x.dvg = !isNum(x.dvn) && !x.dvx && isNum(x.c) && x.dvp > 0 ? (x.c / x.dvp - 1) * 100 : null;
+   }
++  const n = S && App.latest?.nx?.[code];   // 第 49 輪 F47-12（R71）：預告表的下一次除息（日曆天，相對選股資料日）；「權」不算
++  if (n && (n[1] === '息' || n[1] === '權息')) { x.nxd = n[0]; x.nxt = n[1]; x.nxa = Math.round((Date.parse(n[0]) - Date.parse(S.d)) / 864e5); }
+   for (const n of [1, 5]) {
+     const v = x['m' + n];
+     x['ma' + n] = isNum(v) && isNum(x.c) ? v * 1000 * x.c / 1e8 : null;
+@@ -1175,6 +1185,7 @@ const SCR_COLS = {
+   // 第 35 輪 F35-3：最近除息（排序 = 除息至今天數，近的在前）；第二行為填息狀態
+   dv: ['最近除息', x => x.dva, (v, x) => md(x.dvd) + `<span class="sub2">${isNum(x.dvn) ? x.dvn + ' 天填息' : x.dvx ? '中斷（' + x.dvx + '）' : '未填息'}</span>`, 1],
+   dvg: ['距填息價', x => x.dvg, spct, 1],
++  nx: ['即將除息', x => x.nxa, (v, x) => md(x.nxd) + '<span class="sub2">' + v + ' 天後' + (x.nxt === '權息' ? '（權息）' : '') + '</span>', 1],   // 第 49 輪 F47-12：排序 = 距除息天數，近的在前
+   mc: ['市值', x => x.mc, v => fmt(v, 0) + '億'], to: ['週轉率', x => x.to, v => fmt(v, 2) + '%'],   // 第 12 輪 B11
+   lb: ['借券餘額', x => x.lb, v => fmt(v)], l5: ['借券5日', x => x.l5, v => sgn(v, 0)], lp: ['借券占股本', x => x.lp, v => fmt(v, 2) + '%'],
+ };
+@@ -1270,6 +1281,7 @@ const SCREEN_CONDS = [
+   { id: 'dvf', g: '基本面', label: '最近一次已填息', sw: true, f: x => isNum(x.dvn), cols: ['dv'], title: DV_TITLE },
+   { id: 'dvu', g: '基本面', label: '最近一次尚未填息', sw: true, f: x => !!x.dvd && !isNum(x.dvn) && !x.dvx, cols: ['dv', 'dvg'], title: DV_TITLE },
+   { id: 'dvr', g: '基本面', label: '近 {v} 天內除息', opts: [30, 60, 90], def: 60, f: (x, v) => isNum(x.dva) && x.dva <= v, cols: ['dv'] },
++  { id: 'nxd', g: '基本面', label: '{v} 天內將除息', opts: [7, 14, 30], def: 14, f: (x, v) => isNum(x.nxa) && x.nxa <= v, cols: ['nx'], title: '證交所、櫃買中心除權除息預告表中，資料日之後的下一次除息或除權息；天數為日曆天；只有除權（多為現金增資）的不算；以公司公告為準' },   // 第 49 輪 F47-12（R71）
+   { id: 'pb', g: '基本面', label: '淨值比 ≤ {v}', opts: [1, 1.5, 2], def: 1, val: true, f: (x, v, st) => isNum(x.pb) && x.pb > 0 && x.pb <= v && valGuard(x, st), cols: ['pb'] },
+   { id: 'pbp', g: '基本面', label: '淨值比一年位置 ≤ {v}%', opts: [10, 20, 30], def: 20, val: true, title: '近 242 個交易日中，淨值比小於或等於今天的天數比例',
+     f: (x, v, st) => isNum(x.pbp) && x.pbp <= v && valGuard(x, st), cols: ['pb', 'pbp'] },
+diff --git a/site/index.html b/site/index.html
+index 5a0e9b2..6d21d50 100644
+--- a/site/index.html
++++ b/site/index.html
+@@ -7,12 +7,12 @@
+ <meta name="description" content="台股類股與概念股的三大法人資金流向、個股 K 線與籌碼">
+ <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='19' r='8' fill='%23d64545'/><circle cx='22' cy='12' r='6' fill='%23e8a33d'/><circle cx='23' cy='24' r='4' fill='%2330a46c'/></svg>">
+ <script>try{var t=localStorage.getItem('tw.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+-<link rel="stylesheet" href="app.css?v=1ae7bbed">
++<link rel="stylesheet" href="app.css?v=ce1417aa">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=d273c8c5" defer></script>
++<script src="app.js?v=54952a23" defer></script>
+ <script src="stock.js?v=28633954" defer></script>
+-<script src="tools.js?v=64e7360f" defer></script>
++<script src="tools.js?v=0a050889" defer></script>
+ <script src="help.js?v=a5a5a7e8" defer></script>
+ <script src="compare.js?v=1c11197d" defer></script>
+ </head>
+diff --git a/site/tools.js b/site/tools.js
+index 690eec0..2a0f331 100644
+--- a/site/tools.js
++++ b/site/tools.js
+@@ -302,7 +302,7 @@ function tlDvLoad(d, e) {
+   if (n && !N[0]) h.push(N[1]);
+   const ev = (d.ev || []).filter(v => v.d === x.d && v.t === x.t)[0], R = x.r != null ? x.r : ev && ev.r;
+   if (R != null && x.p != null) h.push(`上次官方參考價 ${pfmt(R)}（${md(x.d)}，前收 ${pfmt(x.p)}）；前收改成 ${pfmt(x.p)} 可對照`);
+-  h.push(k ? `近一年現金股利 = ${md(from)} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${md(from)} 以後的現金股利官方表沒有分項，請自行確認` : `${md(from)} 以後沒有現金股利`);
++  h.push(k ? `近一年現金股利 = ${from.replace(/-/g, '/')} 以後 ${k} 次合計${miss ? '；部分缺值，請自行確認' : ''}` : miss ? `${from.replace(/-/g, '/')} 以後的現金股利官方表沒有分項，請自行確認` : `${from.replace(/-/g, '/')} 以後沒有現金股利`);
+   return [o, h];
+ }
+ // 第 41 輪 F41-1：平均成本（多筆合計）。金額 BigInt（分）、手續費與證交稅為元（Number），o = { dz 折扣千分之, m 整股最低, mo 零股最低, r 證交稅萬分之 }
+diff --git a/tests/test_iter39.py b/tests/test_iter39.py
+index ef51d85..18659a8 100644
+--- a/tests/test_iter39.py
++++ b/tests/test_iter39.py
+@@ -259,10 +259,10 @@ const loadStock = async c => JSON.parse(JSON.stringify(FIX[c]));
+         return []
+     want = {   # 代號：帶入值、要出現的提示
+         "2330": ({"mk": "l", "k": "s", "p": "1460", "c": "7.000001", "s": "0", "y1": "23.00004"},
+-                 ["已帶入 09/16 的股利（最近一次），下次請依公司公告修改", "上次官方參考價 2,377.99（09/16，前收 2,385）", "近一年現金股利 = 11/20 以後 4 次合計"]),
+-        "2063": ({"mk": "o", "k": "s", "p": "22.5", "c": "0.500021", "s": "99.99999376", "y1": "0.500021"}, ["已帶入 10/28 的股利", "上次官方參考價 21.68（10/28，前收 24.35）", "近一年現金股利 = 11/20 以後 1 次合計<"]),   # 純權不計
++                 ["已帶入 09/16 的股利（最近一次），下次請依公司公告修改", "上次官方參考價 2,377.99（09/16，前收 2,385）", "近一年現金股利 = 2025/11/20 以後 4 次合計"]),
++        "2063": ({"mk": "o", "k": "s", "p": "22.5", "c": "0.500021", "s": "99.99999376", "y1": "0.500021"}, ["已帶入 10/28 的股利", "上次官方參考價 21.68（10/28，前收 24.35）", "近一年現金股利 = 2025/11/20 以後 1 次合計<"]),   # 純權不計
+         "5876": ({"mk": "l", "c": "", "s": "0", "y1": "1.2"},
+-                 ["上市官方表只有 07/28 的權值＋息值合計 2.247525 元，請依公告填現金股利與配股", "上次官方參考價 44.75", "近一年現金股利 = 11/20 以後 1 次合計；部分缺值，請自行確認"]),
++                 ["上市官方表只有 07/28 的權值＋息值合計 2.247525 元，請依公告填現金股利與配股", "上次官方參考價 44.75", "近一年現金股利 = 2025/11/20 以後 1 次合計；部分缺值，請自行確認"]),
+         "2464": ({"mk": "l", "c": "", "s": "0", "y1": ""}, ["最近一次（09/02）含現金增資，參考價請看官方公告；現金股利、配股沒有帶入", "11/20 以後的現金股利官方表沒有分項，請自行確認"]),
+         "1213": ({"mk": "l", "c": "", "s": "0", "y1": "", "p": "10.1"}, ["2026-11-19 起沒有除權息紀錄，請依公司公告填寫"]),
+         "0056": ({"mk": "l", "k": "e", "c": "1.72", "s": "0", "y1": "3.07", "p": "37.2"}, ["已帶入 10/22 的股利", "上次官方參考價 57.03（10/22，前收 58.75）"]),
+diff --git a/tests/test_iter40.py b/tests/test_iter40.py
+index 17aca2e..52acfd8 100644
+--- a/tests/test_iter40.py
++++ b/tests/test_iter40.py
+@@ -397,11 +397,11 @@ LATEST40 = {"date": "2026-11-20", "stocks": {k: {"n": v["name"]} for k, v in FIX
+             "etfs": {"rows": {k: {"n": v["name"]} for k, v in FIX.items() if k.startswith("00")}}}
+ WANT = {   # 代號：帶入值、要出現的提示（依序）、TL.info.ex
+     "1437": ({"c": "0.624652", "s": "0"}, ["已帶入 12/03 除息的預告股利（證交所預告表，僅供參考，以公司公告為準）", "上次官方參考價 39.5（12/05，前收 40）",
+-                                           "近一年現金股利 = 11/20 以後 1 次合計"], "2026-12-03"),
++                                           "近一年現金股利 = 2025/11/20 以後 1 次合計"], "2026-12-03"),
+     "6523": ({"c": "4", "s": "0", "mk": "o"}, ["已帶入 11/26 除息的預告股利（櫃買中心預告表，僅供參考，以公司公告為準）", "2026-11-19 起沒有除權息紀錄，請依公司公告填寫"], "2026-11-26"),
+     "3706": ({"c": "2", "s": "0"}, ["已帶入 07/01 的股利（最近一次），下次請依公司公告修改", "11/27 除權含現金增資，參考價請看官方公告", "上次官方參考價 53"], "2026-11-27"),
+     "6655": ({"c": "2", "s": "0"}, ["已帶入 05/01 的股利（最近一次），下次請依公司公告修改", "11/24 除息的預告現金股利 2.12345678 元超過 6 位小數，請依公告填寫"], "2026-11-24"),
+-    "8942": ({"c": "1", "s": "50", "mk": "o"}, ["已帶入 12/10 除權息的預告股利（櫃買中心預告表，僅供參考，以公司公告為準）", "近一年現金股利 = 11/20 以後 1 次合計"], "2026-12-10"),
++    "8942": ({"c": "1", "s": "50", "mk": "o"}, ["已帶入 12/10 除權息的預告股利（櫃買中心預告表，僅供參考，以公司公告為準）", "近一年現金股利 = 2025/11/20 以後 1 次合計"], "2026-12-10"),
+     "00901": ({"c": "7", "s": "0", "k": "e"}, ["已帶入 11/24 除息的預告股利（證交所預告表，僅供參考，以發行人公告為準）", "2026-11-19 起沒有除權息紀錄"], "2026-11-24"),
+     "00958B": ({"c": "0.15", "k": "e", "mk": "o"}, ["已帶入 08/20 的股利（最近一次），下次請依發行人公告修改", "11/24 除息，金額待公告", "上次官方參考價 9.15"], "2026-11-24"),
+ }
+diff --git a/tests/test_iter41.py b/tests/test_iter41.py
+index 96450c8..89f5ca2 100644
+--- a/tests/test_iter41.py
++++ b/tests/test_iter41.py
+@@ -434,7 +434,7 @@ NEW = ("tlLot", "tlAvg", "tlSell", "tlAcBreak", "tlAcN", "tlAcV", "tlAcOut", "tl
+ 
+ 
+ def test_unchanged_and_wiring():
+-    assert hashlib.sha1("".join(T._grab(TOOLS, n) for n in OLD).encode()).hexdigest()[:12] == "4aec4a83de78"   # 只呼叫、不修改
++    assert hashlib.sha1("".join(T._grab(TOOLS, n) for n in OLD).encode()).hexdigest()[:12] == "81d223f49f68"   # 只呼叫、不修改
+     for f in ("tools.js", "app.js", "stock.js", "app.css"):
+         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
+         assert f'{f}?v={v}"' in HTML, f"site/index.html 的 {f}?v= 請改成 {v}"
+diff --git a/tests/test_iter47.py b/tests/test_iter47.py
+index 2697316..61b02a7 100644
+--- a/tests/test_iter47.py
++++ b/tests/test_iter47.py
+@@ -377,7 +377,7 @@ def test_version_and_docs():
+     for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js"):
+         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
+         assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
+-    assert "tools.js?v=64e7360f" in HTML and HTML.count("https://") == 2
++    assert HTML.count("https://") == 2
+     assert "python3 tests/test_iter47.py" in README
+     r = next(l for l in README.splitlines() if l.startswith("- 即將除權息提醒（第 47 輪"))
+     for s in ("`nx", "元以下捨去", "二代健保", "R60", "R61", "自營", "含息報酬", "42 個名詞"):
+diff --git a/tests/test_iter48.py b/tests/test_iter48.py
+index 77a49e7..e9395f6 100644
+--- a/tests/test_iter48.py
++++ b/tests/test_iter48.py
+@@ -298,7 +298,7 @@ def test_route_and_version():
+     for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js", "compare.js"):
+         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
+         assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
+-    assert "tools.js?v=64e7360f" in HTML and "help.js?v=a5a5a7e8" in HTML and HTML.count("https://") == 2
++    assert "help.js?v=a5a5a7e8" in HTML and HTML.count("https://") == 2
+     assert "python3 tests/test_iter48.py" in README and "第 48 輪" in (ROOT / "docs" / "iterations" / "README.md").read_text(encoding="utf-8")
+     r = next(l for l in README.splitlines() if l.startswith("- 多檔報酬率比較（第 48 輪"))
+     for s in ("ix.json", "#/compare/", "R62", "R64", "R67", "R68", "√250", "二代健保"):
+diff --git a/tests/test_iter49.py b/tests/test_iter49.py
+new file mode 100644
+index 0000000..641a1f1
+--- /dev/null
++++ b/tests/test_iter49.py
+@@ -0,0 +1,305 @@
++"""第 49 輪（不連網、不連資料庫）：除權息試算起日寫年份 F47-9、泡泡圖成分股表 0 億列收合 F47-10（R72）、
++窄螢幕個股頁頭 F47-11、選股「{v} 天內將除息」F47-12（R71）。
++有 node 時逐字取出 app.js 的函式＋整個 tools.js 執行（node 14 可跑）；畫面文字和 docs/iterations/49/02-pm.md 二之一逐字比對。
++檢查函式都接受原始碼，最後的 test_contrast 把原始碼改壞（反證），確認對應的檢查會失敗。"""
++import hashlib
++import json
++import re
++import sys
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT / "tests"))
++import test_iter34 as T  # noqa: E402
++import test_iter35 as T35  # noqa: E402
++import test_iter47 as T47  # noqa: E402
++
++SITE, HTML, APP, STK, CSS, TOOLS = T.SITE, T.HTML, T.APP, T.STK, T.CSS, T.TOOLS
++README = (ROOT / "README.md").read_text(encoding="utf-8")
++PM = (ROOT / "docs" / "iterations" / "49" / "02-pm.md").read_text(encoding="utf-8")
++_grab = T35._grab
++_T23 = (ROOT / "tests" / "test_iter23.py").read_text(encoding="utf-8")
++_T23 = _T23[_T23.index('    for w in ("', _T23.index("assert seg.count(\"第 23 輪\")")):]
++ADVICE = T47.ADVICE | set(re.findall(r'"([^"]+)"', _T23[:_T23.index("):")]))   # test_iter23:343～345 的清單（不在本檔重寫用詞）
++FROM = "${from.replace(/-/g, '/')}"
++DATA = SITE / "data"
++
++
++def _ok(f, *a):
++    try:
++        return f(*a) is not False
++    except Exception:   # node 拋錯或 assert 失敗都算檢查失敗
++        return False
++
++
++# ─── F47-9 除權息試算起日（驗收 1～3）──────────────────────────────
++def _dv(d, dv):
++    return {"market": "TWSE", "prices": {"d": ["2025-01-02", d]}, "dv": dv, "ev": [], "nx": []}
++
++
++DV = {"a": [{"d": "2025-11-20", "t": "息", "c": 9}, {"d": "2026-03-01", "t": "息", "c": 2}, {"d": "2026-09-16", "t": "權息", "c": 3, "s": 1}],
++      "m": [{"d": "2026-03-01", "t": "息", "c": None}, {"d": "2026-09-16", "t": "息", "c": 2}],
++      "n": [{"d": "2026-09-16", "t": "息", "c": None, "a": None}],
++      "z": [{"d": "2026-09-16", "t": "權", "c": None, "s": 1}]}
++
++
++def check_dv(tools=TOOLS):
++    cases = {k: _dv("2026-11-20", v) for k, v in DV.items()}
++    cases.update({"y" + d: _dv(d, [{"d": d[:4] + "-01-01", "t": "息", "c": 1}]) for d in ("2027-01-05", "2028-03-01", "2026-11-25")})
++    o = T._node(T.HELPERS + "\nconst window = {};\nconst App = { latest: %s, stockCache: {} };\n" % json.dumps(T.LATEST, ensure_ascii=False) + tools +
++                "\nconst C = %s, r = {};\nfor (const k in C) { const [o, h] = tlDvLoad(C[k], false); r[k] = [o.y1, h[h.length - 1]]; }\nconsole.log(JSON.stringify(r));" % json.dumps(cases, ensure_ascii=False))
++    if o is None:
++        return True
++    assert o["a"] == ["5", "近一年現金股利 = 2025/11/20 以後 2 次合計"], o["a"]   # 起日當天 9 元不計入
++    assert o["m"] == ["2", "近一年現金股利 = 2025/11/20 以後 1 次合計；部分缺值，請自行確認"], o["m"]
++    assert o["n"] == ["", "2025/11/20 以後的現金股利官方表沒有分項，請自行確認"], o["n"]
++    assert o["z"] == ["", "2025/11/20 以後沒有現金股利"], o["z"]
++    assert o["y2027-01-05"][1] == "近一年現金股利 = 2026/01/05 以後 1 次合計"
++    assert o["y2028-03-01"][1] == "近一年現金股利 = 2027/03/02 以後 1 次合計"     # 365 天，不另處理閏年
++    assert o["y2026-11-25"][1] == "近一年現金股利 = 2025/11/25 以後 1 次合計"
++    assert not any(re.search(r"\d{4}-\d\d-\d\d|(?<!\d{4}/)\b\d\d/\d\d 以後", v[1]) for v in o.values())
++    for s in ("`近一年現金股利 = 2025/11/25 以後 2 次合計`", "`2025/11/25 以後的現金股利官方表沒有分項，請自行確認`", "`2025/11/25 以後沒有現金股利`"):
++        assert s in PM, s
++
++
++def test_dv():
++    check_dv()
++    f = _grab(TOOLS, "tlDvLoad")
++    assert "md(from)" not in f and f.count(FROM) == 3 and "v.d > from" in f
++    assert hashlib.sha1(f.replace(FROM, "${md(from)}").encode()).hexdigest()[:12] == "55ab42fe3d80"   # 其他字面與改前相同
++
++
++# ─── F47-10 成分股表（驗收 5～10）─────────────────────────────────
++ROWS = {"A": (-0.04, 0.04), "B": (0, 0.05), "C": (None, 0), "D": (0, None), "E": (1, 2), "F": (0, 0)}
++G5 = {"name": "測試", "codes": ["A", "B", "C", "D", "E", "F", "X"], "quadrant": "漲潮", "net_5d": 1, "streak": 2, "frames": [[1, 0, 0, 1]]}
++G4 = {"name": "全零", "codes": ["A", "F"], "quadrant": "退潮", "net_5d": 0, "streak": -1, "frames": [[0, 0, 0, 1]]}
++G0 = {"name": "沒有", "codes": ["E", "B"], "quadrant": "觀望", "net_5d": 0, "streak": 1, "frames": [[0, 0, 0, 1]]}
++FAKE = r"""
++const els = {}, $ = s => els[s] || (els[s] = { innerHTML: '', textContent: '', cls: [],
++  classList: { toggle(c, on) { const L = els[s].cls.filter(x => x !== c); els[s].cls = on ? L.concat(c) : L; } },
++  querySelectorAll(q) { const h = els[s].innerHTML; return { length: (h.match(q === 'tr.z' ? /<tr [^>]*class="z"/g : /<tr data-code=/g) || []).length }; } });
++const txt = s => s.replace(/<[^>]+>/g, '');
++"""
++FN = ["fmt", "pfmt", "esc", "cls", "sgn", "md", "yi", "pctCell", "groupMeta", "groupRows", "showGroup", "gzFoot", "bubbleList"]
++
++
++def _latest():
++    st = {c: {"n": "名" + c, "c": 10, "p": 1, "n1": a, "n5": b} for c, (a, b) in ROWS.items()}
++    return {"stocks": st, "dates": ["2026-11-25"], "flow_date": "2026-11-25"}
++
++
++def _app_js(app, body):
++    return "\n".join(_grab(app, n) for n in FN) + "\nconst App = { latest: %s, group: 'industry' };\n" % json.dumps(_latest(), ensure_ascii=False) + FAKE + body
++
++
++def check_rows(app=APP):
++    o = T._node(_app_js(app, "console.log(JSON.stringify((groupRows(%s).match(/<tr data-code=\"\\w\"[^>]*>/g))));" % json.dumps(G5, ensure_ascii=False)))
++    if o is None:
++        return True
++    assert o == ['<tr data-code="E">', '<tr data-code="B">', '<tr data-code="A" class="z">', '<tr data-code="C">', '<tr data-code="D">', '<tr data-code="F" class="z">'], o   # 5 日由大到小（?? 0），只標記不重排
++
++
++def check_foot(app=APP):
++    o = T._node(_app_js(app, """const r = [], G = %s, st = () => r.push([txt($('#gZ').innerHTML), $('#gTable').cls.join()]);
++st(); showGroup(G.g5); st(); App.gzAll = !App.gzAll; gzFoot(); st(); showGroup(G.g4); st(); App.gzAll = !App.gzAll; gzFoot(); st();
++showGroup(G.g4); st(); showGroup(G.g0); st(); showGroup(G.g5); r.push($('#gZ').innerHTML); console.log(JSON.stringify(r));""" % json.dumps({"g5": G5, "g4": G4, "g0": G0}, ensure_ascii=False)))
++    if o is None:
++        return True
++    Z = "檔法人 1 日、5 日都是 0億　"
++    assert o[:7] == [["", ""], ["另有 2 " + Z + "顯示", "gz"], ["含 2 " + Z + "收合", ""], ["含 2 " + Z + "收合", ""],   # 換族群沿用展開
++                     ["2 " + Z + "顯示", "gz"], ["2 " + Z + "顯示", "gz"], ["", "gz"]], o
++    assert o[7] == '另有 2 檔法人 1 日、5 日都是 0億　<button type="button" class="chip" data-gz>顯示</button>'
++    for s in ("`另有 ${z} 檔法人 1 日、5 日都是 0億　<button type=\"button\" class=\"chip\" data-gz>顯示</button>`",
++              "`${z} 檔法人 1 日、5 日都是 0億　<button type=\"button\" class=\"chip\" data-gz>顯示</button>`",
++              "`含 ${z} 檔法人 1 日、5 日都是 0億　<button type=\"button\" class=\"chip\" data-gz>收合</button>`"):
++        assert s in PM, s
++
++
++def check_wire(app=APP):
++    i = app.index("function renderBubble()")
++    seg = app[i:app.index("\nfunction drawBubble(", i)]
++    assert '<div class="tbl-wrap panel-list"><table class="tbl" id="gTable"></table></div><div class="muted small g-z" id="gZ"></div></div>`}' in seg   # 捲動框外、同一張卡
++    line = "  $('#gZ').addEventListener('click', e => { if (e.target.closest('[data-gz]')) { App.gzAll = !App.gzAll; gzFoot(); } });   // 第 49 輪 F47-10\n"
++    assert seg.count(line) == 1 and seg.index("    return;\n  }\n") < seg.index(line) < seg.index("  drawBubble(groups, L.dates);")   # 只在圖模式
++    assert "localStore" not in _grab(app, "gzFoot") and "gzAll" not in _grab(app, "bubbleList")
++
++
++def check_mobile(app=APP):
++    old = app.replace("${yi(s.n1) === '0億' && yi(s.n5) === '0億' ? ' class=\"z\"' : ''}", "", 1)
++    assert old != app
++    js = "const G = %s, r = [];\nfor (const a of [false, true]) { App.blAll = a; App.blOpen = '測試'; r.push(bubbleList(G)); }\nconsole.log(JSON.stringify(r));" % json.dumps([G5, G4], ensure_ascii=False)
++    o, w = T._node(_app_js(app, js)), T._node(_app_js(old, js))
++    if o is None:
++        return True
++    assert [s.replace(' class="z"', "") for s in o] == w and o != w
++
++
++def check_css(css=CSS):
++    assert css.endswith("#gTable.gz tr.z{display:none}.g-z{margin-top:6px}   /* 第 49 輪 F47-10 */\n")
++    assert len(re.findall(r"tr\.z\b", css)) == 1                              # 只有 #gTable.gz 收起，手機清單不收
++    for s in (".panel-list{max-height:420px;overflow:auto}\n", ".panel-list{--th-y:0px}   /* 展開的成分股表",
++              ".bl-x .panel-list{max-height:none}.bl-x:not(:has([data-blall=\"1\"])) .panel-list tbody tr:nth-child(n+11){display:none}.bl-x .chip{margin-top:6px}   /* D30-08 */"):
++        assert css.count(s) == 1, s
++
++
++def test_bubble():
++    for f in (check_rows, check_foot, check_mobile, check_css, check_wire):
++        f()
++
++
++def test_bubble_data():
++    L = json.loads((DATA / "latest.json").read_text(encoding="utf-8"))
++    if L["date"] != "2026-11-25":
++        print("  （資料日不是 2026-11-25，略過實際筆數）")
++        return
++    o = T._node("\n".join(_grab(APP, n) for n in FN) + "\nconst App = { latest: JSON.parse(require('fs').readFileSync(%s, 'utf8')) };\n" % json.dumps(str(DATA / "latest.json")) + """
++const r = {}, n = h => (h.match(/<tr data-code=/g) || []).length, z = h => (h.match(/ class="z"/g) || []).length;
++for (const k in App.latest.groups) for (const g of App.latest.groups[k]) { const h = groupRows(g); r.all = (r.all || 0) + n(h); r.z = (r.z || 0) + z(h); if (k === 'industry') r[g.name] = [n(h), z(h)]; }
++console.log(JSON.stringify(r));""")
++    if o is None:
++        return
++    assert [o["all"], o["z"], o["電子零組件"], o["農業科技"], o["觀光餐旅"]] == [4768, 2175, [209, 78], [4, 4], [50, 44]], o
++
++
++# ─── F47-11 頁頭（驗收 12）────────────────────────────────────────
++def test_head_css():
++    assert ".s-name{font-size:22px;font-weight:600}\n.s-code{color:var(--text2);margin-left:6px;display:inline-block}\n" in CSS
++    i = CSS.index(".s-nm{padding-right:112px}")
++    assert CSS.index("\n}\n@media (max-width:374px){.s-name{font-size:17px}}   /* 第 49 輪 F47-11 */\n", i) == CSS.index("\n}\n", i)   # 720 區塊之後
++    assert CSS.count(".s-name{") == 2
++    assert '<div class="s-nm"><span class="s-name">${esc(data.name)}</span><span class="s-code">${code}</span></div>' in STK
++    assert "@media (max-width:720px){.s-head .tl-go{position:absolute;top:36px;right:0;padding:4px 10px;font-size:13px}.s-head .s-px{padding-right:56px}}" in CSS
++
++
++# ─── F47-12 選股（驗收 15～19）────────────────────────────────────
++NAMES = T35.NAMES
++NX = {"A": ["2026-11-26", "息", 1], "B": ["2026-12-03", "權息", 1], "C": ["2026-12-04", "權", 0], "D": ["2026-12-05", "其他", 1], "E": ["2027-01-05", "息", None]}
++COND = ("  { id: 'nxd', g: '基本面', label: '{v} 天內將除息', opts: [7, 14, 30], def: 14, f: (x, v) => isNum(x.nxa) && x.nxa <= v, cols: ['nx'], "
++        "title: '證交所、櫃買中心除權除息預告表中，資料日之後的下一次除息或除權息；天數為日曆天；只有除權（多為現金增資）的不算；以公司公告為準' },")
++
++
++def _nxd(app):
++    return re.search(r"^  \{ id: 'nxd', .*\},(?=   // 第 49 輪)", app, re.M).group(0)
++
++
++def check_screen(app=APP):
++    S = {"d": "2026-11-25", "rows": {}}
++    lt = {"date": "2026-11-24", "nx": NX}   # latest.date 故意和 S.d 不同：天數只看 S.d
++    o = T._node("\n".join(_grab(app, n) for n in NAMES) + "\nconst App = { screen: { rmd: {}, fqd: {} }, latest: %s };\n" % json.dumps(lt, ensure_ascii=False) + """
++const S = %s, out = {}, K = ['nxd', 'nxa', 'nxt'], [, g, f] = SCR_COLS.nx;
++for (const c of ['A', 'B', 'C', 'D', 'E', 'Z']) { const x = screenRow(c, { c: 1 }, S); out[c] = K.map(k => k in x ? x[k] : 'u').concat(g(x) == null ? null : f(g(x), x)); }
++out.noS = K.some(k => k in screenRow('A', { c: 1 }, null));
++delete App.latest; out.noL = K.some(k => k in screenRow('A', { c: 1 }, S));
++console.log(JSON.stringify(out));""" % json.dumps(S))
++    if o is None:
++        return True
++    assert o["A"] == ["2026-11-26", 1, "息", '11/26<span class="sub2">1 天後</span>'], o["A"]
++    assert o["B"] == ["2026-12-03", 8, "權息", '12/03<span class="sub2">8 天後（權息）</span>'], o["B"]
++    assert o["E"][:3] == ["2027-01-05", 41, "息"]
++    assert o["C"] == o["D"] == o["Z"] == ["u", "u", "u", None]
++    assert o["noS"] is False and o["noL"] is False
++    assert re.search(r"^  nx: \['即將除息', x => x\.nxa, .*'</span>', 1\],   // 第 49 輪", app, re.M)   # 近的在前
++
++
++def check_cond(app=APP):
++    line = _nxd(app)
++    assert app.index("  { id: 'dvr', g: '基本面'") < app.index(line) < app.index("  { id: 'pb', g: '基本面'")
++    o = T._node(_grab(app, "isNum") + "\nconst c = %s;\nconsole.log(JSON.stringify([7, 14, 30].map(v => [1, 7, 8, 14, 15, 30, 31, 41, null, undefined].filter(a => c.f({ nxa: a }, v)))));" % line.strip().rstrip(","))
++    if o is None:
++        return True
++    assert o == [[1, 7], [1, 7, 8, 14], [1, 7, 8, 14, 15, 30]], o
++
++
++def test_screen():
++    check_screen()
++    check_cond()
++    assert COND + "   // 第 49 輪 F47-12（R71）" in APP.splitlines()
++    assert "`" + COND.strip() + "`" in PM
++    assert "const SCREEN_GROUPS = ['流動性', '價量', '技術', '法人', '信用', '基本面', '排除'];" in APP
++
++
++def test_screen_data():
++    L = json.loads((DATA / "latest.json").read_text(encoding="utf-8"))
++    S = json.loads((DATA / "screen.json").read_text(encoding="utf-8"))
++    if L["date"] != "2026-11-25" or S["d"] != "2026-11-25":
++        print("  （資料日不是 2026-11-25，略過實際檔數）")
++        return
++    o = T._node("\n".join(_grab(APP, n) for n in NAMES) + "\nconst App = { screen: { rmd: {}, fqd: {} }, latest: JSON.parse(require('fs').readFileSync(%s, 'utf8')) };\n" % json.dumps(str(DATA / "latest.json")) + """
++const S = { d: '%s', rows: {} }, X = Object.keys(App.latest.stocks).map(c => screenRow(c, App.latest.stocks[c], S)), c = [%s][0];
++console.log(JSON.stringify([7, 14, 30].map(v => X.filter(x => c.f(x, v)).map(x => x.code).sort())));""" % (S["d"], _nxd(APP).strip().rstrip(",")))
++    if o is None:
++        return
++    w7 = ["2543", "4735", "6523"]
++    w14 = w7 + ["1437", "3701", "4749", "7780", "4414", "4912", "6277"]
++    w30 = w14 + ["6438", "8942", "5278", "1817"]
++    assert o == [sorted(w7), sorted(w14), sorted(w30)], o
++    assert not {"3706", "6160", "2345", "2646"} & set(o[2])
++
++
++# ─── 用詞、node 14、版本與文件（驗收 22、23、26）────────────────────
++def _new_segs(app=APP):
++    seg = _grab(app, "gzFoot") + "".join(l for l in app.splitlines() + CSS.splitlines() + TOOLS.splitlines() if "第 49 輪" in l)
++    return seg + next(l for l in README.splitlines() if l.startswith("- 第 49 輪小項"))
++
++
++def check_words(app=APP):
++    seg = _new_segs(app)
++    return all(w not in seg.replace("借券賣出", "") for w in ADVICE)
++
++
++def test_words_node14():
++    assert check_words()
++    seg = _new_segs() + _grab(APP, "groupRows") + _grab(APP, "screenRow")
++    for w in (".at(", "replaceAll", "||=", "&&=", "??="):
++        assert w not in seg, w
++
++
++def test_version_and_docs():
++    for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js", "compare.js"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
++    for s in ("stock.js?v=28633954", "help.js?v=a5a5a7e8", "compare.js?v=1c11197d"):
++        assert s in HTML, s
++    assert HTML.count("https://") == 2
++    assert "python3 tests/test_iter49.py" in README
++    r = next(l for l in README.splitlines() if l.startswith("- 第 49 輪小項"))
++    for s in ("YYYY/MM/DD", "R71", "R72", "0億", "{v} 天內將除息", "17px"):
++        assert s in r, s
++    assert "第 23 輪" not in r
++
++
++# ─── 反證 ─────────────────────────────────────────────────────
++def test_contrast():
++    def sub(src, a, b):
++        assert a in src, a
++        return src.replace(a, b)
++    Z = "${yi(s.n1) === '0億' && yi(s.n5) === '0億' ? ' class=\"z\"' : ''}"
++    bad = [
++        (check_dv, sub(TOOLS, FROM, "${md(from)}")),                                                   # 起日沒有年份
++        (check_dv, sub(TOOLS, "v.d > from", "v.d >= from")),                                           # 含起日當天
++        (check_rows, sub(APP, Z, "${Math.abs(s.n1) < 0.1 && Math.abs(s.n5) < 0.1 ? ' class=\"z\"' : ''}")),   # 數值門檻
++        (check_rows, sub(APP, Z, Z.replace("yi(s.n1)", "yi(s.n1 ?? 0)").replace("yi(s.n5)", "yi(s.n5 ?? 0)"))),   # null 當 0
++        (check_rows, sub(APP, "(S[b].n5 ?? 0) - (S[a].n5 ?? 0)", "(S[a].n5 ?? 0) - (S[b].n5 ?? 0)")),          # 重排
++        (check_css, sub(CSS, "#gTable.gz tr.z{display:none}", "tr.z{display:none}")),                    # 不分桌面手機
++        (check_mobile, sub(APP, "' class=\"z\"' : ''}><td", "' class=\"z\" hidden' : ''}><td")),            # 手機清單也收起
++        (check_foot, sub(APP, "z < n ? '另有 ' : ''", "'另有 '")),                                       # 全部 0 億也寫「另有」
++        (check_foot, sub(APP, "t.classList.toggle('gz', !App.gzAll);", "t.classList.toggle('gz', App.gzAll);")),   # 預設展開
++        (check_foot, sub(APP, "  gzFoot();\n}\n", "}\n")),                                              # 換族群不更新表尾
++        (check_wire, sub(APP, "</table></div><div class=\"muted small g-z\" id=\"gZ\"></div></div>`}", "<div class=\"muted small g-z\" id=\"gZ\"></div></table></div></div>`}")),   # 放進捲動框
++        (check_screen, sub(APP, "(n[1] === '息' || n[1] === '權息')", "n[1]")),                          # 「權」也算
++        (check_screen, sub(APP, "Date.parse(n[0]) - Date.parse(S.d)", "Date.parse(n[0]) - Date.parse(App.latest.date)")),   # 錯誤基準
++        (check_screen, sub(APP, "App.latest?.nx?.[code]", "App.latest.nx[code]")),                     # 假 App 沒有 latest 會拋錯
++        (check_screen, sub(APP, "'（權息）' : '') + '</span>', 1],", "'（權息）' : '') + '</span>', -1],")),   # 遠的在前
++        (check_cond, sub(APP, "isNum(x.nxa) && x.nxa <= v", "isNum(x.nxa) && x.nxa < v")),             # 邊界
++        (check_words, sub(APP, "檔法人 1 日、5 日都是 0億　", "檔法人 1 日、5 日都是 0億，" + sorted(ADVICE)[0])),          # 用詞
++    ]
++    for i, (f, src) in enumerate(bad):
++        assert src not in (TOOLS, APP, CSS), i
++        assert not _ok(f, src), f"反證 {i} 沒有被擋下（{f.__name__}）"
++
++
++if __name__ == "__main__":
++    for k, v in list(globals().items()):
++        if k.startswith("test_") and callable(v):
++            v()
++            print("ok", k)
