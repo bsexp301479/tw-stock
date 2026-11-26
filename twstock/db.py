@@ -201,6 +201,21 @@ DDL = [
         CONSTRAINT UQ_market_index UNIQUE (index_code, trade_date)
     )
     """,
+    # 第 51 輪 F51-1：證交所 MI_INDEX 的「價格指數(臺灣證券交易所)」「報酬指數(臺灣證券交易所)」兩張表全部列（D193）；回應沒有代碼，以官方名稱為鍵（R81）
+    """
+    IF OBJECT_ID('twse_index') IS NULL
+    CREATE TABLE twse_index (
+        id          INT IDENTITY(1,1) PRIMARY KEY,
+        trade_date  DATE          NOT NULL,
+        kind        CHAR(1)       NOT NULL,   -- P = 價格指數(臺灣證券交易所)、R = 報酬指數(臺灣證券交易所)
+        seq         SMALLINT      NOT NULL,   -- 官方表的列順序（0 起；匯出依這欄排，不依 id）
+        index_name  NVARCHAR(40)  NOT NULL,   -- 官方名稱原樣（例：半導體類指數、發行量加權股價報酬指數）
+        close_price DECIMAL(12,2) NOT NULL,
+        change      DECIMAL(12,2) NULL,       -- 帶正負號；漲跌百分比、特殊處理註記不存
+        created_at  DATETIME      NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_twse_index UNIQUE (trade_date, kind, index_name)
+    )
+    """,
     # 處置／注意股公告（保留歷史；注意股沒有起訖日）
     """
     IF OBJECT_ID('stock_alerts') IS NULL
@@ -626,4 +641,4 @@ def setup_database():
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
           "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
-          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、share_distribution（第 43 輪）、etf_holding_gaps")
+          "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、share_distribution（第 43 輪）、twse_index（第 51 輪）、etf_holding_gaps")

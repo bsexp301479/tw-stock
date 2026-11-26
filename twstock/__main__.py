@@ -8,6 +8,7 @@
   python -m twstock history --start 2026-01-01       補抓歷史（行情、本益比、法人、ETF、融資融券；只補缺的，可中斷重跑）
   python -m twstock history --start 2025-10-30 --only pe      只補本益比／淨值比／殖利率
   python -m twstock history --start 2026-02-23 --only index   只補加權指數歷史
+  python -m twstock history --start 2025-10-30 --only index --force   重抓加權指數並補證交所類股指數、報酬指數（會覆寫既有加權指數；中斷時改用 --start 停下那天接續）
   python -m twstock history --start 2025-10-30 --only tpex_index  只補櫃買指數（一個月一個請求）
   python -m twstock history --start 2026-07-31 --only amount  只補三大法人買賣金額（上市、上櫃；已有的市場自動略過）
   python -m twstock history --start 2025-10-30 --only etf margin  只補 ETF 行情與融資融券（同一天 ETF 先於融資融券）

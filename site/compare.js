@@ -96,6 +96,10 @@ window.renderCompare = async (arg, sub) => {
   if (location.hash !== cmpUrl(list, k)) history.replaceState(history.state, '', cmpUrl(list, k));
   const go = (l, v) => { history.replaceState(null, '', cmpUrl(l, v)); window.renderCompare(l.join(','), v); };
   const X = ix && S.length ? cmpCalc(ix, S, k) : null, col = j => `var(--cmp${j + 1})`, full = list.length >= CMP_MAX;
+  // 第 51 輪 F51-4（D195、R84）：加權報酬指數（含息）點線。ixr.json 讀不到 → 不輸出任何新東西；長度或最後一天和 ix.json 不同、起點或終點沒有值 → 不畫，寫一行原因
+  const ixr = X && (App.cmpIxr || (App.cmpIxr = await getJSON('data/ixr.json').catch(() => null)));
+  const miss = ixr && (ixr.d.length !== ix.d.length || ixr.d[ixr.d.length - 1] !== X.end ? X.b : [X.b, X.end].find(d => ixr.TAIEXR[ix.d.indexOf(d)] == null));
+  const XR = ixr && !miss ? cmpLine(ix.d, ix.d, ixr.TAIEXR, X.b) : null, ring = 'background:none;box-shadow:inset 0 0 0 1.5px var(--text2)';
   const W = [...App.watch].filter(c => (L.stocks[c] || R[c]) && !list.includes(c)).slice(0, 8);
   const short = '股票用還原價（含股息）、ETF 含配息；加權指數不含股息';      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
   const note = X && `每條線 = 還原收盤 ÷ 起點的還原收盤 − 1。股票的還原價和個股頁 K 線、近期表現相同（除權息、減資、現金增資依官方參考價調整）；ETF 的含息報酬和 ETF 頁「近期表現（含息）」相同（配息在除息日以參考價再投入同一檔，上市 ETF 推測的分割、合併也一起調整）。不含手續費、稅與二代健保補充保費。` +
@@ -116,11 +120,11 @@ window.renderCompare = async (arg, sub) => {
     <div class="muted small cmp-s">自 ${X.b} 收盤起算，至 ${X.end} 收盤</div>
     ${X.late.length ? `<div class="muted small cmp-late">${X.late.join('、')} 在本站 ${X.b} 才有成交，比較起點改為 ${X.b}（各檔與加權指數都從這天起算）</div>` : ''}
     <div class="kleg" id="cmpL"></div><div id="cmpC" class="chart-box cmp-ch"></div>
-    <div class="kleg"><span class="lg"><i class="dash"></i>加權指數（不含息）</span><span class="lg">實線 = 各檔（股票還原價、ETF 含息）</span></div>
+    <div class="kleg"><span class="lg"><i class="dash"></i>加權指數（不含息）</span><span class="lg">實線 = 各檔（股票還原價、ETF 含息）</span>${XR ? '<span class="lg"><i style="background:none;height:0;border-top:2px dotted var(--text2);border-radius:0"></i>加權報酬指數（含息）</span>' : ''}</div>
     <div class="tbl-wrap"><table class="tbl cmp-tbl"><thead><tr><th>名稱</th><th>區間報酬</th><th>最大跌幅</th><th>年化波動</th></tr></thead><tbody>` +
     X.rows.map((r, j) => `<tr><td><i class="cmp-dot" style="background:${col(j)}"></i><b>${esc(nm(r.c))}</b> <span class="muted small">${r.c}</span>${r.last < X.end ? `<div class="muted small">最後成交 ${md(r.last)}</div>` : ''}</td>${td(r)}</tr>`).join('') +
-    `<tr><td><i class="cmp-dot cmp-ix"></i><b>加權指數（不含息）</b></td>${td(X.ix)}</tr></tbody></table></div>
-    <div class="muted small">表格依加入順序排列。最大跌幅滑過可看高點與低點日期；年化波動在區間內少於 20 個交易日時不計算（--）。</div>
+    `<tr><td><i class="cmp-dot cmp-ix"></i><b>加權指數（不含息）</b></td>${td(X.ix)}</tr>${XR ? `<tr><td><i class="cmp-dot" style="${ring}"></i><b>加權報酬指數（含息）</b></td>${td(XR)}</tr>` : ''}</tbody></table></div>
+    <div class="muted small">表格依加入順序排列。最大跌幅滑過可看高點與低點日期；年化波動在區間內少於 20 個交易日時不計算（--）。</div>${XR ? '<div class="muted small">點線 = 證交所「發行量加權股價報酬指數」：把成分股的現金股利再投入指數計算，口徑接近股票還原價與 ETF 含息報酬；兩條加權線起點都是 0%，分開的幅度大致是期間內成分股發放的現金股利。</div>' : miss ? `<div class="muted small">加權報酬指數（含息）在 ${miss} 沒有資料，這個區間不畫點線。</div>` : ''}
     <div class="muted small" style="margin-top:6px">${noteHTML(short, note)}</div>`}</section>`;
   const sec = $('#view .cmp'), input = $('#cmpQ'), box = $('#cmpList');
   sec.addEventListener('click', e => { const a = e.target.closest('[data-add]'), x = e.target.closest('[data-x]');
@@ -148,7 +152,8 @@ window.renderCompare = async (arg, sub) => {
   onSeg('cmpSeg', v => go(list, v));
   const show = i => { $('#cmpL').innerHTML = `<span><b>${X.ix.line[i][0].split('-').join('/')}</b></span>` +
     X.rows.map((r, j) => `<span><i class="cmp-dot" style="background:${col(j)}"></i>${r.c} <b>${pc(r.line[i][1])}%</b>${r.line[i][2] ? '（無成交）' : ''}</span>`).join('') +
-    `<span><i class="cmp-dot cmp-ix"></i>加權 <b>${pc(X.ix.line[i][1])}%</b></span>`; };
+    `<span><i class="cmp-dot cmp-ix"></i>加權 <b>${pc(X.ix.line[i][1])}%</b></span>` +
+    (XR ? `<span><i class="cmp-dot" style="${ring}"></i>含息 <b>${XR.line[i][2] ? '--' : pc(XR.line[i][1]) + '%'}</b></span>` : ''); };
   const LC = window.LightweightCharts, T = X.ix.line.length;
   show(T - 1);
   if (!LC) return;
@@ -164,6 +169,7 @@ window.renderCompare = async (arg, sub) => {
   const add = (s, color, st, w) => { const x = c.addLineSeries({ color, lineStyle: st, lineWidth: w, priceFormat: px, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     x.setData(s.line.map(([d, v]) => ({ time: d, value: v }))); return x; };
   add(X.ix, css('--text2'), 2, 1).createPriceLine({ price: 0, color: css('--border2'), lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: '' });
+  if (XR) add(XR, css('--text2'), 1, 2);                                // 第 51 輪：點線（lineStyle 1）= 加權報酬指數（含息），畫在各檔實線之下
   X.rows.forEach((r, j) => add(r, css(`--cmp${j + 1}`), 0, 2));
   charts = [c];                                                          // stock.js：route() 換頁時 disposeStockCharts 釋放
   c.timeScale().fitContent();

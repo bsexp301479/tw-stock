@@ -149,6 +149,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .s-name{font-size:22px;font-weight:600}
 .s-code{color:var(--text2);margin-left:6px;display:inline-block}
 .s-price{font-size:34px;font-weight:600;line-height:1.1;margin-top:4px}
+.lm.up,.tbl tr:hover td.lm.up{background:var(--up);color:var(--on-fill)}.lm.dn,.tbl tr:hover td.lm.dn{background:var(--dn);color:var(--on-fill)}.s-price.lm{padding:0 6px;border-radius:6px}   /* 收在漲停／跌停：收盤價紅／綠底（lm = 1／-1） */
 .s-chg{font-size:16px;margin-left:8px}
 .star{margin-left:auto;border:1px solid var(--border2);background:var(--card);border-radius:999px;padding:6px 14px}
 .star.on{background:var(--amber);border-color:var(--amber);color:var(--on-fill)}

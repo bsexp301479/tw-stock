@@ -373,7 +373,7 @@ def test_version_and_docs():
     for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js", "compare.js"):
         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
         assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
-    for s in ("app.css?v=ce1417aa", "tools.js?v=0a050889", "help.js?v=a5a5a7e8", "compare.js?v=1c11197d"):
+    for s in ("tools.js?v=0a050889", "help.js?v=a5a5a7e8"):
         assert s in HTML, s
     assert "app.js?v=54952a23" not in HTML and "stock.js?v=28633954" not in HTML
     assert HTML.count("https://") == 2

@@ -210,7 +210,7 @@ function renderToday(t) {
       <span class="val num ${ycls(g[key])}">${yi(g[key])}</span></div>`;
   const rows = list => list.map(([c, s]) => `<tr data-code="${c}">
       <td class="nm"><b>${esc(s.n)}</b>${alertBadge(s)}<span>${c}</span></td>
-      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
+      <td class="num ${cls(s.p)}${s.lm ? ' lm' : ''}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num ${ycls(s.n1)}">${yi(s.n1)}</td></tr>`).join('');
 
   // 分頁：指數卡永遠顯示，其餘依分頁只輸出該頁的區塊（圖表不會畫在隱藏的容器裡）
@@ -245,6 +245,7 @@ function renderToday(t) {
       </div>
     </section>
 
+    ${sxCard(L)}
     ${flowNote()}<section class="sec grid g2">
       <div class="card"><div class="sec-h"><h2>法人買超</h2><span class="muted small">${md(L.flow_date)}，億，估算，不含 ETF</span></div>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>買賣超</th></tr></thead><tbody>${rows(topBuy)}</tbody></table></div></div>
@@ -264,6 +265,9 @@ function renderToday(t) {
   if ($('#grpSeg')) onSeg('grpSeg', v => { setGroup(v); renderToday(); });
   if ($('#spanSeg')) onSeg('spanSeg', v => { localStore('span', null, v); renderToday(); });
   $('#flowMore')?.addEventListener('click', () => { App.flowAll = !App.flowAll; renderToday(); });
+  $('#sxMore')?.addEventListener('click', () => { App.sxAll = !App.sxAll; renderToday(); });   // 第 51 輪 F51-3：類股指數表（狀態只存在 App，不寫 localStorage）
+  $('#view').querySelectorAll('.sx th.sort').forEach(el => el.addEventListener('click', () => { const k = el.dataset.k, o = App.sxSort || { k: 'p', d: -1 };
+    App.sxSort = { k, d: o.k === k ? -o.d : -1 }; renderToday(); }));
   $('#alMore')?.addEventListener('click', () => { App.alertAll = !App.alertAll; renderToday(); });
   $('#view details.al-box')?.addEventListener('toggle', e => { App.alOpen = e.target.open; });
   $('#view').addEventListener('click', onRowClick);
@@ -301,6 +305,23 @@ function flowNote() {
   const L = App.latest;
   return L.flow_date === L.date ? ''
     : `<div class="flow-note">法人資料尚未更新：收盤、漲跌為 ${md(L.date)}，法人欄位為 ${md(L.flow_date)}</div>`;
+}
+
+// 第 51 輪 F51-3：證交所上市類股指數表（latest.json sx；沒有 sx 時回傳空字串）。排序 App.sxSort = {k: p／r5／r20, d: -1 由高到低、1 由低到高}，
+// null 不論方向排最後，同值依官方列順序；先顯示 10 列（App.sxAll = 全部）
+function sxCard(L) {
+  const S = L.sx;
+  if (!S) return '';
+  const o = App.sxSort || { k: 'p', d: -1 }, K = { p: 3, r5: 4, r20: 5 }[o.k], pv = v => v == null ? '--' : sgn(v) + '%';
+  const list = S.r.map((r, i) => [r, i]).sort((a, b) => { const x = a[0][K], y = b[0][K];
+    return (x == null || y == null ? (x == null) - (y == null) : (x - y) * o.d) || a[1] - b[1]; }).slice(0, App.sxAll ? S.r.length : 10);
+  const th = (k, t) => `<th class="sort" data-k="${k}">${t}${o.k === k ? (o.d < 0 ? ' ▼' : ' ▲') : ''}</th>`;
+  const short = '證交所編製的上市類股價格指數，不含股息；和泡泡圖、錢流的本站自算類股不同';      // 短句用變數：test_iter13 數 noteHTML 字面呼叫
+  const full = `證交所每天公布的上市類股價格指數：依成分股市值加權，只含上市股票，不含股息；收盤與漲跌點數為官方數字，漲跌 % = 漲跌點數 ÷ 前一日收盤。5 日、20 日 = 從往前第 5、20 個交易日${S.b5 && S.b20 ? `（${md(S.b5)}、${md(S.b20)}）` : ''}的收盤起算，和選股的 5 日、20 日報酬同一個起點；本站沒有那天的指數時寫「--」。「電子工業」「化學生技醫療」兩個合併類別、水泥窯製等綜合類別與大盤、主題指數不列入。泡泡圖、錢流的類股是本站依成分股自算，含上櫃股票，和這裡的數字不會相同。點「漲跌」「5 日」「20 日」可以換排序，再點一次反過來排。`;
+  return `<section class="sec card sx"><div class="sec-h"><h2>類股指數</h2><span class="muted small">證交所，上市，${md(S.d)}${S.d < L.date ? '（尚未更新）' : ''}</span><span class="sp"></span>${S.r.length > 10 ? `<button class="chip" id="sxMore">${App.sxAll ? '只顯示前 10' : '顯示全部'}</button>` : ''}</div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>類股</th><th>收盤</th>${th('p', '漲跌')}${th('r5', '5 日')}${th('r20', '20 日')}</tr></thead><tbody>${list.map(([r]) =>
+      `<tr><td class="nm"><b>${r[0]}</b></td><td class="num ${cls(r[2])}">${fmt(r[1], 2)}</td><td class="num ${cls(r[3])}">${pv(r[3])}<span class="sub2">${sgn(r[2])}</span></td><td class="num ${cls(r[4])}">${pv(r[4])}</td><td class="num ${cls(r[5])}">${pv(r[5])}</td></tr>`).join('')}</tbody></table></div>
+    <div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
 }
 
 // 名稱旁的處置／注意小標記（latest.json 只放有效的警示）
@@ -911,7 +932,7 @@ function groupRows(g) {   // D28-04：泡泡明細卡與手機清單展開共用
   const rows = g.codes.filter(c => S[c]).sort((a, b) => (S[b].n5 ?? 0) - (S[a].n5 ?? 0));
   return `<thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>法人1日</th><th>法人5日</th></tr></thead><tbody>` +
     rows.map(c => { const s = S[c]; return `<tr data-code="${c}"${yi(s.n1) === '0億' && yi(s.n5) === '0億' ? ' class="z"' : ''}><td class="nm"><b>${esc(s.n)}</b><span>${c}</span></td>
-      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
+      <td class="num ${cls(s.p)}${s.lm ? ' lm' : ''}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num ${ycls(s.n1)}">${yi(s.n1)}</td><td class="num ${ycls(s.n5)}">${yi(s.n5)}</td></tr>`; }).join('') + '</tbody>';
 }
 function showGroup(g) {
@@ -967,7 +988,7 @@ function stockTable(list, span = '1', rm = false) {   // rm：自選頁（名稱
       <th>外資連</th><th>投信連</th><th>法人連</th></tr></thead><tbody>` +
     list.map(([c, s]) => `<tr data-code="${c}">
       <td class="nm">${rm ? wCtl(c) : ''}<b>${esc(s.n)}</b>${alertBadge(s)}<span>${c} ${esc(s.i)}</span></td>
-      <td class="num ${cls(s.p)}">${pfmt(s.c)}</td>${pctCell(s)}
+      <td class="num ${cls(s.p)}${s.lm ? ' lm' : ''}">${pfmt(s.c)}</td>${pctCell(s)}
       <td class="num">${fmt(s.tv, 1)}億</td>
       ${amt(s['f' + k])}${amt(s['t' + k])}${amt(s['d' + k])}${amt(s['n' + k])}
       <td class="num ${cls(s.fs)}">${streakTxt(s.fs)}</td><td class="num ${cls(s.ts)}">${streakTxt(s.ts)}</td>
@@ -1050,7 +1071,7 @@ function marginTable(list, span, by) {
   return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>5日漲跌</th><th>融資餘額</th><th>融資${lbl}</th><th>估算（億）</th>${by === 'mr' ? '<th>增加率</th>' : ''}
       <th>融券餘額</th><th>融券${lbl}</th><th>券資比</th><th>使用率</th><th>成交額</th></tr></thead><tbody>` +
     list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span></td>
-      <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}${sp(x.r5)}
+      <td class="num ${cls(x.p)}${x.lm ? ' lm' : ''}">${pfmt(x.c)}</td>${pctCell(x)}${sp(x.r5)}
       ${n0(x.mb)}${lots(x['m' + k])}<td class="num ${cls(x['ma' + k])}">${isNum(x['ma' + k]) ? yi(x['ma' + k]) : '--'}</td>${by === 'mr' ? sp(x['mr' + k]) : ''}
       ${n0(x.sb)}${lots(x['s' + k])}${p2(x.sr)}${p2(x.mu)}<td class="num">${fmt(x.tv, 1)}億</td></tr>`).join('') +
     '</tbody></table></div>';
@@ -1061,7 +1082,7 @@ function sblTable(list, span) {
   const k = span === '5' ? '5' : '1', lbl = k === '5' ? '5日' : '1日';
   return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th><th>漲跌</th><th>5日漲跌</th><th>借券餘額</th><th>借券${lbl}</th><th>估算（億）</th><th>占股本</th><th>融券餘額</th><th>成交額</th></tr></thead><tbody>` +
     list.map(x => `<tr data-code="${x.code}"><td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span></td>
-      <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num ${cls(x.r5)}">${isNum(x.r5) ? sgn(x.r5) + '%' : '--'}</td>
+      <td class="num ${cls(x.p)}${x.lm ? ' lm' : ''}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num ${cls(x.r5)}">${isNum(x.r5) ? sgn(x.r5) + '%' : '--'}</td>
       <td class="num">${isNum(x.lb) ? fmt(x.lb) : '--'}</td><td class="num ${cls(x['l' + k])}">${isNum(x['l' + k]) ? sgn(x['l' + k], 0) : '--'}</td>
       <td class="num ${cls(x['la' + k])}">${isNum(x['la' + k]) ? yi(x['la' + k]) : '--'}</td><td class="num">${isNum(x.lp) ? fmt(x.lp, 2) + '%' : '--'}</td>
       <td class="num">${isNum(x.sb) ? fmt(x.sb) : '--'}</td><td class="num">${fmt(x.tv, 1)}億</td></tr>`).join('') +
@@ -1090,7 +1111,7 @@ async function renderHl() {
           list.map(([x, n]) => `<tr data-code="${x.code}">
             <td class="nm"><b>${esc(x.n)}</b>${alertBadge(x)}<span>${x.code} ${esc(x.i)}</span></td>
             <td class="num">${n}</td><td class="hl-tags">${x.hl.map(hlTag).join('')}</td>
-            <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.a20, 1)}億</td></tr>
+            <td class="num ${cls(x.p)}${x.lm ? ' lm' : ''}">${pfmt(x.c)}</td>${pctCell(x)}<td class="num">${fmt(x.a20, 1)}億</td></tr>
             <tr class="hl-sub" data-code="${x.code}"><td colspan="6">${x.hl.map(hlTag).join('')}</td></tr>`).join('') + '</tbody></table></div>'}</div>
       <div class="muted small" style="margin-top:6px">列出最近 5 個交易日（營收、EPS 為最近 20 個交易日）在價量、法人、基本面（營收、EPS）、主動 ETF 四個面向新出現的事件；同一面向有多個事件只算 1 個面向。
         「新出現」= 當天符合、前一個交易日不符合，口徑和選股條件相同；60 日新高帶量 = 創 60 日以上新高且量比 ≥ 1.5；營收創新高 = 單月營收創新高且年增 ≥ 30%；
@@ -1209,7 +1230,7 @@ function screenTable(list, cols, o = {}) {
   const th = (k, t) => o.sort ? `<th class="sort" data-k="${k}">${t}</th>` : `<th>${t}</th>`;
   return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>股票</th><th>收盤</th>${th('p', '漲跌')}${o.rm ? '' : th('tv', '成交額')}${cols.map(k => th(k, head(k))).join('')}</tr></thead><tbody>` +
     list.map(x => `<tr data-code="${x.code}"><td class="nm">${o.rm ? wCtl(x.code) : ''}<b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
-      <td class="num ${cls(x.p)}">${pfmt(x.c)}</td>${pctCell(x)}${o.rm ? '' : `<td class="num">${fmt(x.tv, 1)}億</td>`}` +
+      <td class="num ${cls(x.p)}${x.lm ? ' lm' : ''}">${pfmt(x.c)}</td>${pctCell(x)}${o.rm ? '' : `<td class="num">${fmt(x.tv, 1)}億</td>`}` +
       cols.map(k => { const [, get, f] = SCR_COLS[k], v = get(x);
         return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh', 'lb', 'lp', 'mc', 'to'].includes(k) || k === 'dv' ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
     '</tbody></table></div>';

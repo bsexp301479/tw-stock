@@ -60,6 +60,41 @@ def parse_taiex(data: dict, d: date):
     return None
 
 
+# 第 51 輪 F51-2（R80）：證交所兩張指數表；第一欄名稱依表不同（價格指數表「指數」、報酬指數表「報酬指數」），其餘欄同 parse_taiex
+TWSE_INDEX_TABLES = (("P", "價格指數(臺灣證券交易所)", "指數", "類股指數"), ("R", "報酬指數(臺灣證券交易所)", "報酬指數", "報酬指數"))
+
+
+def parse_twse_indices(data: dict, d: date) -> dict:
+    """
+    MI_INDEX 回應 → {"P": 列, "R": 列}；找不到表（title 包含即可）或缺必要欄 → 該表為 None，另一張照常。
+    列 = {trade_date, kind, seq（官方列順序）, index_name, close_price, change（帶正負號）, note（特殊處理註記，沒有這欄為空字串）}；
+    列太短、收盤無法解析或 ≤ 0、名稱空白或超過 40 字 → 略過；同表同名只留第一列。parse_taiex 不改（加權指數照舊另寫 market_index）。
+    """
+    out = {}
+    for kind, title, first, _ in TWSE_INDEX_TABLES:
+        table = next((t for t in data.get("tables", []) if title in (t.get("title") or "")), None)
+        idx = {f: i for i, f in enumerate((table or {}).get("fields", []))}
+        need = (first, "收盤指數", "漲跌(+/-)", "漲跌點數")
+        if not set(need) <= idx.keys():
+            out[kind] = None
+            continue
+        rows, seen, k = [], set(), idx.get("特殊處理註記")
+        for i, row in enumerate(table.get("data", [])):
+            if len(row) <= max(idx[f] for f in need):
+                continue
+            name, close = str(row[idx[first]]).strip(), clean_number(row[idx["收盤指數"]])
+            if not name or len(name) > 40 or name in seen or close is None or close <= 0:
+                continue
+            change = clean_number(row[idx["漲跌點數"]])
+            if change is not None and "-" in str(row[idx["漲跌(+/-)"]]):
+                change = -change
+            seen.add(name)
+            rows.append({"trade_date": d.isoformat(), "kind": kind, "seq": i, "index_name": name, "close_price": close, "change": change,
+                         "note": str(row[k]).strip() if k is not None and len(row) > k else ""})
+        out[kind] = rows
+    return out
+
+
 def _twse_quote(row: list, idx: dict) -> dict:
     """MI_INDEX 行情表的一列（股票與 ETF 共用）。"""
     # 漲跌價差是絕對值，正負號在「漲跌(+/-)」欄（HTML 片段，如 <p style= color:green>-</p>）
@@ -754,6 +789,21 @@ def merge_market_index(cursor, rows: list):
     """, db.to_json(rows))
 
 
+def merge_twse_index(cursor, rows: list):
+    """第 51 輪 F51-2：證交所價格／報酬指數（MERGE，同一天重抓 = 覆寫）。"""
+    cursor.execute("""
+        MERGE twse_index AS t
+        USING OPENJSON(?) WITH (
+            trade_date DATE, kind CHAR(1), seq SMALLINT, index_name NVARCHAR(40), close_price DECIMAL(12,2), change DECIMAL(12,2)
+        ) AS s
+        ON t.trade_date = s.trade_date AND t.kind = s.kind AND t.index_name = s.index_name
+        WHEN MATCHED THEN UPDATE SET seq = s.seq, close_price = s.close_price, change = s.change
+        WHEN NOT MATCHED THEN
+            INSERT (trade_date, kind, seq, index_name, close_price, change)
+            VALUES (s.trade_date, s.kind, s.seq, s.index_name, s.close_price, s.change);
+    """, db.to_json(rows))
+
+
 def _amount_unit(name: str):
     """BFI82U 單位名稱 → 代碼。「外資及陸資(不含外資自營商)」也含「外資自營商」字樣，判斷順序不可對調。"""
     if name.startswith("外資及陸資"):
@@ -884,6 +934,31 @@ def collect_tpex_index(year: int, month: int) -> int:
 
 
 # ─── 單日收集 ─────────────────────────────────────────────
+def _save_twse_indices(d: date, cache: dict):
+    """
+    第 51 輪 F51-2（D194、R74）：從同一份 MI_INDEX 回應寫入 twse_index（0 個新請求）。同一次 collect_for_date 只做一次（cache 旗標：
+    prices.TWSE 寫過後 index.TAIEX 不再寫、不再印）。解析或資料庫錯誤（含 setup-db 前資料表不存在）只印 ⚠️，不影響個股與加權指數。
+    """
+    if cache.get("tidx"):
+        return
+    cache["tidx"] = True
+    try:
+        got = parse_twse_indices(cache["MI_INDEX"], d)
+        for kind, title, _, what in TWSE_INDEX_TABLES:
+            if got[kind] is None:
+                print(f"  ⚠️  MI_INDEX 找不到{title}表或欄位不符，{what}未寫入（個股與加權指數照常）")
+        rows = (got["P"] or []) + (got["R"] or [])
+        notes = [f"{r['index_name']}（{r['note']}）" for r in rows if r["note"]]
+        if notes:
+            print(f"  ℹ️  證交所指數特殊處理註記：{'、'.join(notes[:3])}{f'…等 {len(notes)} 個' if len(notes) > 3 else ''}")
+        if rows:
+            _save(merge_twse_index, [{k: v for k, v in r.items() if k != "note"} for r in rows])
+    except db.pyodbc.Error as e:
+        print(f"  ⚠️  twse_index 寫入失敗（請確認已執行 setup-db）：{str(e).splitlines()[0][:120] if str(e) else type(e).__name__}")
+    except PARSE_ERRORS as e:
+        print(f"  ⚠️  MI_INDEX 證交所指數表解析失敗，類股指數與報酬指數未寫入（個股與加權指數照常）：{str(e)[:120]}")
+
+
 def _quotes(market: str, d: date, cache: dict) -> tuple:
     """同一市場的行情回應只抓一次：股票行情、加權指數、ETF 共用；失敗也快取，同一次執行不重打。"""
     if market not in cache:
@@ -916,6 +991,8 @@ def _collect_key(key: str, d: date, cache: dict) -> int:
             _save(merge_market_index, [taiex])
         elif rows:
             print("  ⚠️  MI_INDEX 找不到加權指數表")
+        if rows:
+            _save_twse_indices(d, cache)                # 第 51 輪 F51-2：同一份回應寫證交所類股、報酬指數（失敗只 ⚠️；同一次只寫一次）
         if key == "index.TAIEX":
             return 1 if taiex else 0
     if dataset == "prices":

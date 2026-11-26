@@ -1237,6 +1237,68 @@ def ix_export(days, idx) -> dict:
     return {"d": [str(d) for d in days], "TAIEX": [_f(idx.get(d)) for d in days]}
 
 
+def ixr_export(days, ixr) -> dict:
+    """第 51 輪 F51-4（D196）：site/data/ixr.json = 交易日 days（p_days，和 ix.json 的 d 相同）＋對齊的加權報酬指數（含息）收盤（沒有值為 None）。"""
+    return {"d": [str(d) for d in days], "TAIEXR": [_f(ixr.get(d)) for d in days]}
+
+
+def ixr_perf(days, ixr, w52_start):
+    """第 51 輪 F51-5：latest.json 的 ixr.pf = [[區間, 基準日, 加權報酬指數 %]]；區間與基準日和 stock_perf 相同（PF_DAYS、y、w，沒有 s），基準日沒有值 → None。"""
+    last = days[-1]
+    y, w = bisect_left(days, date(last.year, 1, 1)), bisect_right(days, w52_start)
+    bases = [(n, days[-1 - n] if len(days) > n else None) for n in PF_DAYS] + [("y", days[y - 1] if y else None), ("w", days[w - 1] if w else None)]
+    return [[k, b and str(b), _f(index_return(ixr, b, last))] for k, b in bases]
+
+
+SX_SKIP = {"電子工業類指數", "化學生技醫療類指數", "水泥窯製類指數", "塑膠化工類指數", "機電類指數"}   # 第 51 輪 R81：合併、綜合類別不列入類股表
+SX_ALIAS = {"電腦及週邊設備": "電腦及週邊"}                 # 官方類股名稱 → 本站產業別（其他相同）
+
+
+def sx_export(sxp, days, last, industries):
+    """
+    第 51 輪 F51-3（R81、R84）：latest.json 的 sx = {d, b5, b20, r: [[顯示名, 收盤, 漲跌, 漲跌%, 5 日%, 20 日%]]}（官方列順序），
+    回傳 (sx 或 None, 對不到的官方名稱, 對不到的本站產業別)。sxp = {日期: [(名稱, 收盤, 漲跌)]}（只有「類指數」結尾的價格指數，官方列順序）。
+    d = sxp 最後一天（≤ last）；b5／b20 = days 中 d 往前第 5、20 個交易日（不足 → None）；基準日沒有該名稱 → None（不拿前後日子補）。
+    """
+    d = max((x for x in sxp if x <= last), default=None)
+    if d is None:
+        return None, [], []
+    j = days.index(d) if d in days else -1
+    b5, b20 = (days[j - n] if j >= n else None for n in (5, 20))
+    base = {b: {nm: c for nm, c, _ in sxp.get(b, ())} for b in (b5, b20) if b}
+    ret = lambda c, b: (float(c) / float(base[b][nm]) - 1) * 100 if b and nm in base[b] else None
+    rows, off = [], []
+    prev = {nm: c for nm, c, _ in sxp.get(days[j - 1], ())} if j > 0 else {}
+    for nm, c, ch in sxp[d]:
+        if nm in SX_SKIP:
+            continue
+        if ch is None and nm in prev and float(prev[nm]) == float(c):   # QA51-01：官方平盤時漲跌點數不是數字（DB 存 NULL）→ 前一交易日同名收盤相同視為 0
+            ch = 0
+        show = nm[:-3]
+        if SX_ALIAS.get(show, show) not in industries:
+            off.append(show)
+            continue
+        rows.append([show, _f(c), _f(ch), _f(_pct(c, ch)), _f(ret(c, b5)), _f(ret(c, b20))])
+    site = sorted(industries - {SX_ALIAS.get(r[0], r[0]) for r in rows})
+    return {"d": str(d), "b5": b5 and str(b5), "b20": b20 and str(b20), "r": rows}, off, site
+
+
+def _load_twse_index(cur):
+    """第 51 輪：twse_index → (ixr_close {日期: 加權報酬指數收盤}, sxp {日期: [(名稱, 收盤, 漲跌)]})；資料表不存在（還沒 setup-db）→ None。"""
+    if cur.execute("SELECT OBJECT_ID('twse_index')").fetchone()[0] is None:
+        return None
+    ixr, sxp = {}, defaultdict(list)
+    for d, kind, name, c, ch in cur.execute("""
+        SELECT trade_date, kind, index_name, close_price, change FROM twse_index
+        WHERE (kind = 'R' AND index_name = N'發行量加權股價報酬指數') OR (kind = 'P' AND index_name LIKE N'%類指數')
+        ORDER BY trade_date, kind, seq"""):
+        if kind == "R":
+            ixr[d] = c
+        else:
+            sxp[d].append((name, c, ch))
+    return ixr, dict(sxp)
+
+
 def stock_perf(d_, adj, days, idx, w52_start):
     """
     第 23 輪 F23-1：stocks/{代號}.json 的 pf = [[區間, 基準日, 本股 %, 指數 %, 差距（百分點）]]，用法同 price_stats（days 要完整的交易日序列）。
@@ -1701,6 +1763,8 @@ def export_all() -> float:
     for code, d, c, ch in cur.execute(
             "SELECT index_code, trade_date, close_price, change FROM market_index ORDER BY index_code, trade_date"):
         index_rows[code].append((d, c, ch))
+    tx = _load_twse_index(cur)                                  # 第 51 輪 F51-3～F51-5：證交所指數（資料表不存在時 None）
+    ixr_close, sxp = tx or ({}, {})
     if futures:                                                 # 第 14 輪 F14-3：價差（和 d 對齊）
         futures["sp"] = futures_spread(futures["d"], futures["c"], {str(d): c for d, c, _ in index_rows.get("TAIEX", [])})
     amount = amount_by_market(cur.execute("SELECT trade_date, market, unit, net_amount FROM insti_amount"))
@@ -1789,6 +1853,7 @@ def export_all() -> float:
     bad_all, miss_all, n_ev, n_inferred = [], [], 0, 0
     w52_start = latest_date - timedelta(days=365)
     _write(SITE_DATA_DIR / "ix.json", ix_export(p_days, idx_close["TWSE"]))   # 第 48 輪 F48-1：比較頁的交易日曆＋加權收盤
+    _write(SITE_DATA_DIR / "ixr.json", ixr_export(p_days, ixr_close))         # 第 51 輪 F51-4：比較頁的加權報酬指數（含息）；沒有資料也寫（全部 null）
     db_first = min(rows[0][0] for rows in prices.values())   # 全市場最早日線
 
     for code, rows in prices.items():
@@ -2036,6 +2101,11 @@ def export_all() -> float:
     # 第 17 輪 F17-2：注意累計預警（推算）；處置中、即將處置不列
     latest["alerts"]["w"] = alert_watch(watch_notes, watch_days,
                                         {c for c, v in alerts.items() if any(a["t"] == "disposal" for a in v)})
+    sx, sx_off, sx_site = sx_export(sxp, p_days, latest_date, {v["industry"] for v in stocks.values() if v["market"] == "TWSE"})
+    if sx:
+        latest["sx"] = sx                                       # 第 51 輪 F51-3：證交所上市類股指數（沒有資料不輸出）
+    if latest_date in ixr_close:
+        latest["ixr"] = {"d": str(latest_date), "pf": ixr_perf(p_days, ixr_close, w52_start)}   # 第 51 輪 F51-5：近期表現的加權報酬指數同期
     # screen.json 在 latest.json 之前寫：中途失敗時前端比對 d／fd 會顯示不同步
     S = screen_build(screen, {"d": str(latest_date), "fd": str(dates[-1]), "md": {m: str(d) for m, d in mlast.items()},
                               "sd": {m: str(d) for m, d in slast.items()}})
@@ -2051,6 +2121,12 @@ def export_all() -> float:
     print(f"  📌 收在漲停 上市 {lm_n('TWSE', 1)}／上櫃 {lm_n('TPEx', 1)}、跌停 上市 {lm_n('TWSE', -1)}／上櫃 {lm_n('TPEx', -1)}"
           f"（本站推算；官方 漲停 上市 {lm_o('TWSE', 'ul')}／上櫃 {lm_o('TPEx', 'ul')}、跌停 上市 {lm_o('TWSE', 'dl')}／上櫃 {lm_o('TPEx', 'dl')}）")
     print(f"  📌 ETF 個股 {n_etf} 檔，{kb_etf / 1024:.1f} MB（etfp/，原始價）")
+    if tx is None:                                              # 第 51 輪：證交所指數
+        print("  📌 證交所指數：尚未建立 twse_index（請執行 setup-db），類股指數與含息線不輸出")
+    else:
+        print(f"  📌 證交所指數 {sx['d'] if sx else '--'}：類股 {len(sx['r']) if sx else 0} 類；加權報酬指數 {sum(d in ixr_close for d in p_days)}／{len(p_days)} 天")
+        if sx_off or sx_site:
+            print(f"  📌 類股名稱對不到：官方 {'、'.join(sx_off) or '--'}；本站 {'、'.join(sx_site) or '--'}")
     if bad_all:
         print(f"⚠️  還原係數超出 {ADJ_MIN}～{ADJ_MAX}，未採用 {len(bad_all)} 筆：" +
               "、".join(f"{c} {d}（{f}）" for c, d, f in bad_all[:10]))

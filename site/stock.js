@@ -43,10 +43,11 @@ function perfHTML(pf, mkt, nt, etf = false) {
     `「--」= 基準日時本站還沒有這檔的成交${at('s') ? `；${ls}從本站第一個成交日 ${at('s')} 的收盤起算，不是承銷價（本站日線從 2025-10-30 起，復牌或轉換為控股公司的股票也從第一個成交日起算）` : ''}。`;
   const tip = etf && { B: '債券 ETF 和股價指數走勢不同，差距只能當參考。', L: '槓桿、反向 ETF 每日追蹤指數報酬的倍數，區間報酬不等於指數報酬乘以倍數。',
     U: '期貨 ETF 追蹤期貨價格，和股價指數走勢不同，差距只能當參考。' }[etf.slice(-1).replace('R', 'L')], me = etf ? '本檔' : '本股';
+  const X = App.latest.ixr, xr = X && X.d === App.latest.date && (mkt === 'TWSE' || etf) ? `<div class="muted small" style="margin-top:6px" title="證交所發行量加權股價報酬指數：成分股的現金股利再投入指數計算；表格的加權指數欄是價格指數，不含股息">加權報酬指數（含息）同期：${X.pf.map(([k, , v]) => `${PF_NAME[k]} ${v == null ? '--' : sgn(v) + '%'}`).join('、')}</div>` : '';   // 第 51 輪 F51-5：上市股票與所有 ETF；沒有 latest.ixr 時輸出不變
   return `<section class="sec card"><div class="sec-h"><h2>${etf ? '近期表現（含息）' : '近期表現'}</h2><span class="muted small">至 ${md(App.latest.date)}${nt ? `，${me}最後成交 ${md(nt)}` : ''}</span></div>${tip ? `<div class="muted small">${tip}</div>` : ''}
     <div class="tbl-wrap"><table class="tbl pf-tbl"><thead><tr><th>區間</th><th>${me}</th><th>${ix}</th><th>差距</th></tr></thead><tbody>` +
     pf.map(([k, b, s, i, g]) => `<tr><td>${k === 's' ? `${ls}<span>${md(b)} 起</span>` : PF_NAME[k]}</td>${td(s, '%')}${td(i, '%')}${td(g, '')}</tr>`).join('') +
-    `</tbody></table></div><div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
+    `</tbody></table></div>${xr}<div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
 }
 
 // 第 24 輪 F24-6：股利與填息（匯出端 dv：d 除權息日、t 類型、k 分類、c 現金股利、s 每仟股配股、a 權值＋息值（沒有 c 時）、p 除權息前收盤、
@@ -292,7 +293,7 @@ window.renderStock = async function (code, sub) {
       <div class="s-head">
         <div>
           <div class="s-nm"><span class="s-name">${esc(data.name)}</span><span class="s-code">${code}</span></div>
-          <div class="s-px"><span class="s-price num ${cls(change)}">${pfmt(close)}</span>
+          <div class="s-px"><span class="s-price num ${cls(change)}${!noTrade && !gxLast && s?.lm ? ' lm' : ''}">${pfmt(close)}</span>
             ${noTrade ? '<span class="s-chg flat">無成交</span>' : gxLast ? (dvLast ? '<span class="s-chg flat" title="除息日的開盤參考價扣掉配息，收盤減前一日收盤會含配息">不比價（今天除息）</span>'
               : '<span class="s-chg flat" title="官方漲跌為 0、收盤和前一日收盤不同：推測是除息等價格調整">不比價（推測價格調整）</span>')
               : `<span class="s-chg num ${cls(change)}">${change > 0 ? '▲' : change < 0 ? '▼' : ''} ${pfmt(Math.abs(change ?? 0))} (${sgn(pct)}%)</span>`}

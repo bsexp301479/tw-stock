@@ -258,7 +258,7 @@ def test_version_and_docs():
     for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js", "compare.js"):
         v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
         assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
-    for s in ("help.js?v=a5a5a7e8", "compare.js?v=1c11197d"):
+    for s in ("help.js?v=a5a5a7e8",):
         assert s in HTML, s
     assert HTML.count("https://") == 2
     assert "python3 tests/test_iter49.py" in README

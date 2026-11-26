@@ -171,6 +171,8 @@ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
     if blocked_at:
         print(f"❌ 在 {blocked_at} 停止：疑似被限流封鎖\n"
               "   建議等 30 分鐘以上，再用同樣的指令重跑；已寫入的日期會自動跳過。")
+        if force:                                       # 第 51 輪 D202：--force 時上一句不成立（重跑會從 --start 重抓）
+            print(f"   這次有 --force：重跑會從頭重抓，請改用 --start {blocked_at} 接續。")
         return False
     print("🎉 補抓完成！")
     return True
