@@ -55,7 +55,8 @@ CONV_MIN = 0.1                  # 融資融券換算：|k − 1| ≥ 10% 才視�
 SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
                "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to", "rb", "eb", "k", "kx", "rsi",
-               "dvd", "dvp", "dvn", "dvx", "dvk")                                                     # 第 35 輪 F35-1：股利
+               "dvd", "dvp", "dvn", "dvx", "dvk",                                                     # 第 35 輪 F35-1：股利
+               "roe", "dr")                                                                           # 第 52 輪 F52-4：ROE、負債比
 VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
 VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
 VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
@@ -1600,6 +1601,82 @@ def _load_financials(cur) -> tuple:
     return fin, meta, counts, seen_at
 
 
+# ─── 第 52 輪 F52-4：資產負債表（ROE、負債比、每股淨值；和季報卡同一季 = max(cum)；fin_e4、fin_stock、fin_screen 不改）───
+def fin_ni4(cum: dict, y: int, q: int):
+    """近 4 季歸屬母公司淨利（千元）= 本季累計 + 去年全年 − 去年同季累計（缺一 → None）；Q4 = 全年。"""
+    if q == 4:
+        return cum[(y, 4)][3] if (y, 4) in cum else None
+    xs = [cum.get(k, (None,) * 5)[3] for k in ((y, q), (y - 1, 4), (y - 1, q))]
+    return None if None in xs else xs[0] + xs[1] - xs[2]
+
+
+def bs_equity(row):
+    """權益：歸屬母公司業主權益；官方「--」（個體報表公司）→ 權益總計。row = (資產, 負債, 母公司權益, 權益總計, 每股淨值) 或 None。"""
+    return None if row is None else row[2] if row[2] is not None else row[3]
+
+
+def bs_roe(cum: dict, bal: dict, y: int, q: int) -> tuple:
+    """(ROE %, 原因)：近 4 季淨利 ÷（一年前同季底 + 本季底權益）÷ 2；依序 c 本季沒有權益、a 沒有一年前同季權益、i 近 4 季淨利不足、e 平均 ≤ 0。"""
+    e1 = bs_equity(bal.get((y, q)))
+    if e1 is None:
+        return None, "c"
+    e0 = bs_equity(bal.get((y - 1, q)))
+    if e0 is None:
+        return None, "a"
+    ni = fin_ni4(cum, y, q)
+    if ni is None:
+        return None, "i"
+    if e0 + e1 <= 0:
+        return None, "e"
+    return _r1(ni * 2, e0 + e1), None
+
+
+def bs_dr(row):
+    """負債比 % = 負債 ÷ 資產；資產 None 或 ≤ 0、負債 None → None；> 100 照實。"""
+    return None if row is None or row[0] is None or row[0] <= 0 or row[1] is None else _r1(row[1], row[0])
+
+
+def bs_stock(cum: dict, bal: dict, tbl: str):
+    """stocks/{代號}.json 的 bs：q、（一般業）roe、roep、rn、dr、drp、bv、bvp；沒有季報、沒有資料表、該季沒有資產負債表 → None。"""
+    if not cum or not bal or max(cum) not in bal:
+        return None
+    y, q = max(cum)
+    row, p = bal[(y, q)], bal.get((y - 1, q))
+    out = {"q": y * 100 + q}
+    if tbl == "ci":
+        roe, rn = bs_roe(cum, bal, y, q)
+        out.update(roe=roe, roep=bs_roe(cum, bal, y - 1, q)[0], **({"rn": rn} if rn else {}), dr=bs_dr(row), drp=bs_dr(p))
+    out.update(bv=_f(row[4]), bvp=_f(p and p[4]))
+    return out
+
+
+def bs_screen(cum: dict, bal: dict, tbl: str) -> dict:
+    """screen.json 的 roe、dr（同 bs_stock 的最新一季）；非一般業、沒有資料 → None。"""
+    b = (bs_stock(cum, bal, tbl) if tbl == "ci" else None) or {}
+    return {"roe": b.get("roe"), "dr": b.get("dr")}
+
+
+def bs_note(exists: bool, bs: dict) -> str:
+    """匯出 📌 一行：最多檔的季別、bs 檔數、一般業 ROE／負債比有值的檔數。"""
+    if not exists:
+        return "  📌 資產負債表：尚未建立 quarterly_balance（請執行 setup-db），bs、roe、dr 不輸出"
+    top, ci = Counter(b["q"] for b in bs.values()).most_common(1), [b for b in bs.values() if "roe" in b]
+    return (f"  📌 資產負債表 {f'{top[0][0] // 100}Q{top[0][0] % 100}' if top else '--'}：個股 {len(bs):,} 檔；"
+            f"一般業 ROE {sum(b['roe'] is not None for b in ci):,}／{len(ci):,} 檔、負債比 {sum(b['dr'] is not None for b in ci):,}／{len(ci):,} 檔")
+
+
+def _load_balance(cur):
+    """{代號: {(年, 季): (資產, 負債, 母公司權益, 權益總計, 每股淨值)}}；資料表不存在 → None。"""
+    if cur.execute("SELECT OBJECT_ID('quarterly_balance')").fetchone()[0] is None:
+        return None
+    bal = defaultdict(dict)
+    for code, y, q, *vals in cur.execute("""
+        SELECT s.stock_code, b.fin_year, b.fin_quarter, b.total_assets, b.total_liab, b.parent_equity, b.total_equity, b.bvps
+        FROM quarterly_balance b JOIN stocks s ON s.stock_id = b.stock_id"""):
+        bal[code][(y, q)] = tuple(vals)
+    return bal
+
+
 def screen_build(rows, head):
     """screen.json：欄式。rows：{代號: {SCREEN_KEYS…}}（依代號排序）；head：d、fd、md、sd（第 11 輪：各市場借券資料日）。rmd = 各營收月份的檔數。"""
     codes = sorted(rows)
@@ -1809,6 +1886,7 @@ def export_all() -> float:
         FROM dividend_notices WHERE ex_date > ?""", latest_date).fetchall(), {m: d for m, (d, _) in state["notices"].items()}, latest_date)   # 第 40 輪 F40-2
     valuation, stock_val, val_date, stock_band = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe；第 37 輪加河流圖
     fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
+    bal = _load_balance(cur)                                   # 第 52 輪 F52-4：資產負債表（資料表不存在時 None）
     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
     fh = _load_qfii(cur)                                       # 第 29 輪 F29-4
     edates, esbl, esbl_m = _load_etf_sbl(cur)                  # 第 12 輪 ETF 借券
@@ -1855,6 +1933,7 @@ def export_all() -> float:
     _write(SITE_DATA_DIR / "ix.json", ix_export(p_days, idx_close["TWSE"]))   # 第 48 輪 F48-1：比較頁的交易日曆＋加權收盤
     _write(SITE_DATA_DIR / "ixr.json", ixr_export(p_days, ixr_close))         # 第 51 輪 F51-4：比較頁的加權報酬指數（含息）；沒有資料也寫（全部 null）
     db_first = min(rows[0][0] for rows in prices.values())   # 全市場最早日線
+    bs_all = {c: x for c, x in ((c, bs_stock(fin.get(c), (bal or {}).get(c), fin_meta.get(c, (None,))[0])) for c in prices if c in stocks) if x}   # 第 52 輪 F52-4
 
     for code, rows in prices.items():
         info = stocks.get(code)
@@ -1901,6 +1980,7 @@ def export_all() -> float:
             # 第 10 輪 B5；第 15 輪 F15-1：c 加 eb（去年同期累計 EPS）
             **({"fin": {**fb, "c": {**fb["c"], "eb": fin_cum_base(fin[code])}}}
                if (fb := fin_stock(fin.get(code), *fin_meta.get(code, (None, None)))) else {}),
+            **({"bs": bs_all[code]} if code in bs_all else {}),             # 第 52 輪 F52-4：資產負債表（和 fin 同一季）
             "fund": dict(zip(("pe", "pb", "dy"), map(_f, fund[code][:3])), date=str(fund[code][3]))
                     if code in fund else None,
             **({"capchg": cap} if cap else {}),
@@ -2009,6 +2089,7 @@ def export_all() -> float:
                         **screen_margin(mrows, mlast.get(mkt), m5.get(mkt), conv, mkt),
                         "pbp": (stock_val.get(code) or {}).get("pb", [None])[0],     # F9-4：淨值比一年位置（cap 由前端估值規則排除）
                         **fin_screen(fin.get(code)),                                  # 第 10 輪 B5
+                        **bs_screen(fin.get(code), (bal or {}).get(code), fin_meta.get(code, (None,))[0]),   # 第 52 輪 F52-4：roe、dr
                         **{k: (sbl or {}).get(k) for k in ("lb", "l1", "l5", "lp")},   # 第 11 輪 B14
                         "mc": mc, "to": to,                                               # 第 12 輪 B11
                         "rb": rev_base(rev_rows), "eb": fin_base(fin.get(code)),         # 第 14 輪 F14-1、F14-2：基期
@@ -2133,6 +2214,7 @@ def export_all() -> float:
     if miss_all:
         print(f"⚠️  上市官方漲跌 0、收盤 ≠ 前收，但找不到除權息／減資事件 {len(miss_all)} 筆（維持「不比價」）：" +
               "、".join(f"{c} {d}" for c, d in miss_all[:10]))
+    print(bs_note(bal is not None, bs_all))                     # 第 52 輪 F52-4（放在 ⚠️ 之後：test_iter51 執行「ETF 個股」到 if bad_all 這一段）
     print(f"✅ 匯出完成：資料日 {latest_date}，個股 {len(prices)} 檔，"
           f"類股 {len(latest['groups']['industry'])}、產業鏈 {len(latest['groups']['chain'])}、"
           f"概念 {len(latest['groups']['concept'])}，台指期 {len(futures['d']) if futures else 0} 天，"

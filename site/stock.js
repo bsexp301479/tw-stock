@@ -392,6 +392,7 @@ window.renderStock = async function (code, sub) {
     $('#starBtn').textContent = on ? '★ 已加入自選' : '☆ 加入自選';
   });
   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
+  if (tab === 'fund' && F && data.bs) renderBs(data.bs, F);                           // 第 52 輪 F52-5：季報卡加一排 3 格（資產負債表）
   if (tab === 'fund' && data.band) { renderBand(data, bandView(data));                // 第 37 輪 F37-3：本益比／淨值比切換
     onSeg('bandSeg', v => { localStore('bandV', null, v); document.querySelectorAll('#bandSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); renderBand(data, v); }); }
   if (tab === 'chip') onSeg('chipSeg', v => { chipN = v; document.querySelectorAll('#chipSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
@@ -931,6 +932,28 @@ function renderFin(F) {
     <div class="ch-label">近 ${Q.length} 季單季 EPS（元）；紅／綠 = 比去年同季增加／減少，灰 = 無法比較（去年同季虧損或沒有資料）</div>
     <div class="fin-bars">${Q.map(bar).join('')}</div>
     <div class="muted small" style="margin-top:6px">${noteHTML('單季、近 4 季 EPS 由累計相減，可能和公司公告略有差異', `單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。官方本益比以最新股數計算，期間有增資的公司，近 4 季 EPS 會和「股價 ÷ 本益比」有差異。金融業沒有毛利率。稅後淨利率（只有一般業）= 單季歸屬母公司業主的淨利 ÷ 單季營收，不含非控制權益；部分網站用合併總淨利，數字會不同。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}`)}</div>`;
+}
+
+// ─── 第 52 輪 F52-5：季報卡原 6 格之下加一排 ROE、負債比、每股淨值（B = 匯出的 bs；和季報卡同一季才顯示；renderFin 不改）───
+function renderBs(B, F) {
+  if (B.q !== F.q[F.q.length - 1][0]) return;
+  const pc = v => v == null ? '--' : fmt(v, 1) + '%';
+  const NA = ['不適用', '金融、保險等業別不計算', 'ROE、負債比只計算一般業；金融、保險等業別的負債以存款、保單準備為主，和一般業不能直接比較'];
+  const RN = { a: ['沒有一年前同季的權益資料', 'ROE 要用一年前同季底與本季底的權益平均；新上市或資料缺季時不計算'],
+    c: ['本季沒有權益資料', '資產負債表彙總本季的權益欄是空的，不計算 ROE'],
+    i: ['近 4 季淨利資料不足', '近 4 季淨利 = 本季累計 + 去年全年 − 去年同季累計，缺一季就不計算'],
+    e: ['平均權益為負或零，不計算', '一年前同季底與本季底權益的平均 ≤ 0 時，ROE 沒有意義，不計算'] };
+  const rn = RN[B.rn] || ['資料不足', RN.a[1]], ci = F.t === 'ci';
+  const cells = [['ROE（近 4 季）', ...(!ci ? NA : B.roe != null ? [pc(B.roe), `一年前 ${pc(B.roep)}`, '近 4 季歸屬母公司業主的淨利 ÷ 一年前同季底與本季底權益的平均'] : ['--', ...rn])],
+    ['負債比', ...(!ci ? NA : [pc(B.dr), `去年同季 ${pc(B.drp)}`, B.dr != null ? '季底的負債總計 ÷ 資產總計' : '資產負債表彙總本季的資產或負債欄是空的'])],
+    ['每股淨值', fmt(B.bv, 2), `去年同季 ${fmt(B.bvp, 2)}`, B.bv != null ? '公開資訊觀測站資產負債表彙總的「每股參考淨值」（元）' : '資產負債表彙總沒有列出這一季的每股參考淨值']];
+  const short = 'ROE 用近 4 季淨利與平均權益；資產、負債、淨值是季底數字';
+  const full = 'ROE（近 4 季）= 近 4 季歸屬母公司業主的淨利 ÷ 平均權益 × 100%；平均權益 =（一年前同季底 + 本季底）歸屬母公司業主權益 ÷ 2，沒有子公司的公司用權益總計。' +
+    '近 4 季淨利的算法和近 4 季 EPS 相同（本季累計 + 去年全年 − 去年同季累計），用總金額計算，不受期中增資、減資影響。負債比 = 負債總計 ÷ 資產總計 × 100%。' +
+    '每股淨值是公開資訊觀測站資產負債表彙總的「每股參考淨值」，和頂端股價淨值比用的每股淨值是同一份申報資料；官方換用新一季數字的日子和本站收錄日可能差幾個交易日。' +
+    '資產、負債、權益是季底的時點數字，不是累計。金融、保險等業別的負債以存款、保單準備為主，不計算 ROE 與負債比。';
+  $('#finBox > .metrics').insertAdjacentHTML('afterend', `<div class="metrics bs" style="margin-top:8px">${cells.map(([l, x, sub, t]) => `<div class="card stat" title="${t}"><div class="l">${l}</div><div class="v num " style="font-size:16px">${x}</div><div class="s">${sub}</div></div>`).join('')}</div>`);
+  $('#finBox').insertAdjacentHTML('beforeend', `<div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div>`);
 }
 
 function renderRevenue(rows) {

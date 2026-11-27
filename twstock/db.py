@@ -485,6 +485,26 @@ DDL = [
         CONSTRAINT UQ_quarterly_financials UNIQUE (stock_id, fin_year, fin_quarter)
     )
     """,
+    # 資產負債表（第 52 輪 F52-2）：mopsov 資產負債表彙總的季底時點數字（千元）與每股參考淨值（元）；不存業別（看同季損益表）；
+    # 官方「--」存 NULL（個體報表公司的母公司權益），匯出時才改用權益總計；first_seen 同季報
+    """
+    IF OBJECT_ID('quarterly_balance') IS NULL
+    CREATE TABLE quarterly_balance (
+        id            INT IDENTITY(1,1) PRIMARY KEY,
+        stock_id      INT            NOT NULL REFERENCES stocks(stock_id),
+        fin_year      INT            NOT NULL,
+        fin_quarter   TINYINT        NOT NULL CHECK (fin_quarter BETWEEN 1 AND 4),
+        total_assets  BIGINT         NULL,
+        total_liab    BIGINT         NULL,
+        parent_equity BIGINT         NULL,
+        total_equity  BIGINT         NULL,
+        bvps          DECIMAL(10,2)  NULL,
+        first_seen    DATE           NULL,
+        created_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+        updated_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_quarterly_balance UNIQUE (stock_id, fin_year, fin_quarter)
+    )
+    """,
     # 借券賣出（第 11 輪 B14；股，和融資融券的張不同）：上市 TWT93U、上櫃 margin/sbl 的「借券賣出」6 欄＋備註原文；
     # 股票 sbl_trades、ETF etf_sbl 欄位相同（比照 margin_trades／etf_margin）。單檔最大 3481 約 7.9 億股（11/06，INT 上限的 37%），一律 BIGINT 留餘裕
     """
@@ -640,5 +660,5 @@ def setup_database():
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
-          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
+          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、quarterly_balance（第 52 輪）、"
           "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、share_distribution（第 43 輪）、twse_index（第 51 輪）、etf_holding_gaps")

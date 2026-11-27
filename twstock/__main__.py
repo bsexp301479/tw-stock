@@ -16,6 +16,7 @@
   python -m twstock history --start 2025-10-30 --only qfii        只補外資及陸資持股（上市、上櫃各 1 個請求／天）
   python -m twstock history --start 2025-10-30 --only holdings    只補主動型 ETF 持股（統一、群益投信 8 檔；上市日之前自動略過）
   python -m twstock history --start 2024-01-01 --only financials  只補季報（季底日在範圍內的季別，每季上市、上櫃各 1 個請求；已有的季別自動略過）
+  python -m twstock history --start 2024-01-01 --only balance     只補資產負債表（季底日在範圍內的季別，每季上市、上櫃各 1 個請求；已有的季別自動略過，--force 重抓）
   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
   python -m twstock events --start 2025-10-30        補抓除權息／減資／面額變更事件（還原價格用；第 19 輪起另存減除股利參考價，分辨配股與現金增資；第 24 輪起一併寫入股利金額與 ETF 除息；和收集共用鎖）
   python -m twstock export                           從資料庫匯出網站 JSON（site/data：latest.json、screen.json、stocks/、etfs/、etfp/；含季報、期現貨價差與下次結算日、營收與 EPS 基期、ETF 個股頁、處置／注意股清單與接近處置推算）
@@ -210,7 +211,7 @@ def main(argv=None):
     s = sub.add_parser("history", help="補抓歷史資料")
     s.add_argument("--start", type=_date, required=True)
     s.add_argument("--end", type=_date, help="預設今天")
-    s.add_argument("--only", nargs="+", choices=["prices", "pe", "insti", "index", "amount", "tpex_index", "financials", "etf", "qfii", "margin", "holdings", "sbl"],
+    s.add_argument("--only", nargs="+", choices=["prices", "pe", "insti", "index", "amount", "tpex_index", "financials", "balance", "etf", "qfii", "margin", "holdings", "sbl"],
                    help="只抓指定資料集（pe = 本益比／淨值比／殖利率，index = 加權指數，tpex_index = 櫃買指數，"
                         "amount = 上市、上櫃三大法人買賣金額，etf = ETF 行情，margin = 融資融券，sbl = 借券賣出，qfii = 外資及陸資持股，holdings = 主動型 ETF 持股，"
                         "financials = 季報（季底日在 --start～--end 的季別））；"

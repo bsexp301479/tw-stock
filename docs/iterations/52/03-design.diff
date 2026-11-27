@@ -1,0 +1,1295 @@
+--- a/twstock/db.py
++++ b/twstock/db.py
+@@ -483,6 +483,26 @@
+         created_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+         updated_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+         CONSTRAINT UQ_quarterly_financials UNIQUE (stock_id, fin_year, fin_quarter)
++    )
++    """,
++    # 資產負債表（第 52 輪 F52-2）：mopsov 資產負債表彙總的季底時點數字（千元）與每股參考淨值（元）；不存業別（看同季損益表）；
++    # 官方「--」存 NULL（個體報表公司的母公司權益），匯出時才改用權益總計；first_seen 同季報
++    """
++    IF OBJECT_ID('quarterly_balance') IS NULL
++    CREATE TABLE quarterly_balance (
++        id            INT IDENTITY(1,1) PRIMARY KEY,
++        stock_id      INT            NOT NULL REFERENCES stocks(stock_id),
++        fin_year      INT            NOT NULL,
++        fin_quarter   TINYINT        NOT NULL CHECK (fin_quarter BETWEEN 1 AND 4),
++        total_assets  BIGINT         NULL,
++        total_liab    BIGINT         NULL,
++        parent_equity BIGINT         NULL,
++        total_equity  BIGINT         NULL,
++        bvps          DECIMAL(10,2)  NULL,
++        first_seen    DATE           NULL,
++        created_at    DATETIME       NOT NULL DEFAULT GETDATE(),
++        updated_at    DATETIME       NOT NULL DEFAULT GETDATE(),
++        CONSTRAINT UQ_quarterly_balance UNIQUE (stock_id, fin_year, fin_quarter)
+     )
+     """,
+     # 借券賣出（第 11 輪 B14；股，和融資融券的張不同）：上市 TWT93U、上櫃 margin/sbl 的「借券賣出」6 欄＋備註原文；
+@@ -640,5 +660,5 @@
+     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
+           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
+           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
+-          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、"
++          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、quarterly_balance（第 52 輪）、"
+           "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、share_distribution（第 43 輪）、twse_index（第 51 輪）、etf_holding_gaps")
+--- a/twstock/collectors/financials.py
++++ b/twstock/collectors/financials.py
+@@ -126,4 +126,6 @@
+         print(f"    📑 {market} {year}Q{quarter}：回應 {len(got)} 家，新增或更正 {changed} 家"
+               + (f"，略過 {len(skipped)} 家（stocks 沒有：{'、'.join(skipped[:5])}{'…' if len(skipped) > 5 else ''}）" if skipped else ""))
+         total += len(got)
++    from .balance import collect_balance_safe          # 第 52 輪 F52-1（函式內匯入：balance 匯入本模組的 _cells）
++    collect_balance_safe(year, quarter, first_seen, markets)   # 兩個市場的損益表都寫完才抓資產負債表；失敗只 ⚠️，回傳值不變
+     return total
+--- a/twstock/collectors/history.py
++++ b/twstock/collectors/history.py
+@@ -14,11 +14,13 @@
+ from ..tradingcal import HOLIDAYS, is_trading_day, load_closed, trading_days  # noqa: F401（沿用的對外名稱）
+ from .daily import (ALL_DATASETS, DATASET_KEYS, DAY_KEYS, HOLDINGS_KEYS, INDEX, PARSE_ERRORS, PRICES, TPEX_INDEX,  # noqa: F401
+                     collect_for_date, collect_tpex_index)
++from .balance import collect_balance
+ from .financials import collect_financials
+ from .revenue import collect_monthly_revenue, revenue_month_for
+ 
+ FINANCIALS = "financials"       # history --only financials：季報（第 10 輪），不在預設資料集
+ SECONDS_PER_QUARTER = 4.5       # mopsov 節流 3 秒＋約 1.6 MB 回應
++BALANCE = "balance"             # 第 52 輪 F52-3：history --only balance：資產負債表，不在預設資料集
+ 
+ # 依網站節流間隔 + 回應時間的實測值（秒，每個細項）
+ SECONDS_PER_KEY = {"prices.TWSE": 4, "prices.TPEx": 4, "pe.TWSE": 4, "pe.TPEx": 3.2, "insti.TWSE": 4, "insti.TPEx": 3.2,
+@@ -71,7 +73,7 @@
+     """季報補抓：每季每市場 1 個請求；已有的 (季, 市場) 略過（force 才重抓）；first_seen 一律 NULL。回傳 (完成, 錯誤說明)。"""
+     have = set() if force else load_fin_have()
+     todo = [(y, q, m) for y, q in fin_quarters(start, end, tw_now().date()) for m in ("TWSE", "TPEx") if (y, q, m) not in have]
+-    print(f"\n📑 季報：待抓 {len(todo)} 次（季別 × 市場）；⏱️  預估約 {len(todo) * SECONDS_PER_QUARTER / 60:.1f} 分鐘")
++    print(f"\n📑 季報：待抓 {len(todo)} 次（季別 × 市場，每次另抓資產負債表）；⏱️  預估約 {len(todo) * 2 * SECONDS_PER_QUARTER / 60:.1f} 分鐘")   # 第 52 輪 D219
+     for y, q, m in todo:
+         try:
+             collect_financials(y, q, None, (m,))
+@@ -82,6 +84,39 @@
+     return True, ""
+ 
+ 
++def load_balance_have():
++    """第 52 輪：資料庫已有資產負債表的 (年, 季, 市場)；資料表不存在 → None。"""
++    conn = db.connect()
++    try:
++        cur = conn.cursor()
++        if cur.execute("SELECT OBJECT_ID('quarterly_balance')").fetchone()[0] is None:
++            return None
++        return {tuple(r) for r in cur.execute(
++            "SELECT DISTINCT b.fin_year, b.fin_quarter, s.market_type FROM quarterly_balance b "
++            "JOIN stocks s ON s.stock_id = b.stock_id").fetchall()}
++    finally:
++        conn.close()
++
++
++def run_balance(start: date, end: date, force=False) -> tuple:
++    """第 52 輪 F52-3：資產負債表補抓（同 run_financials）；資料表不存在 → 不發請求。回傳 (完成, 錯誤說明, 被限流時該季第一天)。"""
++    have = load_balance_have()
++    if have is None:
++        print("❌ 尚未建立 quarterly_balance，請先執行 python3 -m twstock setup-db")
++        return False, "", None
++    have = set() if force else have
++    todo = [(y, q, m) for y, q in fin_quarters(start, end, tw_now().date()) for m in ("TWSE", "TPEx") if (y, q, m) not in have]
++    print(f"\n📑 資產負債表：待抓 {len(todo)} 次（季別 × 市場）；⏱️  預估約 {len(todo) * SECONDS_PER_QUARTER / 60:.1f} 分鐘")
++    for y, q, m in todo:
++        try:
++            collect_balance(y, q, None, (m,))
++        except FetchError as e:
++            return False, f"在 {y}Q{q} {m} 停止：疑似被限流封鎖（{e}）", date(y, q * 3 - 2, 1)
++        except PARSE_ERRORS as e:
++            return False, f"在 {y}Q{q} {m} 停止：官方欄位不符（{e}），需要修改程式", None
++    return True, "", None
++
++
+ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
+                 revenue=True, delay=0.0) -> bool:
+     """回傳 True = 全部完成；False = 中途疑似被封鎖或欄位不符而停止。"""
+@@ -94,6 +129,18 @@
+         if not datasets:
+             print("🎉 補抓完成！")
+             return True
++    if BALANCE in datasets:         # 第 52 輪 F52-3：資產負債表（同季報；和 financials 一起下時排在季報之後）
++        ok, why, at = run_balance(start, end, force)
++        if why:
++            print(f"❌ {why}" + ("\n   建議等 30 分鐘以上，再用同樣的指令重跑；已寫入的季別會自動跳過。" if at else ""))
++        if at and force:
++            print(f"   這次有 --force：重跑會從頭重抓，請改用 --start {at} 接續。")
++        if not ok:
++            return False
++        datasets = tuple(ds for ds in datasets if ds != BALANCE)
++        if not datasets:
++            print("🎉 補抓完成！")
++            return True
+     closed, snap, med = load_status(start, end)
+     days = trading_days(start, end, closed)
+     wanted = {k for ds in datasets if ds != TPEX_INDEX for k in DATASET_KEYS[ds]}
+--- a/twstock/__main__.py
++++ b/twstock/__main__.py
+@@ -16,6 +16,7 @@
+   python -m twstock history --start 2025-10-30 --only qfii        只補外資及陸資持股（上市、上櫃各 1 個請求／天）
+   python -m twstock history --start 2025-10-30 --only holdings    只補主動型 ETF 持股（統一、群益投信 8 檔；上市日之前自動略過）
+   python -m twstock history --start 2024-01-01 --only financials  只補季報（季底日在範圍內的季別，每季上市、上櫃各 1 個請求；已有的季別自動略過）
++  python -m twstock history --start 2024-01-01 --only balance     只補資產負債表（季底日在範圍內的季別，每季上市、上櫃各 1 個請求；已有的季別自動略過，--force 重抓）
+   python -m twstock revenue --year 2026 --month 9    收集指定月份營收
+   python -m twstock events --start 2025-10-30        補抓除權息／減資／面額變更事件（還原價格用；第 19 輪起另存減除股利參考價，分辨配股與現金增資；第 24 輪起一併寫入股利金額與 ETF 除息；和收集共用鎖）
+   python -m twstock export                           從資料庫匯出網站 JSON（site/data：latest.json、screen.json、stocks/、etfs/、etfp/；含季報、期現貨價差與下次結算日、營收與 EPS 基期、ETF 個股頁、處置／注意股清單與接近處置推算）
+@@ -210,7 +211,7 @@
+     s = sub.add_parser("history", help="補抓歷史資料")
+     s.add_argument("--start", type=_date, required=True)
+     s.add_argument("--end", type=_date, help="預設今天")
+-    s.add_argument("--only", nargs="+", choices=["prices", "pe", "insti", "index", "amount", "tpex_index", "financials", "etf", "qfii", "margin", "holdings", "sbl"],
++    s.add_argument("--only", nargs="+", choices=["prices", "pe", "insti", "index", "amount", "tpex_index", "financials", "balance", "etf", "qfii", "margin", "holdings", "sbl"],
+                    help="只抓指定資料集（pe = 本益比／淨值比／殖利率，index = 加權指數，tpex_index = 櫃買指數，"
+                         "amount = 上市、上櫃三大法人買賣金額，etf = ETF 行情，margin = 融資融券，sbl = 借券賣出，qfii = 外資及陸資持股，holdings = 主動型 ETF 持股，"
+                         "financials = 季報（季底日在 --start～--end 的季別））；"
+--- a/twstock/export.py
++++ b/twstock/export.py
+@@ -55,7 +55,8 @@
+ SCREEN_KEYS = ("a20", "vr", "r5", "r20", "r60", "rs20", "rs60", "b20", "b60", "nh", "nl",
+                "rm", "ry", "rc", "rh", "r3", "cap", "mb", "m1", "m5", "sb", "s1", "s5", "sr", "mu", "mnt", "pbp",
+                "eq", "ey", "e4", "gm", "gmy", "fq", "eh", "lb", "l1", "l5", "lp", "mc", "to", "rb", "eb", "k", "kx", "rsi",
+-               "dvd", "dvp", "dvn", "dvx", "dvk")                                                     # 第 35 輪 F35-1：股利
++               "dvd", "dvp", "dvn", "dvx", "dvk",                                                     # 第 35 輪 F35-1：股利
++               "roe", "dr")                                                                           # 第 52 輪 F52-4：ROE、負債比
+ VAL_DAYS = 242                  # F9-4：估值一年位置的窗口 = 最近 242 個有官方本益比資料的交易日
+ VAL_MIN = 120                   # 個股窗口內有效天數少於此值不算位置（新上市）
+ VAL_SPARK = 60                  # 今日頁本益比中位數迷你圖天數
+@@ -1598,8 +1599,84 @@
+         counts[(y, q, mkt)] += 1
+         seen_at[code][(y, q)] = (seen, created)
+     return fin, meta, counts, seen_at
++
++
++# ─── 第 52 輪 F52-4：資產負債表（ROE、負債比、每股淨值；和季報卡同一季 = max(cum)；fin_e4、fin_stock、fin_screen 不改）───
++def fin_ni4(cum: dict, y: int, q: int):
++    """近 4 季歸屬母公司淨利（千元）= 本季累計 + 去年全年 − 去年同季累計（缺一 → None）；Q4 = 全年。"""
++    if q == 4:
++        return cum[(y, 4)][3] if (y, 4) in cum else None
++    xs = [cum.get(k, (None,) * 5)[3] for k in ((y, q), (y - 1, 4), (y - 1, q))]
++    return None if None in xs else xs[0] + xs[1] - xs[2]
++
++
++def bs_equity(row):
++    """權益：歸屬母公司業主權益；官方「--」（個體報表公司）→ 權益總計。row = (資產, 負債, 母公司權益, 權益總計, 每股淨值) 或 None。"""
++    return None if row is None else row[2] if row[2] is not None else row[3]
++
++
++def bs_roe(cum: dict, bal: dict, y: int, q: int) -> tuple:
++    """(ROE %, 原因)：近 4 季淨利 ÷（一年前同季底 + 本季底權益）÷ 2；依序 c 本季沒有權益、a 沒有一年前同季權益、i 近 4 季淨利不足、e 平均 ≤ 0。"""
++    e1 = bs_equity(bal.get((y, q)))
++    if e1 is None:
++        return None, "c"
++    e0 = bs_equity(bal.get((y - 1, q)))
++    if e0 is None:
++        return None, "a"
++    ni = fin_ni4(cum, y, q)
++    if ni is None:
++        return None, "i"
++    if e0 + e1 <= 0:
++        return None, "e"
++    return _r1(ni * 2, e0 + e1), None
++
++
++def bs_dr(row):
++    """負債比 % = 負債 ÷ 資產；資產 None 或 ≤ 0、負債 None → None；> 100 照實。"""
++    return None if row is None or row[0] is None or row[0] <= 0 or row[1] is None else _r1(row[1], row[0])
++
++
++def bs_stock(cum: dict, bal: dict, tbl: str):
++    """stocks/{代號}.json 的 bs：q、（一般業）roe、roep、rn、dr、drp、bv、bvp；沒有季報、沒有資料表、該季沒有資產負債表 → None。"""
++    if not cum or not bal or max(cum) not in bal:
++        return None
++    y, q = max(cum)
++    row, p = bal[(y, q)], bal.get((y - 1, q))
++    out = {"q": y * 100 + q}
++    if tbl == "ci":
++        roe, rn = bs_roe(cum, bal, y, q)
++        out.update(roe=roe, roep=bs_roe(cum, bal, y - 1, q)[0], **({"rn": rn} if rn else {}), dr=bs_dr(row), drp=bs_dr(p))
++    out.update(bv=_f(row[4]), bvp=_f(p and p[4]))
++    return out
+ 
+ 
++def bs_screen(cum: dict, bal: dict, tbl: str) -> dict:
++    """screen.json 的 roe、dr（同 bs_stock 的最新一季）；非一般業、沒有資料 → None。"""
++    b = (bs_stock(cum, bal, tbl) if tbl == "ci" else None) or {}
++    return {"roe": b.get("roe"), "dr": b.get("dr")}
++
++
++def bs_note(exists: bool, bs: dict) -> str:
++    """匯出 📌 一行：最多檔的季別、bs 檔數、一般業 ROE／負債比有值的檔數。"""
++    if not exists:
++        return "  📌 資產負債表：尚未建立 quarterly_balance（請執行 setup-db），bs、roe、dr 不輸出"
++    top, ci = Counter(b["q"] for b in bs.values()).most_common(1), [b for b in bs.values() if "roe" in b]
++    return (f"  📌 資產負債表 {f'{top[0][0] // 100}Q{top[0][0] % 100}' if top else '--'}：個股 {len(bs):,} 檔；"
++            f"一般業 ROE {sum(b['roe'] is not None for b in ci):,}／{len(ci):,} 檔、負債比 {sum(b['dr'] is not None for b in ci):,}／{len(ci):,} 檔")
++
++
++def _load_balance(cur):
++    """{代號: {(年, 季): (資產, 負債, 母公司權益, 權益總計, 每股淨值)}}；資料表不存在 → None。"""
++    if cur.execute("SELECT OBJECT_ID('quarterly_balance')").fetchone()[0] is None:
++        return None
++    bal = defaultdict(dict)
++    for code, y, q, *vals in cur.execute("""
++        SELECT s.stock_code, b.fin_year, b.fin_quarter, b.total_assets, b.total_liab, b.parent_equity, b.total_equity, b.bvps
++        FROM quarterly_balance b JOIN stocks s ON s.stock_id = b.stock_id"""):
++        bal[code][(y, q)] = tuple(vals)
++    return bal
++
++
+ def screen_build(rows, head):
+     """screen.json：欄式。rows：{代號: {SCREEN_KEYS…}}（依代號排序）；head：d、fd、md、sd（第 11 輪：各市場借券資料日）。rmd = 各營收月份的檔數。"""
+     codes = sorted(rows)
+@@ -1809,6 +1886,7 @@
+         FROM dividend_notices WHERE ex_date > ?""", latest_date).fetchall(), {m: d for m, (d, _) in state["notices"].items()}, latest_date)   # 第 40 輪 F40-2
+     valuation, stock_val, val_date, stock_band = _load_valuation(cur, shares)      # F9-4；第 12 輪加 wpe；第 37 輪加河流圖
+     fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)   # 第 10 輪 B5；第 22 輪加收錄日
++    bal = _load_balance(cur)                                   # 第 52 輪 F52-4：資產負債表（資料表不存在時 None）
+     sdates, srecent, sper = _load_sbl(cur)                     # 第 11 輪 B14
+     fh = _load_qfii(cur)                                       # 第 29 輪 F29-4
+     edates, esbl, esbl_m = _load_etf_sbl(cur)                  # 第 12 輪 ETF 借券
+@@ -1855,6 +1933,7 @@
+     _write(SITE_DATA_DIR / "ix.json", ix_export(p_days, idx_close["TWSE"]))   # 第 48 輪 F48-1：比較頁的交易日曆＋加權收盤
+     _write(SITE_DATA_DIR / "ixr.json", ixr_export(p_days, ixr_close))         # 第 51 輪 F51-4：比較頁的加權報酬指數（含息）；沒有資料也寫（全部 null）
+     db_first = min(rows[0][0] for rows in prices.values())   # 全市場最早日線
++    bs_all = {c: x for c, x in ((c, bs_stock(fin.get(c), (bal or {}).get(c), fin_meta.get(c, (None,))[0])) for c in prices if c in stocks) if x}   # 第 52 輪 F52-4
+ 
+     for code, rows in prices.items():
+         info = stocks.get(code)
+@@ -1901,6 +1980,7 @@
+             # 第 10 輪 B5；第 15 輪 F15-1：c 加 eb（去年同期累計 EPS）
+             **({"fin": {**fb, "c": {**fb["c"], "eb": fin_cum_base(fin[code])}}}
+                if (fb := fin_stock(fin.get(code), *fin_meta.get(code, (None, None)))) else {}),
++            **({"bs": bs_all[code]} if code in bs_all else {}),             # 第 52 輪 F52-4：資產負債表（和 fin 同一季）
+             "fund": dict(zip(("pe", "pb", "dy"), map(_f, fund[code][:3])), date=str(fund[code][3]))
+                     if code in fund else None,
+             **({"capchg": cap} if cap else {}),
+@@ -2009,6 +2089,7 @@
+                         **screen_margin(mrows, mlast.get(mkt), m5.get(mkt), conv, mkt),
+                         "pbp": (stock_val.get(code) or {}).get("pb", [None])[0],     # F9-4：淨值比一年位置（cap 由前端估值規則排除）
+                         **fin_screen(fin.get(code)),                                  # 第 10 輪 B5
++                        **bs_screen(fin.get(code), (bal or {}).get(code), fin_meta.get(code, (None,))[0]),   # 第 52 輪 F52-4：roe、dr
+                         **{k: (sbl or {}).get(k) for k in ("lb", "l1", "l5", "lp")},   # 第 11 輪 B14
+                         "mc": mc, "to": to,                                               # 第 12 輪 B11
+                         "rb": rev_base(rev_rows), "eb": fin_base(fin.get(code)),         # 第 14 輪 F14-1、F14-2：基期
+@@ -2133,6 +2214,7 @@
+     if miss_all:
+         print(f"⚠️  上市官方漲跌 0、收盤 ≠ 前收，但找不到除權息／減資事件 {len(miss_all)} 筆（維持「不比價」）：" +
+               "、".join(f"{c} {d}" for c, d in miss_all[:10]))
++    print(bs_note(bal is not None, bs_all))                     # 第 52 輪 F52-4（放在 ⚠️ 之後：test_iter51 執行「ETF 個股」到 if bad_all 這一段）
+     print(f"✅ 匯出完成：資料日 {latest_date}，個股 {len(prices)} 檔，"
+           f"類股 {len(latest['groups']['industry'])}、產業鏈 {len(latest['groups']['chain'])}、"
+           f"概念 {len(latest['groups']['concept'])}，台指期 {len(futures['d']) if futures else 0} 天，"
+--- a/site/app.js
++++ b/site/app.js
+@@ -1205,6 +1205,7 @@
+   eb: ['去年同季EPS', x => x.eb, (v, x) => fmt(v, 2) + finTag(x)],   // 第 22 輪 F22-11：「單季 EPS 轉盈」的對照欄（年增無法計算）
+   e4: ['近4季EPS', x => x.e4, v => fmt(v, 2)], gm: ['毛利率', x => x.gm, (v, x) => fmt(v, 1) + '%' + finTag(x)],
+   gmy: ['毛利率年增', x => x.gmy, (v, x) => sgn(v, 1) + '點' + finTag(x)], eh: ['EPS新高(季)', x => x.eh, int0],
++  roe: ['ROE', x => x.roe, (v, x) => fmt(v, 1) + '%' + finTag(x)], dr: ['負債比', x => x.dr, (v, x) => fmt(v, 1) + '%' + finTag(x)],   // 第 52 輪 F52-5
+   // 第 35 輪 F35-3：最近除息（排序 = 除息至今天數，近的在前）；第二行為填息狀態
+   dv: ['最近除息', x => x.dva, (v, x) => md(x.dvd) + `<span class="sub2">${isNum(x.dvn) ? x.dvn + ' 天填息' : x.dvx ? '中斷（' + x.dvx + '）' : '未填息'}</span>`, 1],
+   dvg: ['距填息價', x => x.dvg, spct, 1],
+@@ -1232,7 +1233,7 @@
+     list.map(x => `<tr data-code="${x.code}"><td class="nm">${o.rm ? wCtl(x.code) : ''}<b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
+       <td class="num ${cls(x.p)}${x.lm ? ' lm' : ''}">${pfmt(x.c)}</td>${pctCell(x)}${o.rm ? '' : `<td class="num">${fmt(x.tv, 1)}億</td>`}` +
+       cols.map(k => { const [, get, f] = SCR_COLS[k], v = get(x);
+-        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh', 'lb', 'lp', 'mc', 'to'].includes(k) || k === 'dv' ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
++        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh', 'roe', 'dr', 'lb', 'lp', 'mc', 'to'].includes(k) || k === 'dv' ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
+     '</tbody></table></div>';
+ }
+ 
+@@ -1298,6 +1299,9 @@
+   { id: 'eh', g: '基本面', label: '單季 EPS 創 {v} 季新高', opts: [4, 8], def: 4, f: scrGe('eh'), cols: ['eq', 'eh'], title: '最新一季單季 EPS 高於之前連續 N 季' },
+   { id: 'ed', g: '基本面', label: '單季 EPS 比去年同季下滑', sw: true, f: x => isNum(x.ey) && x.ey < 0, cols: ['eq', 'ey'] },
+   { id: 'et', g: '基本面', label: '單季 EPS 轉盈', sw: true, f: epsTurn, cols: ['eq', 'eb'], title: '最新一季單季 EPS > 0，去年同季 ≤ 0（年增無法計算）' },
++  // 第 52 輪 F52-5：資產負債表（最新一季；null = 金融等業別、資料不足 → 不符合）
++  { id: 'roe', g: '基本面', label: 'ROE ≥ {v}%', opts: [10, 15, 20], def: 15, f: scrGe('roe'), cols: ['roe'], title: '最新一季的近 4 季 ROE（近 4 季淨利 ÷ 一年前同季底與本季底權益的平均）；只計一般業，金融、保險等業別不列入' },
++  { id: 'dr', g: '基本面', label: '負債比 ≤ {v}%', opts: [30, 50, 70], def: 50, f: (x, v) => isNum(x.dr) && x.dr <= v, cols: ['dr'], title: '最新一季季底的負債總計 ÷ 資產總計；只計一般業，金融、保險等業別不列入' },
+   { id: 'pe', g: '基本面', label: '0 < 本益比 ≤ {v}', opts: [10, 15, 20], def: 15, val: true, f: (x, v, st) => isNum(x.pe) && x.pe > 0 && x.pe <= v && valGuard(x, st), cols: ['pe'] },
+   { id: 'dy', g: '基本面', label: '殖利率 ≥ {v}%', opts: [3, 4, 5, 6], def: 5, val: true, f: (x, v, st) => isNum(x.dy) && x.dy >= v && valGuard(x, st), cols: ['dy', 'dv', 'dvg'] },
+   // 第 35 輪 F35-2：股利（近 365 天最近一次除息或除權息；null = 沒有 → 不符合）
+@@ -1414,7 +1418,7 @@
+       <div class="sec-h" id="scrRes" style="margin:8px 0"><h2>符合 ${fmt(hits.length)} 檔</h2>${hits.length > 100 ? `<span class="muted small">依「${oName}」排序顯示前 100 檔</span>` : ''}</div>
+       <div class="card">${hits.length ? screenTable(hits.slice(0, 100), cols, { sort: o, cap: conds.some(c => c.val) })
+         : '<div class="empty">沒有同時符合所有條件的股票。參考各條件的「單獨」檔數，放寬最少的那一個。</div>'}</div>
+-      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低、KD、RSI 都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。季報條件以各股最新一季判斷：單季 EPS 由累計相減，去年同季虧損時不計算年增，金融業沒有毛利率；財報公布期間各股季別不同（欄位會標出和欄名不同的季別）。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。${DV_NOTE}</div></section>`;
++      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低、KD、RSI 都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。季報條件以各股最新一季判斷：單季 EPS 由累計相減，去年同季虧損時不計算年增，金融業沒有毛利率；財報公布期間各股季別不同（欄位會標出和欄名不同的季別）。ROE、負債比只計一般業，用和季報條件同一季的季底資產負債表：ROE = 近 4 季歸屬母公司淨利 ÷ 一年前同季底與本季底權益的平均，負債比 = 負債總計 ÷ 資產總計；新上市沒有一年前同季權益的股票不計算 ROE。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。${DV_NOTE}</div></section>`;
+     keyCol($(`#view th.sort[data-k="${o}"]`)?.cellIndex);
+     const changed = () => { delete st.ps; save(); draw(); };
+     onModeSeg();
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -392,6 +392,7 @@
+     $('#starBtn').textContent = on ? '★ 已加入自選' : '☆ 加入自選';
+   });
+   if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }
++  if (tab === 'fund' && F && data.bs) renderBs(data.bs, F);                           // 第 52 輪 F52-5：季報卡加一排 3 格（資產負債表）
+   if (tab === 'fund' && data.band) { renderBand(data, bandView(data));                // 第 37 輪 F37-3：本益比／淨值比切換
+     onSeg('bandSeg', v => { localStore('bandV', null, v); document.querySelectorAll('#bandSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); renderBand(data, v); }); }
+   if (tab === 'chip') onSeg('chipSeg', v => { chipN = v; document.querySelectorAll('#chipSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
+@@ -933,6 +934,28 @@
+     <div class="muted small" style="margin-top:6px">${noteHTML('單季、近 4 季 EPS 由累計相減，可能和公司公告略有差異', `單季 = 本季累計 − 上一季累計（第 4 季 = 全年 − 前三季）；期中有增資或減資時，相減的 EPS 會和公司公告的單季 EPS 略有差異。近 4 季 EPS = 本季累計 + 去年全年 − 去年同季累計。官方本益比以最新股數計算，期間有增資的公司，近 4 季 EPS 會和「股價 ÷ 本益比」有差異。金融業沒有毛利率。稅後淨利率（只有一般業）= 單季歸屬母公司業主的淨利 ÷ 單季營收，不含非控制權益；部分網站用合併總淨利，數字會不同。${F.c.fs ? '' : '「本站收錄」日期只有每日收集時才記錄，補抓的季別不顯示。'}`)}</div>`;
+ }
+ 
++// ─── 第 52 輪 F52-5：季報卡原 6 格之下加一排 ROE、負債比、每股淨值（B = 匯出的 bs；和季報卡同一季才顯示；renderFin 不改）───
++function renderBs(B, F) {
++  if (B.q !== F.q[F.q.length - 1][0]) return;
++  const pc = v => v == null ? '--' : fmt(v, 1) + '%';
++  const NA = ['不適用', '金融、保險等業別不計算', 'ROE、負債比只計算一般業；金融、保險等業別的負債以存款、保單準備為主，和一般業不能直接比較'];
++  const RN = { a: ['沒有一年前同季的權益資料', 'ROE 要用一年前同季底與本季底的權益平均；新上市或資料缺季時不計算'],
++    c: ['本季沒有權益資料', '資產負債表彙總本季的權益欄是空的，不計算 ROE'],
++    i: ['近 4 季淨利資料不足', '近 4 季淨利 = 本季累計 + 去年全年 − 去年同季累計，缺一季就不計算'],
++    e: ['平均權益為負或零，不計算', '一年前同季底與本季底權益的平均 ≤ 0 時，ROE 沒有意義，不計算'] };
++  const rn = RN[B.rn] || ['資料不足', RN.a[1]], ci = F.t === 'ci';
++  const cells = [['ROE（近 4 季）', ...(!ci ? NA : B.roe != null ? [pc(B.roe), `一年前 ${pc(B.roep)}`, '近 4 季歸屬母公司業主的淨利 ÷ 一年前同季底與本季底權益的平均'] : ['--', ...rn])],
++    ['負債比', ...(!ci ? NA : [pc(B.dr), `去年同季 ${pc(B.drp)}`, B.dr != null ? '季底的負債總計 ÷ 資產總計' : '資產負債表彙總本季的資產或負債欄是空的'])],
++    ['每股淨值', fmt(B.bv, 2), `去年同季 ${fmt(B.bvp, 2)}`, B.bv != null ? '公開資訊觀測站資產負債表彙總的「每股參考淨值」（元）' : '資產負債表彙總沒有列出這一季的每股參考淨值']];
++  const short = 'ROE 用近 4 季淨利與平均權益；資產、負債、淨值是季底數字';
++  const full = 'ROE（近 4 季）= 近 4 季歸屬母公司業主的淨利 ÷ 平均權益 × 100%；平均權益 =（一年前同季底 + 本季底）歸屬母公司業主權益 ÷ 2，沒有子公司的公司用權益總計。' +
++    '近 4 季淨利的算法和近 4 季 EPS 相同（本季累計 + 去年全年 − 去年同季累計），用總金額計算，不受期中增資、減資影響。負債比 = 負債總計 ÷ 資產總計 × 100%。' +
++    '每股淨值是公開資訊觀測站資產負債表彙總的「每股參考淨值」，和頂端股價淨值比用的每股淨值是同一份申報資料；官方換用新一季數字的日子和本站收錄日可能差幾個交易日。' +
++    '資產、負債、權益是季底的時點數字，不是累計。金融、保險等業別的負債以存款、保單準備為主，不計算 ROE 與負債比。';
++  $('#finBox > .metrics').insertAdjacentHTML('afterend', `<div class="metrics bs" style="margin-top:8px">${cells.map(([l, x, sub, t]) => `<div class="card stat" title="${t}"><div class="l">${l}</div><div class="v num " style="font-size:16px">${x}</div><div class="s">${sub}</div></div>`).join('')}</div>`);
++  $('#finBox').insertAdjacentHTML('beforeend', `<div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div>`);
++}
++
+ function renderRevenue(rows) {
+   const box = $('#revBox');
+   if (!rows.length) { box.innerHTML = '<div class="empty">沒有月營收資料</div>'; return; }
+--- a/site/index.html
++++ b/site/index.html
+@@ -10,8 +10,8 @@
+ <link rel="stylesheet" href="app.css?v=d1508f41">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=ce42c6a3" defer></script>
+-<script src="stock.js?v=c7a90ebc" defer></script>
++<script src="app.js?v=6cde9106" defer></script>
++<script src="stock.js?v=7c592b0f" defer></script>
+ <script src="tools.js?v=0a050889" defer></script>
+ <script src="help.js?v=a5a5a7e8" defer></script>
+ <script src="compare.js?v=f7e0bca5" defer></script>
+--- a/README.md
++++ b/README.md
+@@ -94,6 +94,7 @@
+ python3 tests/test_iter49.py                     # 第 49 輪測試（除權息試算起日年份、泡泡圖 0 億列收合、窄螢幕頁頭、即將除息條件）
+ python3 tests/test_iter50.py                     # 第 50 輪測試（收在漲停／跌停標記、選股條件、主動 ETF 折溢價）
+ python3 tests/test_iter51.py                     # 第 51 輪測試（證交所類股指數、加權報酬指數、比較頁含息點線、近期表現含息同期）
++python3 tests/test_iter52.py                     # 第 52 輪測試（資產負債表彙總、ROE、負債比、每股淨值、選股條件）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -163,6 +164,7 @@
+ - 第 49 輪小項：除權息試算「近一年現金股利 = YYYY/MM/DD 以後 N 次合計」起日寫出年份（口徑不變，仍是資料日往前 365 天、不含當天）。泡泡圖「點泡泡看成分股」卡（電腦版與手機「圖」模式）預設收起法人 1 日、5 日都顯示 `0億` 的股票（R72：以畫面上的字為準，`--` 不算），表尾寫「另有 N 檔…」，按「顯示」展開、「收合」收回，只在這次瀏覽記住；手機「清單」模式不變。個股頁頭代號整塊換行、374 寬以下名稱 17px，名稱不在中文字中間斷開。選股基本面加「{v} 天內將除息」（7／14／30 日曆天，預設 14），用 `latest.json` 的 `nx`（預告表的下一次）、相對選股資料日計算，只算「息」「權息」，只有「權」的不算（R71）；結果多「即將除息」欄（日期與「N 天後」，近的在前）。
+ - 第 50 輪收在漲停／跌停與主動 ETF 折溢價：匯出時依 R73 推算每檔股票今天是否收在漲停價、跌停價（本站推算：參考價 = 收盤 − 畫面上的漲跌，漲停價 = 參考價 × 1.1 依升降單位捨去、跌停價 = 參考價 × 0.9 依升降單位進位，升降單位看漲跌停價本身所在級距，用 Decimal 計算），`latest.json` 的 `stocks` 多 `lm`（1 = 收在漲停價、-1 = 收在跌停價，其他沒有這個鍵）；新上市前 5 個交易日（無漲跌幅限制）、今日無成交、漲跌空白都不標，只對股票、ETF 不標。所有股票表格的漲跌欄在百分比下面多一行小字「漲停」「跌停」，個股頁頭寫「收在漲停價」「收在跌停價」，選股價量組多「今日收在 {漲停價／跌停價}」（網址 `lm=1`、`lm=-1`），漲幅、跌幅排行說明多一句；匯出訊息多一行本站推算家數和官方家數，方便每晚對照。8 檔主動 ETF 持股頁「每單位淨值」卡多一行「MM/DD 收盤 X.XX，折價／溢價 Y.YY%」，`etfs/{代號}.json` 的 `sum` 多 `pc`（持股日收盤）、`pm`（收盤 ÷ 每單位淨值 − 1，%），持股日當天沒有收盤就不輸出。重大訊息資料集（D184）只做格式實測，記在 `docs/iterations/50/03-design.md`，沒有建表或收集。
+ - 第 51 輪證交所類股指數與加權報酬指數：每晚已在抓的 MI_INDEX（上市行情）回應裡有「價格指數(臺灣證券交易所)」「報酬指數(臺灣證券交易所)」兩張表，新表 `twse_index`（`setup-db` 建立；日期、`kind` P／R、官方列順序 `seq`、官方名稱、收盤、漲跌）存兩張表全部列，0 個新請求。寫入附掛在加權指數那一段（`prices.TWSE` 或 `index.TAIEX`，同一次收集只寫一次），找不到表、欄位不符、資料表不存在或寫入失敗都只印一行 ⚠️，個股行情與加權指數照常（R74、R80）；新表不在 `check` 裡（R87）。匯出：`site/data/ixr.json` = `{"d": 交易日（同 ix.json）, "TAIEXR": 發行量加權股價報酬指數收盤（沒有值為 null）}`，`latest.json` 多 `sx`（類股指數：`d`、5／20 日基準日 `b5`／`b20`、`r` = [名稱, 收盤, 漲跌, 漲跌%, 5 日%, 20 日%]，官方列順序；名稱以「類指數」結尾、排除電子工業等 5 個合併／綜合類別、能對到本站上市產業別的才列入，對不到時匯出訊息列出兩邊名稱）與 `ixr`（`d`、`pf` = 近期表現同一組基準日的加權報酬指數 %）。畫面：今日頁「法人資金」錢流卡之後多「類股指數」表（證交所，上市；點漲跌、5 日、20 日換排序，先顯示 10 列）；比較頁多一條點線「加權報酬指數（含息）」與表格一列，灰色虛線「加權指數（不含息）」不變；上市股票與所有 ETF 的近期表現表下多一行「加權報酬指數（含息）同期」，原表格與說明不變；上櫃股票不加。回補：`python3 -m twstock history --start 2025-10-30 --only index --force`（每天 1 次請求，會用官方值覆寫既有加權指數；被限流停下時改用 `--start 停下那天` 接續，不要從頭重跑，D202 起畫面會提示），回補前先 `backup`。缺值不拿前後日子補（R84）。
++- 第 52 輪資產負債表：新表 `quarterly_balance`（`setup-db` 建立；資產總計、負債總計、歸屬母公司業主權益、權益總計（千元，季底時點）、每股參考淨值（元）；官方「--」存 NULL，不存業別），來源是公開資訊觀測站舊版「資產負債表彙總」`ajax_t163sb05`（參數同損益表）。收集附掛在季報（`collect_financials`）：兩個市場的損益表都寫完才抓兩個市場的資產負債表（季報收集期間每晚多 2 個請求），請求、解析或寫入失敗都只印一行 ⚠️，損益表照常；`check` 不變。`history --only financials` 也會一起抓（每季次 2 個請求）。回補：`python3 -m twstock history --start 2024-01-01 --only balance`（每個季別 × 市場 1 個請求，已有的略過；被限流停下時用同一個指令重跑），回補前先 `backup`；晚交或缺漏的公司用 `--start`／`--end` 縮到那一季再加 `--force`（例 `history --start 2026-07-01 --end 2026-09-30 --only balance --force`）。匯出：個股 JSON 多 `bs`（和 `fin` 同一季：`q`、一般業另有 `roe`／`roep`（近 4 季 ROE 與一年前）、算不出時的原因 `rn`（`c` 本季沒有權益、`a` 沒有一年前同季權益、`i` 近 4 季淨利不足、`e` 平均權益 ≤ 0）、`dr`／`drp`（負債比與去年同季），所有業別有 `bv`／`bvp`（每股參考淨值與去年同季））；`screen.json` 多 `roe`、`dr`（只有一般業）。ROE = 近 4 季歸屬母公司淨利 ÷（一年前同季底 + 本季底權益）÷ 2，母公司權益是「--」時用權益總計；負債比 = 負債總計 ÷ 資產總計。畫面：個股「基本面」季報卡原 6 格之下多一排「ROE（近 4 季）」「負債比」「每股淨值」，金融、保險等業別的 ROE、負債比寫「不適用」；選股「基本面」多 `ROE ≥ 15%`、`負債比 ≤ 50%`（門檻可換，只計一般業）。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+--- a/docs/iterations/README.md
++++ b/docs/iterations/README.md
+@@ -41,4 +41,5 @@
+ - 第 49 輪（2026-11-25 使用者選第 47 輪剩下的小項 F47-9～F47-12，小項輪）。分析師 `49/01-analyst.md`：R71、R72、Q49-1～Q49-3，D169～D175 全 A。PM `49/02-pm.md`：畫面文字逐字定稿、驗收 29 條；PM 自行決定 11 點使用者全部同意。設計 `49/03-design.md`（＋`03-design.diff`）：`tools.js` 1 行、`app.js` 成分股表 `class="z"`＋表尾 `gzFoot`、選股 `nxd` 條件與 `nx` 欄、`app.css` 3 行；舊測試 8 行（使用者已同意），新測試 `test_iter49`；D176 = A（勾 `nxd` 不改排序）。PG `49/04-dev.md`：原樣套用、未 export，49 個測試全過。QA `49/05-qa.md` 有條件通過：驗收 29 條中 28 條通過；D177 = A（驗收 13 斷字位置改寫成實況、併入 Q49-3）；D178 = A 已修 QA49-01（`test_iter49` 假 DOM 2 行）；QA49-03 列觀察。
+ - 第 50 輪（2026-11-25 使用者要求盤點缺少的常用資訊，本輪做 F50-1 收在漲停／跌停＋F50-12 主動 ETF 折溢價，小項輪＋SA）。分析師 `50/01-analyst.md`：常用資訊 52 項、F50-1～F50-12、R73～R79、Q50-1～Q50-7，D179～D185 全 A。PM `50/02-pm.md`：畫面文字逐字定稿、驗收 27 條、Q50-8；D186 = A（個股頁頭標記，改 `test_iter49:261` 1 行）、D187 = A（套用後 export）。設計 `50/03-design.md`（＋`03-design.diff`）：`export.py` 新函式 `limit_flag`、`snapshot` 加 `lm`、匯出訊息 1 行、`holding_export` 加 `close`（`sum.pc`、`sum.pm`）；`app.js` `pctCell`、選股 `lm` 條件、排行說明、持股頁淨值卡與說明；`stock.js` 頁頭 1 行；新測試 `test_iter50`；D184 重大訊息實測 2 次請求（只記錄）；D188 = A。PG `50/04-dev.md`：原樣套用並 `export`（11/25 資料，0 外部請求），匯出訊息「收在漲停 上市 4／上櫃 3、跌停 上市 46／上櫃 54」和官方相同，8 檔主動 ETF `pm` 和 PM 相同，50 個測試 export 前後全過。QA `50/05-qa.md` 有條件通過：驗收 27 條全部通過、50 個測試全過、歷史比對 31／34 天相同（其他 3 天各差 1 檔，同 SA）、反證 26／28；QA50-01（匯出訊息官方 0 家會寫成 `--` 時測試擋不住，補 `test_iter50` 3 行，D189）、QA50-02（個股頁頭「收在漲停價」在 360～390 寬斷在詞中間，`stock.js` 加 `white-space:nowrap`，D190）待使用者決定。
+ - 第 51 輪（2026-11-26 使用者選 F46-延伸b＋F50-2：證交所類股指數與加權報酬指數，五角色）。分析師 `51/01-analyst.md`：MI_INDEX 既有回應已有兩張證交所指數表、32 類對應本站產業別、R80～R87、Q51-1～Q51-7，D191～D201 全 A。PM `51/02-pm.md`：畫面文字逐字定稿、驗收 39 條；D202、D203 = A；PM 自行決定 19 點使用者全部同意。設計 `51/03-design.md`（＋`03-design.diff`）：新表 `twse_index`（加 `seq` 欄）、`daily.py` 解析與附掛寫入、`export.py` 新函式 `ixr_export`、`ixr_perf`、`sx_export`、`ixr.json`、`latest.sx`／`latest.ixr`；`app.js` `sxCard`；`compare.js` 含息點線；`stock.js` 近期表現 1 行；舊測試 2 行（D200），新測試 `test_iter51`；SA 實測 3 次請求；D204 = A。PG `51/04-dev.md`：原樣套用，使用者同意上線（備份、setup-db、`history --only index --force` 回補 261 天 261 次請求、0 失敗，TAIEX 比對 0 差異，export），51 個測試全過。QA `51/05-qa.md` 有條件通過：驗收 39 條全部通過、自行重算 0 差異；D205 = A 已修 QA51-01（官方平盤漲跌點數非數字 → 前一交易日收盤相同視為 0，`export.py` 3 行，已重跑 export）；D206 = A 已修 QA51-02（`test_iter51` 檢查 ⚠️ 只印一次）。
++- 第 52 輪（2026-11-27 使用者選 F50-3 資產負債表指標，五角色）。分析師 `52/01-analyst.md`：R88～R97、Q52-1～Q52-8，D207～D218 全 A（D212 = A1＋B1）。PM `52/02-pm.md`：畫面文字逐字定稿、驗收 42 條；D219 = A；PM 自行決定 20 點使用者全部同意。設計 `52/03-design.md`（＋`03-design.diff`）：SA 實測 `ajax_t163sb05`（上市、上櫃 115Q3）；新檔 `collectors/balance.py`、新表 `quarterly_balance`、附掛在 `collect_financials`、`history --only balance`、`export.py` 個股 `bs` 與 `screen.json` `roe`／`dr`、`stock.js` 季報卡 3 格、`app.js` 選股 2 個條件；舊測試 0 行，新測試 `test_iter52`。
+ - 規範：回應與文件用繁體中文；程式風格比照既有程式碼；只改必要的地方；外部網站請求要經過 `twstock/fetch.py` 的 `request`（有節流）；不要 commit 或 push；不要動 `.env`（建立專案副本時也不要複製 `.env`）；不要安裝排程或改系統設定（launchd、crontab、pmset、docker 設定），這些由使用者自行執行；埠 8000 是使用者自己的伺服器，測試用 8001 並在結束時關掉。改了 `site/` 的 js 或 css 要同步更新 `index.html` 的 `?v=`（sha1 前 8 碼，`test_iter23` 失敗時會印出正確的 3 行）。
+--- /dev/null
++++ b/twstock/collectors/balance.py
+@@ -0,0 +1,112 @@
++"""
++資產負債表（第 52 輪 F52-1）：公開資訊觀測站舊版「資產負債表彙總」mopsov ajax_t163sb05。
++一個回應 = 一個市場、一季、全部業別（115Q3 實測：上市 6 張表、上櫃 2 張表），金額為季底時點數字（新台幣仟元），每股參考淨值為元。
++不辨識業別（業別看同季損益表）；資料庫照原樣存，「--」存 NULL；母公司權益是「--」時改用權益總計，在匯出時代換（export.bs_equity）。
++"""
++import re
++
++from .. import db
++from ..fetch import FetchError, SchemaError, clean_number, request
++from .daily import PARSE_ERRORS
++from .financials import TYPEK, _cells, _col
++
++URL = "https://mopsov.twse.com.tw/mops/web/ajax_t163sb05"
++# 欄名別名（取第一個存在的）：115Q3 實測金控、銀行用「總額」，母公司權益有 3 種寫法；個體報表公司的母公司權益是 --
++COLS = (("total_assets", ("資產總計", "資產總額")),
++        ("total_liab", ("負債總計", "負債總額")),
++        ("parent_equity", ("歸屬於母公司業主之權益合計", "歸屬於母公司業主權益合計", "歸屬於母公司業主之權益")),
++        ("total_equity", ("權益總計", "權益總額")),
++        ("bvps", ("每股參考淨值",)))
++NEED = ("total_assets", "total_liab", "total_equity", "bvps")      # 缺任一 → SchemaError；母公司權益整欄沒有 → NULL
++
++
++def parse_balance(text: str) -> dict:
++    """
++    {代號: {total_assets, total_liab, parent_equity, total_equity, bvps}}（千元、元；「--」→ None）。
++    表內只有標題列或還沒有任何公司公布 → {}；封鎖頁 → FetchError；缺公司代號、資產、負債、權益、每股參考淨值欄 → SchemaError（整個回應都不寫入）。
++    """
++    tables = re.findall(r"<table class='hasBorder'.*?</table>", text, re.S)
++    if not tables:
++        if re.search(r"<h2>(上市|上櫃)公司.*?資料</h2>", text) or "查無" in text:
++            return {}                                       # 認得的頁面、還沒有公司公布
++        if "SECURITY" in text.upper():
++            raise FetchError("mopsov 回傳封鎖頁面（SECURITY）")
++        raise SchemaError("mopsov 資產負債表彙總：回應沒有表格")
++    out = {}
++    for tb in tables:
++        rows = re.findall(r"<tr.*?</tr>", tb, re.S)
++        head = _cells(rows[0]) if rows else []
++        idx = {h: i for i, h in enumerate(head)}
++        col = {k: _col(idx, names) for k, names in COLS}
++        if "公司代號" not in idx or any(col[k] is None for k in NEED):
++            raise SchemaError(f"mopsov 資產負債表彙總：表頭不符（{'、'.join(head[:4])}…）")
++        for tr in rows[1:]:
++            c = _cells(tr)
++            if len(c) != len(head) or c[0] == "公司代號":
++                continue                                    # 分頁重複的表頭
++            out[c[idx["公司代號"]]] = {k: None if i is None else clean_number(c[i], float if k == "bvps" else int) for k, i in col.items()}
++    return out
++
++
++def fetch_balance(market: str, year: int, quarter: int) -> dict:
++    """year：西元年；quarter：1～4。參數同損益表（fetch_financials）。"""
++    resp = request("POST", URL, expect_json=False, data={
++        "encodeURIComponent": "1", "step": "1", "firstin": "1", "off": "1", "isQuery": "Y",
++        "TYPEK": TYPEK[market], "year": str(year - 1911), "season": f"{quarter:02d}"})
++    return parse_balance(resp.content.decode("utf-8", errors="replace"))
++
++
++def merge_balance(cursor, year: int, quarter: int, rows: list, first_seen) -> int:
++    """同 merge_financials：值不同才更新、記 updated_at；first_seen 只在新增時寫入；只寫入 stocks 已有的股票。回傳新增＋更正的列數。"""
++    cursor.execute("""
++        MERGE quarterly_balance AS t
++        USING (
++            SELECT st.stock_id, j.*
++            FROM OPENJSON(?) WITH (
++                stock_code NVARCHAR(10), total_assets BIGINT, total_liab BIGINT, parent_equity BIGINT,
++                total_equity BIGINT, bvps DECIMAL(10,2)
++            ) AS j
++            JOIN stocks st ON st.stock_code = j.stock_code
++        ) AS s
++        ON t.stock_id = s.stock_id AND t.fin_year = ? AND t.fin_quarter = ?
++        WHEN MATCHED AND EXISTS (SELECT s.total_assets, s.total_liab, s.parent_equity, s.total_equity, s.bvps
++                                 EXCEPT SELECT t.total_assets, t.total_liab, t.parent_equity, t.total_equity, t.bvps)
++            THEN UPDATE SET total_assets = s.total_assets, total_liab = s.total_liab, parent_equity = s.parent_equity,
++                            total_equity = s.total_equity, bvps = s.bvps, updated_at = GETDATE()
++        WHEN NOT MATCHED THEN
++            INSERT (stock_id, fin_year, fin_quarter, total_assets, total_liab, parent_equity, total_equity, bvps, first_seen)
++            VALUES (s.stock_id, ?, ?, s.total_assets, s.total_liab, s.parent_equity, s.total_equity, s.bvps, ?);
++    """, db.to_json(rows), year, quarter, year, quarter, first_seen)
++    return cursor.rowcount
++
++
++def collect_balance(year: int, quarter: int, first_seen=None, markets=("TWSE", "TPEx")) -> int:
++    """抓取並寫入一季（每個市場 1 個請求、各自 commit）；失敗往外丟（history --only balance 靠它停下）。回傳回應家數。"""
++    total = 0
++    for market in markets:
++        got = fetch_balance(market, year, quarter)
++        rows = [{"stock_code": c, **r} for c, r in got.items()]
++        conn = db.connect()
++        try:
++            cur = conn.cursor()
++            known = {r[0] for r in cur.execute("SELECT stock_code FROM stocks").fetchall()}
++            skipped = sum(c not in known for c in got)
++            changed = merge_balance(cur, year, quarter, rows, first_seen) if rows else 0
++            conn.commit()
++        finally:
++            conn.close()
++        print(f"    📑 {market} {year}Q{quarter} 資產負債表：回應 {len(got)} 家，新增或更正 {changed} 家" + (f"，略過 {skipped} 家" if skipped else ""))
++        total += len(got)
++    return total
++
++
++def collect_balance_safe(year: int, quarter: int, first_seen=None, markets=("TWSE", "TPEx")) -> None:
++    """附掛在 collect_financials（R91）：每個市場各自攔例外，只印 ⚠️，不往外丟、不影響損益表。"""
++    first = lambda e: (str(e).splitlines() or [""])[0][:120]
++    for market in markets:
++        try:
++            collect_balance(year, quarter, first_seen, (market,))
++        except db.pyodbc.Error as e:
++            print(f"    ⚠️  quarterly_balance 寫入失敗（請確認已執行 setup-db）：{first(e)}")
++        except (FetchError, *PARSE_ERRORS) as e:
++            print(f"    ⚠️  資產負債表 {market} {year}Q{quarter} 未寫入（損益表照常）：{first(e)}")
+--- /dev/null
++++ b/tests/test_iter52.py
+@@ -0,0 +1,580 @@
++"""第 52 輪（不連網、不連資料庫）：資產負債表彙總（F52-1～F52-6）。
++解析用 tests/fixtures/t163sb05_*_mini.html（SA 115Q3 上市、上櫃原始回應只刪列）；收集以假請求、假連線執行；匯出測純函式與訊息；
++畫面取出 stock.js、app.js 的函式在 node 執行（node 14 可跑）。檢查函式都接受原始碼字串，最後的 test_contrast 把原始碼改壞（反證），確認對應的檢查會失敗。
++
++  python3 tests/test_iter52.py
++"""
++import contextlib
++import hashlib
++import io
++import json
++import re
++import sys
++from datetime import date
++from pathlib import Path
++from unittest import mock
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tests"))
++from twstock import db, export  # noqa: E402
++from twstock.collectors import balance, catchup, daily, financials, history  # noqa: E402
++from twstock.fetch import FetchError, SchemaError  # noqa: E402
++import test_iter03 as W3  # noqa: E402
++import test_iter34 as T  # noqa: E402
++import test_iter35 as T35  # noqa: E402
++import test_iter45 as T45  # noqa: E402
++import test_iter48 as T48  # noqa: E402
++import test_iter51 as T51  # noqa: E402
++
++SITE, HTML, APP, STK = T.SITE, T.HTML, T.APP, T.STK
++FIX = ROOT / "tests" / "fixtures"
++SRC = lambda p: (ROOT / p).read_text(encoding="utf-8")
++BAL, FIN, HIS, EXP, DBS, MAIN, README = (SRC(p) for p in ("twstock/collectors/balance.py", "twstock/collectors/financials.py", "twstock/collectors/history.py",
++                                                          "twstock/export.py", "twstock/db.py", "twstock/__main__.py", "README.md"))
++ADVICE = set(T48.ADVICE) | T45.ADVICE | {"強", "弱", "名次", "安全", "危險", "惡化", "獲利能力"}
++_grab = T._grab
++page = lambda n: (FIX / f"t163sb05_{n}_mini.html").read_text(encoding="utf-8")
++SII, OTC = page("sii_115_03"), page("otc_115_03")
++sha = lambda s: hashlib.sha1(s.encode()).hexdigest()[:12]
++
++
++def _grab_py(src, name):
++    return re.search(rf"^def {name}\(.*?(?=^\S|\Z)", src, re.M | re.S).group(0)
++
++
++def _fn(mod, src, name):
++    """從（可能改壞的）原始碼取出頂層函式，在模組名稱空間的複本執行。"""
++    ns = dict(vars(mod))
++    exec(_grab_py(src, name), ns)
++    return ns[name]
++
++
++def _fns(mod, src, names):
++    """同 _fn，但多個函式放進同一個名稱空間（互相呼叫時用改壞的版本）。"""
++    ns = dict(vars(mod))
++    for n in names:
++        exec(_grab_py(src, n), ns)
++    return [ns[n] for n in names]
++
++
++def _node(js):
++    try:
++        return T48._node(js)
++    except ValueError:
++        return "ERR"
++
++
++def _raises(f, err):
++    try:
++        f()
++    except err:
++        return True
++    except Exception:
++        return False
++    return False
++
++
++# ─── 解析（驗收 3～5）───────────────────────────────────────
++V2330 = {"total_assets": 10052887514, "total_liab": 3009660084, "parent_equity": 6997901424, "total_equity": 7043227430, "bvps": 269.85}
++
++
++def check_parse(src=BAL):
++    parse = _fn(balance, src, "parse_balance")
++    a, b = parse(SII), parse(OTC)
++    tr, at = re.findall(r"<tr class='tblHead'>.*?</tr>", SII, re.S)[2], re.search(r"<tr class='\w+'><td[^>]*>2330<", SII).start()
++    dup = SII[:at] + tr + SII[at:]                                                   # 一般業表中間插入分頁重複的表頭（原始回應沒有，測試插入）
++    again = SII.replace("</table>", re.search(r"<tr class='even'><td[^>]*>1101.*?</tr>", SII, re.S).group(0).replace(" 31.24<", " 99.99<") + "</table>")
++    return (len(a) == 16 and len(b) == 7 and a["2330"] == V2330
++            and a["2880"] == {"total_assets": 4706062835, "total_liab": 4454087914, "parent_equity": 251972225, "total_equity": 251974921, "bvps": 17.93}
++            and a["1413"]["parent_equity"] is None and a["1413"]["total_equity"] == 1117787 and a["2851"]["parent_equity"] is None   # 個體報表：--
++            and a["2820"]["parent_equity"] is None and a["2314"]["total_equity"] == -244497 and a["2314"]["bvps"] == -2.25
++            and (a["2345"]["bvps"], a["3706"]["bvps"], a["1437"]["bvps"], a["6655"]["bvps"], a["1590"]["bvps"]) == (146.74, 53.84, 43.61, 42.87, 290.23)
++            and b["6488"] == {"total_assets": 301635986, "total_liab": 155767745, "parent_equity": 145868241, "total_equity": 145868241, "bvps": 276.21}
++            and b["5864"]["parent_equity"] is None and b["1777"]["parent_equity"] is None and b["6015"]["bvps"] is not None
++            and parse(dup) == a and parse(again)["1101"]["bvps"] == 99.99 and len(parse(again)) == 16)   # 同代號後者覆寫
++
++
++def test_parse():
++    assert check_parse()
++    assert (FIX / "t163sb05_sii_115_03_mini.html").stat().st_size < 60_000 and "ajax_t163sb05" in SII
++
++
++def check_abnormal(src=BAL):
++    parse = _fn(balance, src, "parse_balance")
++    head = SII[:SII.index("<table class='hasBorder'")]
++    only = SII.split("<tr class='even'>")[0] + "</table></body></html>"
++    nop = SII
++    for n in ("歸屬於母公司業主之權益合計", "歸屬於母公司業主權益合計", "歸屬於母公司業主之權益"):
++        nop = nop.replace(f">{n}<", ">其他權益項目<")
++    got = parse(nop)
++    return (parse(head + "</div></body></html>") == {} and parse(only) == {} and parse("<html>查無資料</html>") == {}
++            and _raises(lambda: parse("<html>THE REQUESTED URL WAS REJECTED. SECURITY</html>"), FetchError)
++            and _raises(lambda: parse("<html>其他</html>"), SchemaError)
++            and all(_raises(lambda b=b: parse(SII.replace(b, "XX")), SchemaError) for b in (">每股參考淨值<", ">資產總計<", ">負債總額<", ">權益總計<", "公司<br>代號"))
++            and len(got) == 16 and all(r["parent_equity"] is None for r in got.values()) and got["2330"]["total_equity"] == 7043227430)
++
++
++def test_abnormal():
++    assert check_abnormal()
++
++
++def test_fetch_params():
++    resp = mock.Mock(content=OTC.encode("utf-8"))
++    with mock.patch.object(balance, "request", return_value=resp) as req:
++        got = balance.fetch_balance("TPEx", 2026, 3)
++    args, kw = req.call_args
++    assert got["6488"]["bvps"] == 276.21 and args == ("POST", "https://mopsov.twse.com.tw/mops/web/ajax_t163sb05") and kw["expect_json"] is False
++    assert kw["data"] == {"encodeURIComponent": "1", "step": "1", "firstin": "1", "off": "1", "isQuery": "Y", "TYPEK": "otc", "year": "115", "season": "03"}
++
++
++# ─── MERGE、DDL、setup-db（驗收 6）───────────────────────────
++def test_merge_and_ddl():
++    sql = []
++
++    class Cur:
++        rowcount = 3
++
++        def execute(self, s, *p):
++            sql.append((s, p))
++    assert balance.merge_balance(Cur(), 2026, 3, [{"stock_code": "2330", **V2330}], date(2026, 11, 27)) == 3
++    s, p = sql[0]
++    upd = s[s.index("THEN UPDATE"):s.index("WHEN NOT MATCHED")]
++    assert "MERGE quarterly_balance" in s and "JOIN stocks st ON st.stock_code = j.stock_code" in s and "EXCEPT" in s
++    assert "updated_at = GETDATE()" in upd and "first_seen" not in upd and "bvps DECIMAL(10,2)" in s
++    assert p[1:] == (2026, 3, 2026, 3, date(2026, 11, 27)) and json.loads(p[0])[0]["bvps"] == 269.85
++    ddl = "\n".join(db.DDL)
++    want = """    IF OBJECT_ID('quarterly_balance') IS NULL
++    CREATE TABLE quarterly_balance (
++        id            INT IDENTITY(1,1) PRIMARY KEY,
++        stock_id      INT            NOT NULL REFERENCES stocks(stock_id),
++        fin_year      INT            NOT NULL,
++        fin_quarter   TINYINT        NOT NULL CHECK (fin_quarter BETWEEN 1 AND 4),
++        total_assets  BIGINT         NULL,
++        total_liab    BIGINT         NULL,
++        parent_equity BIGINT         NULL,
++        total_equity  BIGINT         NULL,
++        bvps          DECIMAL(10,2)  NULL,
++        first_seen    DATE           NULL,
++        created_at    DATETIME       NOT NULL DEFAULT GETDATE(),
++        updated_at    DATETIME       NOT NULL DEFAULT GETDATE(),
++        CONSTRAINT UQ_quarterly_balance UNIQUE (stock_id, fin_year, fin_quarter)
++    )"""
++    blk = next(d for d in db.DDL if "quarterly_balance" in d)
++    assert want in ddl and all(w not in blk for w in ("twse_index", "CREATE TABLE market_index", "CREATE TABLE etf_events"))
++    pos = lambda t: next(k for k, d in enumerate(db.DDL) if f"CREATE TABLE {t} " in d)
++    assert db.DDL[pos("quarterly_financials") + 1] is blk and pos("twse_index") - 1 == pos("market_index")
++    assert "market_breadth、quarterly_financials、quarterly_balance（第 52 輪）、" in DBS and DBS.count("quarterly_balance（第 52 輪）") == 1
++    assert "twse_index（第 51 輪）、etf_holding_gaps\")" in DBS
++
++
++# ─── 收集：附掛、失敗隔離（驗收 7～10）──────────────────────────
++SB04 = {"sii": (FIX / "t163sb04_sii_115_03_mini.html").read_text(encoding="utf-8"), "otc": (FIX / "t163sb04_otc_115_02_mini.html").read_text(encoding="utf-8")}
++SB05 = {"sii": SII, "otc": OTC}
++
++
++class Conn:
++    def __init__(self, log):
++        self.log, self.rowcount = log, 0
++
++    def cursor(self):
++        return self
++
++    def execute(self, s, *p):
++        if "MERGE" in s:
++            self.rowcount = len(json.loads(p[0]))
++            self.log.append(s.split()[1])
++        return self
++
++    def fetchall(self):
++        return [(c,) for c in ("2330", "2880", "6488", "1101", "1413", "5864", "2408", "1215")]
++
++    def commit(self):
++        self.log.append("commit")
++
++    def close(self):
++        pass
++
++
++def _run_fin(fail=None, fin_fail=None, src=None, safe=None):
++    """collect_financials(2026, 3, D, 兩市場)：回傳 (回傳值或例外, 請求 [(端點, TYPEK)], DB 紀錄, 輸出)。"""
++    reqs, log, out = [], [], io.StringIO()
++
++    def req(method, url, expect_json=True, data=None):
++        k = (url.rsplit("_", 1)[1], data["TYPEK"])
++        reqs.append(k)
++        if k == fin_fail:
++            raise FetchError("HTTP 429")
++        return mock.Mock(content=(SB04 if k[0] == "t163sb04" else SB05)[k[1]].encode("utf-8"))
++    pat = [mock.patch.object(financials, "request", req), mock.patch.object(balance, "request", req),
++           mock.patch.object(db, "connect", lambda: Conn(log))]
++    if fail and fail[1] == "db":
++        pat.append(mock.patch.object(balance, "merge_balance", side_effect=fail[0]))
++    elif fail:
++        orig = balance.fetch_balance
++        pat.append(mock.patch.object(balance, "fetch_balance", lambda m, y, q: (_ for _ in ()).throw(fail[0]) if m == "TWSE" else orig(m, y, q)))
++    if safe:
++        pat.append(mock.patch.object(balance, "collect_balance_safe", safe))
++    with contextlib.ExitStack() as st:
++        for p in pat:
++            st.enter_context(p)
++        st.enter_context(contextlib.redirect_stdout(out))
++        fn = _fn(financials, src, "collect_financials") if src else financials.collect_financials
++        try:
++            r = fn(2026, 3, date(2026, 11, 27), ("TWSE", "TPEx"))
++        except Exception as e:
++            r = e
++    return r, reqs, log, out.getvalue()
++
++
++def check_attach(src=FIN):
++    r, reqs, log, out = _run_fin(src=src)
++    lines = [l for l in out.splitlines() if "📑" in l]
++    return (reqs == [("t163sb04", "sii"), ("t163sb04", "otc"), ("t163sb05", "sii"), ("t163sb05", "otc")] and r == 4 + 2
++            and log == ["quarterly_financials", "commit", "quarterly_financials", "commit", "quarterly_balance", "commit", "quarterly_balance", "commit"]
++            and lines[2:] == ["    📑 TWSE 2026Q3 資產負債表：回應 16 家，新增或更正 16 家，略過 12 家",
++                              "    📑 TPEx 2026Q3 資產負債表：回應 7 家，新增或更正 7 家，略過 5 家"] and len(lines) == 4)
++
++
++def test_attach():
++    assert check_attach()
++    assert sha(re.sub(r"\n    from \.balance.*\n    collect_balance_safe.*", "", re.search(r"^def collect_financials\(.*", FIN, re.M | re.S).group(0))) == "9360e93c10ad"
++    assert {n: sha(_grab_py(FIN, n)) for n in ("parse_financials", "merge_financials", "fetch_financials")} == {
++        "parse_financials": "9e48f0761021", "merge_financials": "6e435358742f", "fetch_financials": "75033da1478c"}
++    assert "from .daily import PARSE_ERRORS" in BAL and balance.PARSE_ERRORS is daily.PARSE_ERRORS
++
++
++def check_isolation(src=BAL):
++    safe = _fn(balance, src, "collect_balance_safe")
++    res = []
++    for err, kind, warn in ((FetchError("HTTP 429（可能被限流）\n第二行"), "fetch", "    ⚠️  資產負債表 TWSE 2026Q3 未寫入（損益表照常）：HTTP 429（可能被限流）"),
++                            (SchemaError("mopsov 資產負債表彙總：表頭不符"), "fetch", "    ⚠️  資產負債表 TWSE 2026Q3 未寫入（損益表照常）：mopsov 資產負債表彙總：表頭不符"),
++                            (KeyError("x" * 200), "fetch", "    ⚠️  資產負債表 TWSE 2026Q3 未寫入（損益表照常）：'" + "x" * 119),
++                            (db.pyodbc.Error("42S02", "[42S02] Invalid object name 'quarterly_balance'."), "db",
++                             "    ⚠️  quarterly_balance 寫入失敗（請確認已執行 setup-db）：('42S02', \"[42S02] Invalid object name 'quarterly_balance'.\")")):
++        r, reqs, log, out = _run_fin((err, kind), safe=safe)
++        warns = [l for l in out.splitlines() if "⚠️" in l]
++        res.append(r == 6 and log[:4] == ["quarterly_financials", "commit", "quarterly_financials", "commit"] and "Traceback" not in out
++                   and warns[0] == warn and len(warns) == (2 if kind == "db" else 1)
++                   and (kind == "db" or "    📑 TPEx 2026Q3 資產負債表：回應 7 家，新增或更正 7 家，略過 5 家" in out))   # 上市失敗，上櫃照樣抓
++    return all(res)
++
++
++def test_isolation():
++    assert check_isolation()
++    plan = {"by_date": [], "futures": None, "futures_oi": None, "tpex_months": [], "alerts": False, "events": None, "revenue": [], "financials": (2026, 3)}
++    with mock.patch.object(balance, "collect_balance", side_effect=FetchError("x")), mock.patch.object(financials, "fetch_financials", lambda *a: {}), \
++            mock.patch.object(db, "connect", lambda: Conn([])), contextlib.redirect_stdout(io.StringIO()):
++        written, errors, undated = catchup.execute_plan(plan, W3.T(11, 27))
++    assert errors == {} and undated == {"financials": "2026-11-27"}
++
++
++def test_income_failure():
++    r, reqs, log, out = _run_fin(fin_fail=("t163sb04", "sii"))
++    assert isinstance(r, FetchError) and reqs == [("t163sb04", "sii")] and log == []
++
++
++# ─── history --only balance（驗收 11～13）────────────────────────
++Q11 = [(y, q) for y in (2024, 2025, 2026) for q in (1, 2, 3, 4) if (y, q) <= (2026, 3)]
++ALL = {(y, q, m) for y, q in Q11 for m in ("TWSE", "TPEx")}
++
++
++def _hist(have, datasets=("balance",), force=False, err=None, ns=None, fin_have=ALL - {(2026, 3, "TWSE")}):
++    """ns：history 模組的名稱空間（反證時是執行改壞原始碼的複本）；假資料以 patch.dict 放進 ns。"""
++    calls, out, ns = [], io.StringIO(), vars(history) if ns is None else ns
++    rec = lambda tag: (lambda *a, **k: calls.append((tag, a, k)) if err is None else (_ for _ in ()).throw(err))
++    fake = {"load_balance_have": lambda: have, "load_fin_have": lambda: set(fin_have), "tw_now": lambda: W3.T(11, 27),
++            "collect_balance": rec("b"), "collect_financials": lambda *a, **k: calls.append(("f", a, k))}
++    with mock.patch.dict(ns, fake), contextlib.redirect_stdout(out):
++        ok = ns["run_history"](date(2024, 1, 1), date(2026, 11, 27), datasets=datasets, force=force)
++    return ok, calls, out.getvalue()
++
++
++def check_history(src=HIS):
++    ns = dict(vars(history))
++    for n in ("run_financials", "run_balance", "run_history"):
++        exec(_grab_py(src, n), ns)                         # 同一個名稱空間：假資料以 patch.dict 放進 ns
++    h = lambda *a, **k: _hist(*a, ns=ns, **k)  # noqa: E731
++    ok, c, o = h(set())
++    ok2, c2, _ = h(set(ALL))
++    ok3, c3, _ = h(set(ALL) - {(2025, 2, "TPEx")})
++    ok4, c4, _ = h(set(ALL), force=True)
++    ok5, c5, o5 = h(None)
++    f1, _, of1 = h(set(), err=FetchError("HTTP 429"))
++    f2, _, of2 = h(set(), err=FetchError("HTTP 429"), force=True)
++    f3, _, of3 = h(set(), err=SchemaError("表頭不符"))
++    ok6, c6, o6 = h(set(ALL) - {(2026, 3, "TPEx")}, datasets=("financials", "balance"))
++    _, c7, o7 = h(set(ALL), datasets=("financials",), fin_have=set())
++    hint = "   建議等 30 分鐘以上，再用同樣的指令重跑；已寫入的季別會自動跳過。"
++    return (ok and len(c) == 22 and all(a == (y, q, None, (m,)) and k == {} for (_, a, k), (y, q, m) in zip(c, [(y, q, m) for y, q in Q11 for m in ("TWSE", "TPEx")]))
++            and "\n📑 資產負債表：待抓 22 次（季別 × 市場）；⏱️  預估約 1.6 分鐘\n" in o and o.rstrip().endswith("🎉 補抓完成！")
++            and ok2 and c2 == [] and ok3 and [x[1] for x in c3] == [(2025, 2, None, ("TPEx",))] and ok4 and len(c4) == 22
++            and ok5 is False and c5 == [] and o5 == "❌ 尚未建立 quarterly_balance，請先執行 python3 -m twstock setup-db\n"
++            and f1 is False and "❌ 在 2024Q1 TWSE 停止：疑似被限流封鎖（HTTP 429）\n" + hint + "\n" in of1 and "--force" not in of1 and "🎉" not in of1
++            and f2 is False and of2.endswith(hint + "\n   這次有 --force：重跑會從頭重抓，請改用 --start 2024-01-01 接續。\n")
++            and f3 is False and of3.endswith("❌ 在 2024Q1 TWSE 停止：官方欄位不符（表頭不符），需要修改程式\n")
++            and ok6 and [t for t, _, _ in c6] == ["f", "b"] and c6[0][1] == (2026, 3, None, ("TWSE",)) and c6[1][1] == (2026, 3, None, ("TPEx",))
++            and "\n📑 季報：待抓 22 次（季別 × 市場，每次另抓資產負債表）；⏱️  預估約 3.3 分鐘\n" in o7 and len(c7) == 22 and all(a[2] is None and k == {} for _, a, k in c7))
++
++
++def test_history():
++    assert check_history()
++    with mock.patch.object(history, "load_balance_have", lambda: set()), mock.patch.object(history, "tw_now", lambda: W3.T(11, 27)), \
++            mock.patch.object(history, "collect_balance", side_effect=FetchError("x")), contextlib.redirect_stdout(io.StringIO()):
++        assert history.run_balance(date(2025, 7, 1), date(2025, 9, 30)) == (False, "在 2025Q3 TWSE 停止：疑似被限流封鎖（x）", date(2025, 7, 1))
++    assert history.BALANCE == "balance" and "balance" not in daily.DATASET_KEYS and "balance" not in daily.ALL_DATASETS
++    assert "            collect_financials(y, q, None, (m,))\n" in HIS
++    assert '"tpex_index", "financials", "balance", "etf", "qfii", "margin", "holdings", "sbl"]' in MAIN
++    assert "  python -m twstock history --start 2024-01-01 --only balance     只補資產負債表（季底日在範圍內的季別，每季上市、上櫃各 1 個請求；已有的季別自動略過，--force 重抓）\n" in MAIN
++
++
++# ─── 匯出：純函式（驗收 14～22）────────────────────────────────
++CUM = {(2025, 3): (0, 0, 0, 280, 1.0), (2025, 4): (0, 0, 0, 400, 2.0), (2026, 3): (0, 0, 0, 300, 3.0),
++       (2024, 3): (0, 0, 0, 100, 1.0), (2024, 4): (0, 0, 0, 300, 1.5), (2023, 3): (0, 0, 0, 150, 0.5)}
++B = lambda eq, pe=None, a=1000, l=352, bv=18.5: (a, l, pe, eq, bv)
++BAL1 = {(2026, 3): B(2300, 2200), (2025, 3): B(2100, 2000, 1000, 330, 17.2), (2024, 3): B(1800)}
++
++
++def check_export(src=EXP):
++    ni4, _, roe, dr, stk, scr = _fns(export, src, ("fin_ni4", "bs_equity", "bs_roe", "bs_dr", "bs_stock", "bs_screen"))
++    one = {(2026, 3): (0, 0, 0, 1, 0), (2025, 4): (0, 0, 0, 0, 0), (2025, 3): (0, 0, 0, 0, 0)}
++    ci = stk(CUM, BAL1, "ci")
++    no_prev = stk(CUM, {(2026, 3): B(2300, 2200, bv=None)}, "ci")
++    return (ni4(CUM, 2026, 3) == 420 and ni4(CUM, 2025, 4) == 400 and ni4(CUM, 2024, 3) is None
++            and roe(CUM, BAL1, 2026, 3) == (20.0, None) and roe(one, {(2026, 3): B(6), (2025, 3): B(6)}, 2026, 3) == (16.7, None)
++            and roe(CUM, {(2026, 3): B(2200), (2025, 3): B(9999, 2000)}, 2026, 3) == (20.0, None)              # 本季用權益總計、一年前用母公司權益
++            and roe(CUM, {(2026, 3): B(None), (2025, 3): None}, 2026, 3) == (None, "c") and roe(CUM, {(2026, 3): B(2200)}, 2026, 3) == (None, "a")
++            and roe(CUM, {(2026, 3): B(2200), (2025, 3): B(None)}, 2026, 3) == (None, "a") and roe({(2026, 3): CUM[(2026, 3)]}, BAL1, 2026, 3) == (None, "i")
++            and roe(CUM, {(2026, 3): B(300), (2025, 3): B(-500)}, 2026, 3) == (None, "e") and roe({}, {(2026, 3): B(-5)}, 2026, 3) == (None, "a")
++            and dr(B(1)) == 35.2 and dr(B(1, l=1125)) == 112.5 and dr(B(1, a=0)) is None and dr(B(1, a=None)) is None and dr(None) is None
++            and ci == {"q": 202603, "roe": 20.0, "roep": 25.3, "dr": 35.2, "drp": 33.0, "bv": 18.5, "bvp": 17.2} and list(ci) == ["q", "roe", "roep", "dr", "drp", "bv", "bvp"]
++            and list(no_prev) == ["q", "roe", "roep", "rn", "dr", "drp", "bv", "bvp"] and no_prev["rn"] == "a" and no_prev["bv"] is None and no_prev["bvp"] is None
++            and all(stk(CUM, BAL1, t) == {"q": 202603, "bv": 18.5, "bvp": 17.2} for t in ("fh", "basi", "bd", "ins", "mim"))
++            and stk(CUM, {(2026, 3): B(-10, bv=-3.21)}, "ci")["bv"] == -3.21
++            and stk({}, BAL1, "ci") is None and stk(CUM, None, "ci") is None and stk(CUM, {(2025, 3): B(1)}, "ci") is None
++            and scr(CUM, BAL1, "ci") == {"roe": 20.0, "dr": 35.2} and scr(CUM, BAL1, "fh") == {"roe": None, "dr": None} and scr(None, None, None) == {"roe": None, "dr": None})
++
++
++def test_export():
++    assert check_export()
++    assert {n: sha(_grab_py(EXP, n)) for n in ("fin_e4", "fin_stock", "fin_screen", "fin_base", "fin_cum_base", "fin_single")} == {
++        "fin_e4": "6d4d427355a2", "fin_stock": "4505ebf971ae", "fin_screen": "d920e8198864", "fin_base": "c70c3f0a920c", "fin_cum_base": "ad71c4a2e41e", "fin_single": "c4566e055c2e"}
++    assert export.bs_equity(None) is None and export.bs_equity(B(5, 0)) == 0 and export.bs_equity(B(5)) == 5
++    assert export.SCREEN_KEYS[-2:] == ("roe", "dr") and len(set(export.SCREEN_KEYS)) == len(export.SCREEN_KEYS)
++
++
++def check_note(src=EXP):
++    note = _fn(export, src, "bs_note")
++    bs = {"1": {"q": 202603, "roe": 20.0, "dr": 35.2}, "2": {"q": 202603, "roe": None, "rn": "a", "dr": 41.0}, "3": {"q": 202602, "bv": 1.0}, "4": {"q": 202603, "bv": 2.0}}
++    return (note(True, bs) == "  📌 資產負債表 2026Q3：個股 4 檔；一般業 ROE 1／2 檔、負債比 2／2 檔"
++            and note(True, {}) == "  📌 資產負債表 --：個股 0 檔；一般業 ROE 0／0 檔、負債比 0／0 檔"
++            and note(False, {}) == "  📌 資產負債表：尚未建立 quarterly_balance（請執行 setup-db），bs、roe、dr 不輸出")
++
++
++def test_note_and_wiring():
++    assert check_note()
++    assert EXP.index('print(f"  📌 類股名稱對不到') < EXP.index("    if miss_all:") < EXP.index("    print(bs_note(bal is not None, bs_all))") < EXP.index('    print(f"✅ 匯出完成')
++    fin_line = "               if (fb := fin_stock(fin.get(code), *fin_meta.get(code, (None, None)))) else {}),\n"
++    assert fin_line + '            **({"bs": bs_all[code]} if code in bs_all else {}),' in EXP
++    assert "                        **fin_screen(fin.get(code)),                                  # 第 10 輪 B5\n                        **bs_screen(fin.get(code), (bal or {}).get(code), fin_meta.get(code, (None,))[0])," in EXP
++    assert EXP.index("    fin, fin_meta, fin_counts, fin_seen = _load_financials(cur)") < EXP.index("    bal = _load_balance(cur)") < EXP.index("    conn.close()\n    mlast")
++
++
++Cur = T51.Cur                                                   # OBJECT_ID 回 None／1，列照給
++
++
++def test_load():
++    assert export._load_balance(Cur(None)) is None
++    got = export._load_balance(Cur(1, [("2330", 2026, 3, 10, 3, 6, 7, 269.85), ("2330", 2025, 3, 9, 3, None, 6, 220.15)]))
++    assert got == {"2330": {(2026, 3): (10, 3, 6, 7, 269.85), (2025, 3): (9, 3, None, 6, 220.15)}}
++
++
++# ─── 畫面：季報卡 3 格（驗收 23～27、31）──────────────────────────
++AT = "if (!Array.prototype.at) Array.prototype.at = function (i) { return this[i < 0 ? this.length + i : i]; };\n"   # node 14：renderFin（既有）用 .at(
++BS_RUN = r"""
++let box = {};
++const $ = s => s === '#finBox > .metrics' ? { insertAdjacentHTML: (w, h) => { const b = box['#finBox'], i = b.innerHTML.indexOf('\n    <div class="ch-label">'); b.innerHTML = b.innerHTML.slice(0, i) + h + b.innerHTML.slice(i); } }
++  : (box[s] = box[s] || { insertAdjacentHTML: (w, h) => { box[s].innerHTML += h; } });
++const q = [[202503, 2.55, 10, 31.3, 15.6, 6000000, 2.0], [202602, 2.9, 12, 32, 17, 5500000, 2.6], [202603, 3.15, 23.5, 32.7, 18.4, 6142510, 2.55]];
++const F = t => ({ t, q, c: { e: 7.93, ey: 40.4 }, e4: 10.22, e4p: 7.25 });
++const G = { q: 202603, roe: 25.3, roep: 20.1, dr: 35.2, drp: 33.0, bv: 269.8, bvp: 220.15 };
++const CASES = [[G, 'ci'], [{ q: 202603, bv: 81.4, bvp: 74.12 }, 'fh'], ...['a', 'c', 'i', 'e', 'z'].map(rn => [{ q: 202603, roe: null, roep: null, rn, dr: null, drp: null, bv: null, bvp: null }, 'ci']),
++  [{ q: 202603, roe: -4.2, roep: null, dr: 112.5, drp: null, bv: -3.21, bvp: 1234.5 }, 'ci'], [{ ...G, q: 202602 }, 'ci'], [null, 'ci']];
++const out = CASES.map(([b, t]) => { box = {}; renderFin(F(t)); const before = box['#finBox'].innerHTML; if (b) renderBs(b, F(t)); return [before, box['#finBox'].innerHTML]; });
++console.log(JSON.stringify(out));"""
++CELL = r'<div class="card stat" title="([^"]*)"><div class="l">([^<]*)</div><div class="v num " style="font-size:16px">([^<]*)</div><div class="s">([^<]*)</div></div>'
++T_ROE, T_DR, T_BV = "近 4 季歸屬母公司業主的淨利 ÷ 一年前同季底與本季底權益的平均", "季底的負債總計 ÷ 資產總計", "公開資訊觀測站資產負債表彙總的「每股參考淨值」（元）"
++T_NA = "ROE、負債比只計算一般業；金融、保險等業別的負債以存款、保單準備為主，和一般業不能直接比較"
++T_A = "ROE 要用一年前同季底與本季底的權益平均；新上市或資料缺季時不計算"
++SHORT = "ROE 用近 4 季淨利與平均權益；資產、負債、淨值是季底數字"
++FULL = ("ROE（近 4 季）= 近 4 季歸屬母公司業主的淨利 ÷ 平均權益 × 100%；平均權益 =（一年前同季底 + 本季底）歸屬母公司業主權益 ÷ 2，沒有子公司的公司用權益總計。"
++        "近 4 季淨利的算法和近 4 季 EPS 相同（本季累計 + 去年全年 − 去年同季累計），用總金額計算，不受期中增資、減資影響。負債比 = 負債總計 ÷ 資產總計 × 100%。"
++        "每股淨值是公開資訊觀測站資產負債表彙總的「每股參考淨值」，和頂端股價淨值比用的每股淨值是同一份申報資料；官方換用新一季數字的日子和本站收錄日可能差幾個交易日。"
++        "資產、負債、權益是季底的時點數字，不是累計。金融、保險等業別的負債以存款、保單準備為主，不計算 ROE 與負債比。")
++
++
++def check_card(stk=STK):
++    js = AT + "\n".join(_grab(APP, n) for n in ("fmt", "sgn", "cls", "isNum", "REV_BASE", "epsLow", "noteHTML")) + "\n" + \
++        "\n".join(_grab(stk, n) for n in ("qName", "qShort", "renderFin", "renderBs")) + BS_RUN
++    o = _node(js)
++    if o is None or o == "ERR":
++        return o is None
++    row = lambda h: re.findall(CELL, h[h.index('<div class="metrics bs" style="margin-top:8px">'):]) if "metrics bs" in h else None
++    ci, fh, a, c, i, e, z, neg, other, none = o
++    note = f'<div class="muted small" style="margin-top:6px"><details class="note"><summary>{SHORT}<i>說明</i></summary><div>{FULL}</div></details></div>'
++    sub = lambda r: [x[3] for x in row(r[1])]
++    t1 = lambda r: row(r[1])[0][0]
++    return (row(ci[1]) == [(T_ROE, "ROE（近 4 季）", "25.3%", "一年前 20.1%"), (T_DR, "負債比", "35.2%", "去年同季 33.0%"), (T_BV, "每股淨值", "269.80", "去年同季 220.15")]
++            and ci[1] == ci[0].replace('\n    <div class="ch-label">', ci[1][ci[1].index('<div class="metrics bs"'):ci[1].index('\n    <div class="ch-label">')] + '\n    <div class="ch-label">') + note
++            and ci[0].index('<div class="metrics">') == ci[1].index('<div class="metrics">') and ci[1].count('<div class="metrics') == 2
++            and row(fh[1]) == [(T_NA, "ROE（近 4 季）", "不適用", "金融、保險等業別不計算"), (T_NA, "負債比", "不適用", "金融、保險等業別不計算"), (T_BV, "每股淨值", "81.40", "去年同季 74.12")]
++            and [sub(r)[0] for r in (a, c, i, e, z)] == ["沒有一年前同季的權益資料", "本季沒有權益資料", "近 4 季淨利資料不足", "平均權益為負或零，不計算", "資料不足"]
++            and [t1(r) for r in (a, c, i, e, z)] == [T_A, "資產負債表彙總本季的權益欄是空的，不計算 ROE", "近 4 季淨利 = 本季累計 + 去年全年 − 去年同季累計，缺一季就不計算",
++                                                   "一年前同季底與本季底權益的平均 ≤ 0 時，ROE 沒有意義，不計算", T_A]
++            and row(a[1])[1:] == [("資產負債表彙總本季的資產或負債欄是空的", "負債比", "--", "去年同季 --"), ("資產負債表彙總沒有列出這一季的每股參考淨值", "每股淨值", "--", "去年同季 --")]
++            and [x[2:] for x in row(neg[1])] == [("-4.2%", "一年前 --"), ("112.5%", "去年同季 --"), ("-3.21", "去年同季 1,234.50")]
++            and other[1] == other[0] and none[1] == none[0] and all(w not in json.dumps(o, ensure_ascii=False) for w in ("--%", "null", "undefined", "NaN")))
++
++
++def test_card():
++    assert check_card()
++    assert sha(_grab(STK, "renderFin")) == "bbcdf90c627c"
++    assert "  if (tab === 'fund') { renderRevenue(data.revenue); if (F) renderFin(F); }\n  if (tab === 'fund' && F && data.bs) renderBs(data.bs, F);" in STK
++    assert STK.index("function renderFin(") < STK.index("function renderBs(") < STK.index("function renderRevenue(")
++    assert len(re.findall(r"noteHTML\((['`])(.+?)\1,", APP + STK)) == 8 and "<div id=\"finBox\"></div></div>` : ''}" in STK
++
++
++# ─── 畫面：選股（驗收 28、29）──────────────────────────────────
++COND = {"roe": "  { id: 'roe', g: '基本面', label: 'ROE ≥ {v}%', opts: [10, 15, 20], def: 15, f: scrGe('roe'), cols: ['roe'], title: '最新一季的近 4 季 ROE（近 4 季淨利 ÷ 一年前同季底與本季底權益的平均）；只計一般業，金融、保險等業別不列入' },\n",
++        "dr": "  { id: 'dr', g: '基本面', label: '負債比 ≤ {v}%', opts: [30, 50, 70], def: 50, f: (x, v) => isNum(x.dr) && x.dr <= v, cols: ['dr'], title: '最新一季季底的負債總計 ÷ 資產總計；只計一般業，金融、保險等業別不列入' },\n"}
++COLS = "  roe: ['ROE', x => x.roe, (v, x) => fmt(v, 1) + '%' + finTag(x)], dr: ['負債比', x => x.dr, (v, x) => fmt(v, 1) + '%' + finTag(x)],   // 第 52 輪 F52-5\n"
++B3 = "ROE、負債比只計一般業，用和季報條件同一季的季底資產負債表：ROE = 近 4 季歸屬母公司淨利 ÷ 一年前同季底與本季底權益的平均，負債比 = 負債總計 ÷ 資產總計；新上市沒有一年前同季權益的股票不計算 ROE。"
++
++
++def check_screen(app=APP):
++    if any(v not in app for v in (*COND.values(), COLS)):
++        return False
++    js = "\n".join(T35._grab(app, n) for n in T35.NAMES + ["scrGe", "scrParse"]) + "\n" + T35.HEAD.replace("fqd: {}", "fqd: { 202603: 9, 202602: 1 }") + \
++        f"const SCREEN_CONDS = [\n{COND['roe']}{COND['dr']}];\n" + _grab(app, "scrQuery") + r"""
++const X = [{ roe: 15 }, { roe: 14.9 }, { roe: null }, {}, { dr: 50 }, { dr: 50.1 }, { dr: null }, { dr: 0 }];
++const [R, D] = SCREEN_CONDS;
++console.log(JSON.stringify([X.map(x => R.f(x, 15)), X.map(x => D.f(x, 50)), scrQuery({ roe: 15, dr: 50 }), scrParse('roe=15&dr=50'),
++  SCR_COLS.roe[2](15.25, { fq: 202603 }), SCR_COLS.dr[2](112.5, { fq: 202602 }), SCR_COLS.roe.length, SCR_COLS.dr[0]]));"""
++    o = _node(js)
++    if o is None or o == "ERR":
++        return o is None
++    return (o[0] == [True, False, False, False, False, False, False, False] and o[1] == [False, False, False, False, True, False, False, True]
++            and o[2] == "roe=15&dr=50" and o[3] == {"roe": 15, "dr": 50} and o[4] == "15.3%" and o[5] == '112.5%<span class="muted small">（Q2）</span>'
++            and o[6] == 3 and o[7] == "負債比")
++
++
++def test_screen():
++    assert check_screen()
++    et, pe = APP.index("  { id: 'et', g: '基本面'"), APP.index("  { id: 'pe', g: '基本面'")
++    assert et < APP.index(COND["roe"]) < APP.index(COND["dr"]) < pe
++    assert "  // 第 52 輪 F52-5：資產負債表（最新一季；null = 金融等業別、資料不足 → 不符合）\n" + COND["roe"] in APP
++    assert "eh: ['EPS新高(季)', x => x.eh, int0],\n" + COLS in APP
++    assert "'pbp', 'gm', 'eh', 'roe', 'dr', 'lb', 'lp', 'mc', 'to'].includes(k) || k === 'dv' ? '' : cls(v)" in APP
++    assert "（欄位會標出和欄名不同的季別）。" + B3 + "融資融券為張；" in APP
++
++
++# ─── 用詞、node 14、?v=、文件（驗收 30～35）──────────────────────────
++def _new_segs(app=APP, stk=STK):
++    segs = [BAL, _grab(stk, "renderBs")] + [l for f in (app, stk) for l in f.splitlines() if "第 52 輪" in l]   # app.js 底部說明另以 B3 檢查（同一行有既有文字）
++    segs += [l for f in (EXP, HIS, FIN, DBS, MAIN) for l in f.splitlines() if "第 52 輪" in l or "balance" in l or "資產負債表" in l]
++    segs += [_grab_py(EXP, n) for n in ("fin_ni4", "bs_equity", "bs_roe", "bs_dr", "bs_stock", "bs_screen", "bs_note", "_load_balance")]
++    segs += [_grab_py(HIS, n) for n in ("load_balance_have", "run_balance")] + list(COND.values()) + [COLS, B3]
++    segs += [l for l in README.splitlines() if "第 52 輪" in l]
++    return "\n".join(segs)
++
++
++def check_words(stk=STK, app=APP):
++    seg = _new_segs(app, stk)
++    js = _grab(stk, "renderBs") + "".join(COND.values()) + COLS
++    return all(w not in seg for w in ADVICE) and all(w not in js for w in (".at(", "replaceAll", "||=", "&&=", "??="))
++
++
++def test_words_node14():
++    assert check_words()
++
++
++def test_version_and_docs():
++    for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js", "compare.js"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
++    for s in ("app.css?v=d1508f41", "tools.js?v=0a050889", "help.js?v=a5a5a7e8", "compare.js?v=f7e0bca5"):
++        assert s in HTML, s
++    assert "app.js?v=ce42c6a3" not in HTML and "stock.js?v=c7a90ebc" not in HTML
++    assert HTML.count("https://") == 2 and [m.group(1) for m in re.finditer(r'<script src="(\w+)\.js', HTML)] == ["app", "stock", "tools", "help", "compare"]
++    assert "python3 tests/test_iter52.py" in README and "第 52 輪" in (ROOT / "docs" / "iterations" / "README.md").read_text(encoding="utf-8")
++    r = next(l for l in README.splitlines() if l.startswith("- 第 52 輪資產負債表"))
++    for s in ("quarterly_balance", "ajax_t163sb05", "collect_financials", "⚠️", "--only balance", "--force", "backup", "`bs`", "`roe`", "`dr`", "`rn`", "不適用", "ROE ≥ 15%", "負債比 ≤ 50%"):
++        assert s in r, s
++    assert not re.search(r"第 (?!52 )\d+ 輪", r)
++
++
++# ─── 實際資料（PG 回補、匯出後；驗收 37）───────────────────────────
++def test_site_data():
++    f = SITE / "data" / "stocks" / "2330.json"
++    S = json.loads((SITE / "data" / "screen.json").read_text(encoding="utf-8")) if (SITE / "data" / "screen.json").exists() else {}
++    x = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
++    if "bs" not in x or "roe" not in S:
++        print("  （尚未用第 52 輪匯出或尚未回補，略過實際資料）")
++        return
++    assert x["bs"]["q"] == x["fin"]["q"][-1][0] and list(x).index("bs") == list(x).index("fin") + 1
++    if x["bs"]["q"] == 202603:
++        assert 269.63 <= x["bs"]["bv"] <= 269.97 and set(x["bs"]) >= {"roe", "dr", "bv"}
++    i = S["codes"].index("2330")
++    assert S["roe"][i] == x["bs"].get("roe") and S["dr"][i] == x["bs"].get("dr")
++
++
++# ─── 反證：原始碼改壞，對應的檢查要失敗 ─────────────────────────
++def _mut(src, old, new):
++    assert src.count(old) >= 1, old
++    return src.replace(old, new, 1)
++
++
++def test_contrast():
++    rows = [
++        ("用損益表的業別表頭辨識", check_parse, BAL, '        col = {k: _col(idx, names) for k, names in COLS}\n',
++         '        col = {k: _col(idx, names) for k, names in COLS}\n        if not any(n in idx for n in ("營業毛利（毛損）淨額", "淨收益", "利息淨收益")):\n            raise SchemaError("x")\n'),
++        ("不略過重複表頭", check_parse, BAL, ' or c[0] == "公司代號"', ""),
++        ("母公司權益欄列為必要", check_abnormal, BAL, 'any(col[k] is None for k in NEED)', 'any(i is None for i in col.values())'),
++        ("封鎖頁當成 0 家", check_abnormal, BAL, '        if "SECURITY" in text.upper():\n            raise FetchError("mopsov 回傳封鎖頁面（SECURITY）")\n', ""),
++        ("資產負債表放在每個市場損益表之後", check_attach, FIN, "        total += len(got)\n", "        total += len(got)\n        from .balance import collect_balance_safe\n        collect_balance_safe(year, quarter, first_seen, (market,))\n"),
++        ("資產負債表家數算進回傳值", check_attach, FIN, "    collect_balance_safe(year, quarter, first_seen, markets)", "    total += collect_balance_safe(year, quarter, first_seen, markets) or 2"),
++        ("不攔 pyodbc.Error", check_isolation, BAL, "except db.pyodbc.Error as e:", "except ZeroDivisionError as e:"),
++        ("只抓第一個市場", check_isolation, BAL, "    for market in markets:\n        try:", "    for market in markets[:1]:\n        try:"),
++        ("回補用關鍵字參數", check_history, HIS, "            collect_balance(y, q, None, (m,))", "            collect_balance(y, q, first_seen=None, markets=(m,))"),
++        ("資料表不存在仍發請求", check_history, HIS, '        return False, "", None\n    have = set()', '        have = set()\n    have = set()'),
++        ("季報預估沒有乘 2", check_history, HIS, "len(todo) * 2 * SECONDS_PER_QUARTER", "len(todo) * SECONDS_PER_QUARTER"),
++        ("--force 不提示改用 --start", check_history, HIS, "        if at and force:\n", "        if False:\n"),
++        ("ROE 用單季年化", check_export, EXP, "    ni = fin_ni4(cum, y, q)\n", "    ni = fin_single(cum, y, q) and fin_single(cum, y, q)[3] * 4\n"),
++        ("ROE 只用期末權益", check_export, EXP, "    return _r1(ni * 2, e0 + e1), None", "    return _r1(ni, e1), None"),
++        ("rn 順序反過來", check_export, EXP, '    e1 = bs_equity(bal.get((y, q)))\n    if e1 is None:\n        return None, "c"\n    e0 = bs_equity(bal.get((y - 1, q)))\n    if e0 is None:\n        return None, "a"\n',
++         '    e1 = bs_equity(bal.get((y, q)))\n    e0 = bs_equity(bal.get((y - 1, q)))\n    if e0 is None:\n        return None, "a"\n    if e1 is None:\n        return None, "c"\n'),
++        ("非一般業也輸出 roe", check_export, EXP, '    if tbl == "ci":\n        roe, rn', '    if True:\n        roe, rn'),
++        ("母公司權益 -- 不改用權益總計", check_export, EXP, "row[2] if row[2] is not None else row[3]", "row[2]"),
++        ("📌 缺季別寫 0", check_note, EXP, "if top else '--'}", "if top else '0'}"),
++        ("fmt(null, 1) + '%'", check_card, STK, "const pc = v => v == null ? '--' : fmt(v, 1) + '%';", "const pc = v => fmt(v, 1) + '%';"),
++        ("季別不同仍顯示", check_card, STK, "  if (B.q !== F.q[F.q.length - 1][0]) return;\n", ""),
++        ("3 格插在說明之後", check_card, STK, "$('#finBox > .metrics').insertAdjacentHTML('afterend', ", "$('#finBox').insertAdjacentHTML('beforeend', "),
++        ("負債比門檻用 <", check_screen, APP, "x.dr <= v, cols: ['dr']", "x.dr < v, cols: ['dr']"),
++        ("用詞（清單中的任一詞）", check_words, STK, "沒有一年前同季的權益資料", f"{sorted(ADVICE)[0]}沒有一年前同季的權益資料"),
++        ("node 14 不支援的寫法", check_words, STK, "F.q[F.q.length - 1][0]", "F.q.at(-1)[0]"),
++    ]
++    for name, check, src, old, new in rows:
++        bad = _mut(src, old, new)
++        try:
++            ok = check(bad)
++        except Exception:
++            ok = False
++        assert not ok, f"反證沒有被擋下：{name}"
++        print(f"  ✔ 反證擋下：{name}")
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            f()
++            print(f"✅ {n}")
+--- /dev/null
++++ b/tests/fixtures/t163sb05_sii_115_03_mini.html
+@@ -0,0 +1,95 @@
++
++
++
++<html>
++<head>
++	<title>公開資訊觀測站</title>
++	
++	
++	<link href="css/css2.css" rel="stylesheet" type="text/css" Media="Screen"/> 
++	
++	<script type="text/javascript" src="js/mops2.js"></script>
++	
++	
++	
++</head>
++
++<body>
++
++
++<div id="div01" >
++<form action='/mops/web/ajax_t163sb05'  method='post' onsubmit='return false;' name='fm'>
++<table class='noBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='reportCont'><td style='text-align:center !important;'><h2>上市公司第三季資料</h2></td></tr><tr class='reportCont'><td style='text-align:left !important;'>註：依證券交易法第36條及證券期貨局相關函令規定，財務報告申報期限如下：</td></tr><tr class='reportCont'><td style='text-align:left !important;'>1.一般行業申報期限：第一季為5月15日，第二季為8月14日，第三季為11月14日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>2.金控業申報期限：第一季為5月30日，第二季為8月31日，第三季為11月29日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>3.銀行及票券業申報期限：第一季為5月15日，第二季為8月31日，第三季為11月14日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>4.保險業申報期限：第一季為5月15日，第二季為8月31日，第三季為11月14日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>5.證券業申報期限：第一季為5月15日，第二季為8月31日，第三季為11月14日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>6.第二上市（櫃）公司請循「投資專區/臺灣存託憑證專區/臺灣存託憑證發行人簡明財務報表彙總表」查詢。</td></tr><tr class='reportCont'><td style='text-align:right !important;'>單位：新台幣仟元</td></tr></table>
++<form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234407823.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><table class='hasBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='tblHead'><th align='center' width='100px'>公司<br>代號</th><th align='center' width='100px'>公司名稱</th><th align='center' nowrap width='100px'>現金及約當現金</th><th align='center' nowrap width='100px'>存放央行及拆借銀行同業</th><th align='center' nowrap width='100px'>透過損益按公允價值衡量之金融資產</th><th align='center' nowrap width='100px'>透過其他綜合損益按公允價值衡量之金融資產</th><th align='center' nowrap width='100px'>按攤銷後成本衡量之債務工具投資</th><th align='center' nowrap width='100px'>避險之衍生金融資產淨額</th><th align='center' nowrap width='100px'>附賣回票券及債券投資淨額</th><th align='center' nowrap width='100px'>應收款項－淨額</th><th align='center' nowrap width='100px'>當期所得稅資產</th><th align='center' nowrap width='100px'>待出售資產－淨額</th><th align='center' nowrap width='100px'>待分配予業主之資產－淨額</th><th align='center' nowrap width='100px'>貼現及放款－淨額</th><th align='center' nowrap width='100px'>採用權益法之投資－淨額</th><th align='center' nowrap width='100px'>受限制資產－淨額</th><th align='center' nowrap width='100px'>其他金融資產－淨額</th><th align='center' nowrap width='100px'>保險合約資產</th><th align='center' nowrap width='100px'>再保險合約資產</th><th align='center' nowrap width='100px'>不動產及設備－淨額</th><th align='center' nowrap width='100px'>使用權資產－淨額</th><th align='center' nowrap width='100px'>投資性不動產投資－淨額</th><th align='center' nowrap width='100px'>無形資產－淨額</th><th align='center' nowrap width='100px'>遞延所得稅資產</th><th align='center' nowrap width='100px'>其他資產－淨額</th><th align='center' nowrap width='100px'>資產總額</th><th align='center' nowrap width='100px'>央行及銀行同業存款</th><th align='center' nowrap width='100px'>央行及同業融資</th><th align='center' nowrap width='100px'>透過損益按公允價值衡量之金融負債</th><th align='center' nowrap width='100px'>避險之衍生金融負債－淨額</th><th align='center' nowrap width='100px'>附買回票券及債券負債</th><th align='center' nowrap width='100px'>應付款項</th><th align='center' nowrap width='100px'>當期所得稅負債</th><th align='center' nowrap width='100px'>與待出售資產直接相關之負債</th><th align='center' nowrap width='100px'>存款及匯款</th><th align='center' nowrap width='100px'>應付金融債券</th><th align='center' nowrap width='100px'>應付公司債</th><th align='center' nowrap width='100px'>特別股負債</th><th align='center' nowrap width='100px'>其他金融負債</th><th align='center' nowrap width='100px'>負債準備</th><th align='center' nowrap width='100px'>保險合約負債</th><th align='center' nowrap width='100px'>再保險合約負債</th><th align='center' nowrap width='100px'>租賃負債</th><th align='center' nowrap width='100px'>遞延所得稅負債</th><th align='center' nowrap width='100px'>其他負債</th><th align='center' nowrap width='100px'>負債總額</th><th align='center' nowrap width='100px'>股本</th><th align='center' nowrap width='100px'>權益─具證券性質之虛擬通貨</th><th align='center' nowrap width='100px'>資本公積</th><th align='center' nowrap width='100px'>保留盈餘</th><th align='center' nowrap width='100px'>其他權益</th><th align='center' nowrap width='100px'>庫藏股票</th><th align='center' nowrap width='100px'>歸屬於母公司業主之權益合計</th><th align='center' nowrap width='100px'>共同控制下前手權益</th><th align='center' nowrap width='100px'>合併前非屬共同控制股權</th><th align='center' nowrap width='100px'>非控制權益</th><th align='center' nowrap width='100px'>權益總額</th><th align='center' nowrap width='100px'>待註銷股本股數（單位：股）</th><th align='center' nowrap width='100px'>母公司暨子公司所持有之母公司庫藏股股數（單位：股）</th><th align='center' nowrap width='100px'>預收股款（權益項下）之約當發行股數（單位：股）</th><th class='tblHead' nowrap width='100px'>每股參考淨值</td></tr><tr class='even'><td align='center' nowrap width='100px'>2801</td><td align='center' nowrap width='100px'>彰銀</td><td align='right' nowrap width='100px'>39,197,524</td><td align='right' nowrap width='100px'>243,417,277</td><td align='right' nowrap width='100px'>125,426,176</td><td align='right' nowrap width='100px'>315,583,917</td><td align='right' nowrap width='100px'>554,095,744</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>31,465,892</td><td align='right' nowrap width='100px'>118,262</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>2,221,519,880</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>387,721</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>22,013,525</td><td align='right' nowrap width='100px'>2,178,060</td><td align='right' nowrap width='100px'>14,224,300</td><td align='right' nowrap width='100px'>943,631</td><td align='right' nowrap width='100px'>5,200,965</td><td align='right' nowrap width='100px'>3,050,745</td><td align='right' nowrap width='100px'>3,578,823,619</td><td align='right' nowrap width='100px'>424,851,913</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>1,921,688</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>49,868,076</td><td align='right' nowrap width='100px'>46,168,809</td><td align='right' nowrap width='100px'>787,808</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>2,762,140,892</td><td align='right' nowrap width='100px'>39,470,000</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>4,250,247</td><td align='right' nowrap width='100px'>2,522,266</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>2,049,821</td><td align='right' nowrap width='100px'>10,213,248</td><td align='right' nowrap width='100px'>3,354,476</td><td align='right' nowrap width='100px'>3,347,599,244</td><td align='right' nowrap width='100px'>120,601,974</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>24</td><td align='right' nowrap width='100px'>92,998,181</td><td align='right' nowrap width='100px'>17,624,196</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>231,224,375</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>231,224,375</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 19.17</td></tr><tr class='even'><td align='center' nowrap width='100px'>2820</td><td align='center' nowrap width='100px'>華票</td><td align='right' nowrap width='100px'>500,434</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>163,675,093</td><td align='right' nowrap width='100px'>93,260,680</td><td align='right' nowrap width='100px'>2,894,535</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>7,588,758</td><td align='right' nowrap width='100px'>1,372,370</td><td align='right' nowrap width='100px'>176,650</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>314,356</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>157,803</td><td align='right' nowrap width='100px'>23,512</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>369,527</td><td align='right' nowrap width='100px'>624,539</td><td align='right' nowrap width='100px'>270,958,257</td><td align='right' nowrap width='100px'>39,539,126</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>44,407</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>201,372,825</td><td align='right' nowrap width='100px'>754,891</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>1,768,820</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>23,790</td><td align='right' nowrap width='100px'>55,378</td><td align='right' nowrap width='100px'>366,280</td><td align='right' nowrap width='100px'>243,925,517</td><td align='right' nowrap width='100px'>13,429,600</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>18,553</td><td align='right' nowrap width='100px'>13,801,761</td><td align='right' nowrap width='100px'>-217,174</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>27,032,740</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 20.13</td></tr></table><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234407823.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><br><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234407828.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><table class='hasBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='tblHead'><th align='center' width='100px'>公司<br>代號</th><th align='center' width='100px'>公司名稱</th><th align='center' nowrap width='100px'>流動資產</th><th align='center' nowrap width='100px'>非流動資產</th><th align='center' nowrap width='100px'>資產總計</th><th align='center' nowrap width='100px'>流動負債</th><th align='center' nowrap width='100px'>非流動負債</th><th align='center' nowrap width='100px'>負債總計</th><th align='center' nowrap width='100px'>股本</th><th align='center' nowrap width='100px'>權益－具證券性質之虛擬通貨</th><th align='center' nowrap width='100px'>資本公積</th><th align='center' nowrap width='100px'>保留盈餘（或累積虧損）</th><th align='center' nowrap width='100px'>其他權益</th><th align='center' nowrap width='100px'>庫藏股票</th><th align='center' nowrap width='100px'>歸屬於母公司業主權益合計</th><th align='center' nowrap width='100px'>共同控制下前手權益</th><th align='center' nowrap width='100px'>合併前非屬共同控制股權</th><th align='center' nowrap width='100px'>非控制權益</th><th align='center' nowrap width='100px'>權益總計</th><th align='center' nowrap width='100px'>待註銷股本股數（單位：股）</th><th align='center' nowrap width='100px'>預收股款（權益項下）之約當發行股數（單位：股）</th><th align='center' nowrap width='100px'>母公司暨子公司持有之母公司庫藏股股數（單位：股）</th><th class='tblHead' nowrap width='100px'>每股參考淨值</td></tr><tr class='odd'><td align='center' nowrap width='100px'>2855</td><td align='center' nowrap width='100px'>統一證</td><td align='right' nowrap width='100px'>363,133,400</td><td align='right' nowrap width='100px'>16,614,392</td><td align='right' nowrap width='100px'>379,747,792</td><td align='right' nowrap width='100px'>317,607,551</td><td align='right' nowrap width='100px'>8,711,799</td><td align='right' nowrap width='100px'>326,319,350</td><td align='right' nowrap width='100px'>16,014,145</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>94,685</td><td align='right' nowrap width='100px'>29,750,999</td><td align='right' nowrap width='100px'>4,380,244</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>50,240,073</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>3,188,369</td><td align='right' nowrap width='100px'>53,428,442</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 31.37</td></tr></table><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234407828.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><br><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234408312.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><table class='hasBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='tblHead'><th align='center' width='100px'>公司<br>代號</th><th align='center' width='100px'>公司名稱</th><th align='center' nowrap width='100px'>流動資產</th><th align='center' nowrap width='100px'>非流動資產</th><th align='center' nowrap width='100px'>資產總計</th><th align='center' nowrap width='100px'>流動負債</th><th align='center' nowrap width='100px'>非流動負債</th><th align='center' nowrap width='100px'>負債總計</th><th align='center' nowrap width='100px'>股本</th><th align='center' nowrap width='100px'>權益─具證券性質之虛擬通貨</th><th align='center' nowrap width='100px'>資本公積</th><th align='center' nowrap width='100px'>保留盈餘</th><th align='center' nowrap width='100px'>其他權益</th><th align='center' nowrap width='100px'>庫藏股票</th><th align='center' nowrap width='100px'>歸屬於母公司業主之權益合計</th><th align='center' nowrap width='100px'>共同控制下前手權益</th><th align='center' nowrap width='100px'>合併前非屬共同控制股權</th><th align='center' nowrap width='100px'>非控制權益</th><th align='center' nowrap width='100px'>權益總計</th><th align='center' nowrap width='100px'>待註銷股本股數（單位：股）</th><th align='center' nowrap width='100px'>預收股款（權益項下）之約當發行股數（單位：股）</th><th align='center' nowrap width='100px'>母公司暨子公司所持有之母公司庫藏股股數（單位：股）</th><th class='tblHead' nowrap width='100px'>每股參考淨值</td></tr><tr class='even'><td align='center' nowrap width='100px'>1101</td><td align='center' nowrap width='100px'>台泥</td><td align='right' nowrap width='100px'>203,249,422</td><td align='right' nowrap width='100px'>398,782,204</td><td align='right' nowrap width='100px'>602,031,626</td><td align='right' nowrap width='100px'>107,497,296</td><td align='right' nowrap width='100px'>190,327,639</td><td align='right' nowrap width='100px'>297,824,935</td><td align='right' nowrap width='100px'>77,231,817</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>68,922,587</td><td align='right' nowrap width='100px'>64,374,396</td><td align='right' nowrap width='100px'>30,768,275</td><td align='right' nowrap width='100px'>-979,439</td><td align='right' nowrap width='100px'>240,317,636</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>63,889,055</td><td align='right' nowrap width='100px'>304,206,691</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>30,000,000</td><td align='right' nowrap width='100px'>                 31.24</td></tr><tr class='even'><td align='center' nowrap width='100px'>1413</td><td align='center' nowrap width='100px'>宏洲</td><td align='right' nowrap width='100px'>700,671</td><td align='right' nowrap width='100px'>1,763,765</td><td align='right' nowrap width='100px'>2,464,436</td><td align='right' nowrap width='100px'>535,155</td><td align='right' nowrap width='100px'>811,494</td><td align='right' nowrap width='100px'>1,346,649</td><td align='right' nowrap width='100px'>1,321,124</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>-194,634</td><td align='right' nowrap width='100px'>-8,703</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>1,117,787</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                  8.46</td></tr><tr class='even'><td align='center' nowrap width='100px'>1437</td><td align='center' nowrap width='100px'>勤益控</td><td align='right' nowrap width='100px'>2,524,397</td><td align='right' nowrap width='100px'>11,706,086</td><td align='right' nowrap width='100px'>14,230,483</td><td align='right' nowrap width='100px'>1,274,581</td><td align='right' nowrap width='100px'>4,200,730</td><td align='right' nowrap width='100px'>5,475,311</td><td align='right' nowrap width='100px'>2,018,713</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>411,345</td><td align='right' nowrap width='100px'>5,755,074</td><td align='right' nowrap width='100px'>605,105</td><td align='right' nowrap width='100px'>-37,090</td><td align='right' nowrap width='100px'>8,753,147</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>2,025</td><td align='right' nowrap width='100px'>8,755,172</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>1,180,000</td><td align='right' nowrap width='100px'>                 43.61</td></tr><tr class='even'><td align='center' nowrap width='100px'>1590</td><td align='center' nowrap width='100px'>亞德客-KY</td><td align='right' nowrap width='100px'>30,569,302</td><td align='right' nowrap width='100px'>33,219,004</td><td align='right' nowrap width='100px'>63,788,306</td><td align='right' nowrap width='100px'>5,261,727</td><td align='right' nowrap width='100px'>474,930</td><td align='right' nowrap width='100px'>5,736,657</td><td align='right' nowrap width='100px'>2,000,000</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>14,847,244</td><td align='right' nowrap width='100px'>38,398,361</td><td align='right' nowrap width='100px'>2,800,058</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>58,045,663</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>5,986</td><td align='right' nowrap width='100px'>58,051,649</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                290.23</td></tr><tr class='even'><td align='center' nowrap width='100px'>2314</td><td align='center' nowrap width='100px'>台揚</td><td align='right' nowrap width='100px'>1,473,689</td><td align='right' nowrap width='100px'>1,218,270</td><td align='right' nowrap width='100px'>2,691,959</td><td align='right' nowrap width='100px'>2,358,516</td><td align='right' nowrap width='100px'>577,940</td><td align='right' nowrap width='100px'>2,936,456</td><td align='right' nowrap width='100px'>1,085,964</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>5,276</td><td align='right' nowrap width='100px'>-1,100,057</td><td align='right' nowrap width='100px'>-235,680</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>-244,497</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>-244,497</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 -2.25</td></tr><tr class='even'><td align='center' nowrap width='100px'>2330</td><td align='center' nowrap width='100px'>台積電</td><td align='right' nowrap width='100px'>5,084,925,495</td><td align='right' nowrap width='100px'>4,967,962,019</td><td align='right' nowrap width='100px'>10,052,887,514</td><td align='right' nowrap width='100px'>1,967,745,043</td><td align='right' nowrap width='100px'>1,041,915,041</td><td align='right' nowrap width='100px'>3,009,660,084</td><td align='right' nowrap width='100px'>259,323,650</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>72,318,974</td><td align='right' nowrap width='100px'>6,633,144,580</td><td align='right' nowrap width='100px'>33,114,220</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>6,997,901,424</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>45,326,006</td><td align='right' nowrap width='100px'>7,043,227,430</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                269.85</td></tr><tr class='even'><td align='center' nowrap width='100px'>2345</td><td align='center' nowrap width='100px'>智邦</td><td align='right' nowrap width='100px'>202,523,462</td><td align='right' nowrap width='100px'>26,189,184</td><td align='right' nowrap width='100px'>228,712,646</td><td align='right' nowrap width='100px'>138,504,394</td><td align='right' nowrap width='100px'>8,115,934</td><td align='right' nowrap width='100px'>146,620,328</td><td align='right' nowrap width='100px'>5,611,179</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>948,220</td><td align='right' nowrap width='100px'>75,516,328</td><td align='right' nowrap width='100px'>-10,986</td><td align='right' nowrap width='100px'>-50,999</td><td align='right' nowrap width='100px'>82,013,742</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>78,576</td><td align='right' nowrap width='100px'>82,092,318</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>2,209,867</td><td align='right' nowrap width='100px'>                146.74</td></tr><tr class='even'><td align='center' nowrap width='100px'>3706</td><td align='center' nowrap width='100px'>神達</td><td align='right' nowrap width='100px'>123,894,706</td><td align='right' nowrap width='100px'>64,853,404</td><td align='right' nowrap width='100px'>188,748,110</td><td align='right' nowrap width='100px'>66,018,227</td><td align='right' nowrap width='100px'>42,153,803</td><td align='right' nowrap width='100px'>108,172,030</td><td align='right' nowrap width='100px'>14,599,337</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>24,356,124</td><td align='right' nowrap width='100px'>31,806,576</td><td align='right' nowrap width='100px'>7,847,328</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>78,609,365</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>1,966,715</td><td align='right' nowrap width='100px'>80,576,080</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 53.84</td></tr><tr class='even'><td align='center' nowrap width='100px'>6655</td><td align='center' nowrap width='100px'>科定</td><td align='right' nowrap width='100px'>2,048,176</td><td align='right' nowrap width='100px'>8,380,262</td><td align='right' nowrap width='100px'>10,428,438</td><td align='right' nowrap width='100px'>1,721,195</td><td align='right' nowrap width='100px'>5,311,473</td><td align='right' nowrap width='100px'>7,032,668</td><td align='right' nowrap width='100px'>813,215</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>79,544</td><td align='right' nowrap width='100px'>804,931</td><td align='right' nowrap width='100px'>1,895,768</td><td align='right' nowrap width='100px'>-197,688</td><td align='right' nowrap width='100px'>3,395,770</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>3,395,770</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>749,671</td><td align='right' nowrap width='100px'>2,108,000</td><td align='right' nowrap width='100px'>                 42.87</td></tr></table><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234408312.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><br><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234408333.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><table class='hasBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='tblHead'><th align='center' width='100px'>公司<br>代號</th><th align='center' width='100px'>公司名稱</th><th align='center' nowrap width='100px'>現金及約當現金</th><th align='center' nowrap width='100px'>存放央行及拆借金融同業</th><th align='center' nowrap width='100px'>透過損益按公允價值衡量之金融資產</th><th align='center' nowrap width='100px'>透過其他綜合損益按公允價值衡量之金融資產</th><th align='center' nowrap width='100px'>按攤銷後成本衡量之債務工具投資</th><th align='center' nowrap width='100px'>避險之衍生金融資產</th><th align='center' nowrap width='100px'>附賣回票券及債券投資</th><th align='center' nowrap width='100px'>應收款項－淨額</th><th align='center' nowrap width='100px'>當期所得稅資產</th><th align='center' nowrap width='100px'>待出售資產－淨額</th><th align='center' nowrap width='100px'></th><th align='center' nowrap width='100px'>貼現及放款－淨額</th><th align='center' nowrap width='100px'>保險合約資產及再保險合約資產－淨額</th><th align='center' nowrap width='100px'>採用權益法之投資－淨額</th><th align='center' nowrap width='100px'>受限制資產－淨額</th><th align='center' nowrap width='100px'>其他金融資產－淨額</th><th align='center' nowrap width='100px'>投資性不動產－淨額</th><th align='center' nowrap width='100px'>不動產及設備－淨額</th><th align='center' nowrap width='100px'>使用權資產－淨額</th><th align='center' nowrap width='100px'>無形資產－淨額</th><th align='center' nowrap width='100px'>遞延所得稅資產</th><th align='center' nowrap width='100px'>其他資產－淨額</th><th align='center' nowrap width='100px'>資產總額</th><th align='center' nowrap width='100px'>央行及金融同業存款</th><th align='center' nowrap width='100px'>央行及同業融資</th><th align='center' nowrap width='100px'>透過損益按公允價值衡量之金融負債</th><th align='center' nowrap width='100px'>避險之衍生金融負債</th><th align='center' nowrap width='100px'>附買回票券及債券負債</th><th align='center' nowrap width='100px'>應付商業本票－淨額</th><th align='center' nowrap width='100px'>應付款項</th><th align='center' nowrap width='100px'>當期所得稅負債</th><th align='center' nowrap width='100px'>與待出售資產直接相關之負債</th><th align='center' nowrap width='100px'>存款及匯款</th><th align='center' nowrap width='100px'>應付債券</th><th align='center' nowrap width='100px'>其他借款</th><th align='center' nowrap width='100px'>特別股負債</th><th align='center' nowrap width='100px'>負債準備</th><th align='center' nowrap width='100px'>其他金融負債</th><th align='center' nowrap width='100px'>保險合約負債及再保險合約負債</th><th align='center' nowrap width='100px'>租賃負債</th><th align='center' nowrap width='100px'>遞延所得稅負債</th><th align='center' nowrap width='100px'>其他負債</th><th align='center' nowrap width='100px'>負債總額</th><th align='center' nowrap width='100px'>股本</th><th align='center' nowrap width='100px'>資本公積</th><th align='center' nowrap width='100px'>保留盈餘</th><th align='center' nowrap width='100px'>其他權益</th><th align='center' nowrap width='100px'>庫藏股票</th><th align='center' nowrap width='100px'>共同控制下前手權益</th><th align='center' nowrap width='100px'>歸屬於母公司業主之權益</th><th align='center' nowrap width='100px'>非控制權益</th><th align='center' nowrap width='100px'>權益總額</th><th align='center' nowrap width='100px'>待註銷股本股數（單位：股）</th><th align='center' nowrap width='100px'>預收股款（權益項下）之約當發行股數（單位：股）</th><th align='center' nowrap width='100px'>母公司暨子公司所持有之母公司庫藏股股數（單位：股）</th><th class='tblHead' nowrap width='100px'>每股參考淨值</td></tr><tr class='odd'><td align='center' nowrap width='100px'>2880</td><td align='center' nowrap width='100px'>華南金</td><td align='right' nowrap width='100px'>31,718,116</td><td align='right' nowrap width='100px'>282,542,075</td><td align='right' nowrap width='100px'>196,776,781</td><td align='right' nowrap width='100px'>409,801,112</td><td align='right' nowrap width='100px'>856,278,694</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>12,814,897</td><td align='right' nowrap width='100px'>118,664,490</td><td align='right' nowrap width='100px'>270,187</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>2,710,148,933</td><td align='right' nowrap width='100px'>3,704,756</td><td align='right' nowrap width='100px'>265,062</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>22,025,722</td><td align='right' nowrap width='100px'>13,878,119</td><td align='right' nowrap width='100px'>33,637,235</td><td align='right' nowrap width='100px'>2,261,061</td><td align='right' nowrap width='100px'>1,099,556</td><td align='right' nowrap width='100px'>3,422,410</td><td align='right' nowrap width='100px'>6,753,629</td><td align='right' nowrap width='100px'>4,706,062,835</td><td align='right' nowrap width='100px'>300,839,722</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>6,695,978</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>80,028,435</td><td align='right' nowrap width='100px'>59,113,098</td><td align='right' nowrap width='100px'>89,870,287</td><td align='right' nowrap width='100px'>2,463,808</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>3,695,530,692</td><td align='right' nowrap width='100px'>71,393,348</td><td align='right' nowrap width='100px'>3,793,000</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>6,966,797</td><td align='right' nowrap width='100px'>103,144,887</td><td align='right' nowrap width='100px'>13,179,084</td><td align='right' nowrap width='100px'>2,327,149</td><td align='right' nowrap width='100px'>6,169,211</td><td align='right' nowrap width='100px'>12,572,418</td><td align='right' nowrap width='100px'>4,454,087,914</td><td align='right' nowrap width='100px'>140,561,348</td><td align='right' nowrap width='100px'>17,766,839</td><td align='right' nowrap width='100px'>89,346,952</td><td align='right' nowrap width='100px'>4,297,086</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>251,972,225</td><td align='right' nowrap width='100px'>2,696</td><td align='right' nowrap width='100px'>251,974,921</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 17.93</td></tr></table><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234408333.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><br><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234408339.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><table class='hasBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='tblHead'><th align='center' width='100px'>公司<br>代號</th><th align='center' width='100px'>公司名稱</th><th align='center' nowrap width='100px'>現金及約當現金</th><th align='center' nowrap width='100px'>應收款項</th><th align='center' nowrap width='100px'>本期所得稅資產</th><th align='center' nowrap width='100px'>待出售資產</th><th align='center' nowrap width='100px'>待分配予業主之資產（或處分群組）</th><th align='center' nowrap width='100px'>透過損益按公允價值衡量之金融資產</th><th align='center' nowrap width='100px'>透過其他綜合損益按公允價值衡量之金融資產</th><th align='center' nowrap width='100px'>按攤銷後成本衡量之金融資產</th><th align='center' nowrap width='100px'>避險之金融資產</th><th align='center' nowrap width='100px'>採用權益法之投資－淨額</th><th align='center' nowrap width='100px'>其他金融資產－淨額</th><th align='center' nowrap width='100px'>投資性不動產</th><th align='center' nowrap width='100px'>放款</th><th align='center' nowrap width='100px'>保險合約資產</th><th align='center' nowrap width='100px'>再保險合約資產</th><th align='center' nowrap width='100px'>不動產及設備</th><th align='center' nowrap width='100px'>使用權資產</th><th align='center' nowrap width='100px'>無形資產</th><th align='center' nowrap width='100px'>遞延所得稅資產</th><th align='center' nowrap width='100px'>其他資產</th><th align='center' nowrap width='100px'>分離帳戶保險商品資產</th><th align='center' nowrap width='100px'>資產總計</th><th align='center' nowrap width='100px'>短期債務</th><th align='center' nowrap width='100px'>應付款項</th><th align='center' nowrap width='100px'>本期所得稅負債</th><th align='center' nowrap width='100px'>與待出售資產直接相關之負債</th><th align='center' nowrap width='100px'>透過損益按公允價值衡量之金融負債</th><th align='center' nowrap width='100px'>避險之衍生金融負債</th><th align='center' nowrap width='100px'>應付債券</th><th align='center' nowrap width='100px'>特別股負債</th><th align='center' nowrap width='100px'>其他金融負債</th><th align='center' nowrap width='100px'>租賃負債</th><th align='center' nowrap width='100px'>負債準備</th><th align='center' nowrap width='100px'>遞延所得稅負債</th><th align='center' nowrap width='100px'>其他負債</th><th align='center' nowrap width='100px'>負債總計</th><th align='center' nowrap width='100px'>股本</th><th align='center' nowrap width='100px'>權益─具證券性質之虛擬通貨</th><th align='center' nowrap width='100px'>資本公積</th><th align='center' nowrap width='100px'>保留盈餘</th><th align='center' nowrap width='100px'>其他權益</th><th align='center' nowrap width='100px'>庫藏股票</th><th align='center' nowrap width='100px'>歸屬於母公司業主之權益合計</th><th align='center' nowrap width='100px'>共同控制下前手權益</th><th align='center' nowrap width='100px'>合併前非屬共同控制股權</th><th align='center' nowrap width='100px'>非控制權益</th><th align='center' nowrap width='100px'>權益總計</th><th align='center' nowrap width='100px'>待註銷股本股數（單位：股）</th><th align='center' nowrap width='100px'>母公司暨子公司所持有之母公司庫藏股股數（單位：股）</th><th align='center' nowrap width='100px'>預收股款（權益項下）之約當發行股數（單位：股）</th><th class='tblHead' nowrap width='100px'>每股參考淨值</td></tr><tr class='even'><td align='center' nowrap width='100px'>2816</td><td align='center' nowrap width='100px'>旺旺保</td><td align='right' nowrap width='100px'>3,689,271</td><td align='right' nowrap width='100px'>617,225</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>1,537,832</td><td align='right' nowrap width='100px'>3,262,500</td><td align='right' nowrap width='100px'>4,820,404</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>4,591,900</td><td align='right' nowrap width='100px'>874,039</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>1,529</td><td align='right' nowrap width='100px'>5,623,571</td><td align='right' nowrap width='100px'>1,487,474</td><td align='right' nowrap width='100px'>12,000</td><td align='right' nowrap width='100px'>148,504</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>574,053</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>27,240,302</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>735,883</td><td align='right' nowrap width='100px'>158,999</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>12,017</td><td align='right' nowrap width='100px'>37,428</td><td align='right' nowrap width='100px'>62,700</td><td align='right' nowrap width='100px'>2,230,172</td><td align='right' nowrap width='100px'>17,130,713</td><td align='right' nowrap width='100px'>2,236,080</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>7,781,688</td><td align='right' nowrap width='100px'>91,821</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>10,109,589</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 45.21</td></tr><tr class='even'><td align='center' nowrap width='100px'>2851</td><td align='center' nowrap width='100px'>中再保</td><td align='right' nowrap width='100px'>15,861,074</td><td align='right' nowrap width='100px'>427,610</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>8,558,192</td><td align='right' nowrap width='100px'>2,541,837</td><td align='right' nowrap width='100px'>27,440,040</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>2,246,000</td><td align='right' nowrap width='100px'>383,078</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>12,395</td><td align='right' nowrap width='100px'>1,479,250</td><td align='right' nowrap width='100px'>273,434</td><td align='right' nowrap width='100px'>178</td><td align='right' nowrap width='100px'>22,754</td><td align='right' nowrap width='100px'>25,417</td><td align='right' nowrap width='100px'>2,345,358</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>61,616,617</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>559,832</td><td align='right' nowrap width='100px'>812,479</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>223,125</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>186</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>190,391</td><td align='right' nowrap width='100px'>3,311,684</td><td align='right' nowrap width='100px'>34,855,259</td><td align='right' nowrap width='100px'>8,003,888</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>1,560,000</td><td align='right' nowrap width='100px'>17,292,568</td><td align='right' nowrap width='100px'>-95,098</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>26,761,358</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 33.44</td></tr></table><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234408339.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><br><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234408343.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><table class='hasBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='tblHead'><th align='center' width='100px'>公司<br>代號</th><th align='center' width='100px'>公司名稱</th><th align='center' nowrap width='100px'>流動資產</th><th align='center' nowrap width='100px'>非流動資產</th><th align='center' nowrap width='100px'>資產總計</th><th align='center' nowrap width='100px'>流動負債</th><th align='center' nowrap width='100px'>非流動負債</th><th align='center' nowrap width='100px'>負債總計</th><th align='center' nowrap width='100px'>股本</th><th align='center' nowrap width='100px'>權益－具證券性質之虛擬通貨</th><th align='center' nowrap width='100px'>資本公積</th><th align='center' nowrap width='100px'>保留盈餘</th><th align='center' nowrap width='100px'>其他權益</th><th align='center' nowrap width='100px'>庫藏股票</th><th align='center' nowrap width='100px'>歸屬於母公司業主之權益合計</th><th align='center' nowrap width='100px'>共同控制下前手權益</th><th align='center' nowrap width='100px'>非控制權益</th><th align='center' nowrap width='100px'>權益總額</th><th align='center' nowrap width='100px'>待註銷股本股數（單位：股）</th><th align='center' nowrap width='100px'>預收股款（權益項下）之約當發行股數（單位：股）</th><th align='center' nowrap width='100px'>母公司暨子公司所持有之母公司庫藏股股數（單位：股）</th><th class='tblHead' nowrap width='100px'>每股參考淨值</td></tr><tr class='odd'><td align='center' nowrap width='100px'>1409</td><td align='center' nowrap width='100px'>新纖</td><td align='right' nowrap width='100px'>179,764,266</td><td align='right' nowrap width='100px'>79,955,247</td><td align='right' nowrap width='100px'>259,719,513</td><td align='right' nowrap width='100px'>169,883,701</td><td align='right' nowrap width='100px'>24,916,649</td><td align='right' nowrap width='100px'>194,800,350</td><td align='right' nowrap width='100px'>16,184,093</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>2,158,549</td><td align='right' nowrap width='100px'>17,924,884</td><td align='right' nowrap width='100px'>17,028,641</td><td align='right' nowrap width='100px'>-134,336</td><td align='right' nowrap width='100px'>53,161,831</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>11,757,332</td><td align='right' nowrap width='100px'>64,919,163</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>18,492,487</td><td align='right' nowrap width='100px'>                 33.23</td></tr></table><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234408343.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><br>
++</form>
++
++</div>
++
++
++</body>
++
++
++
++<script>
++	try {
++		if(!document.querySelector('#table01')){
++			var table01 = document.createElement("div");
++			table01.id = "table01"; 
++			document.body.appendChild(table01);
++			if(document.querySelector("#div01")){
++				table01.appendChild(div01);
++			};
++		};
++
++		if (document.autoForm!=null && document.autoForm!=undefined && document.autoForm.run.value==''){
++			ajax1(document.autoForm,'div01');
++			document.querySelector('form[name=autoForm]').remove();
++		};
++
++		if (document.autoForm1!=null && document.autoForm1!=undefined && document.autoForm1.run.value==''){
++			ajax1(document.autoForm1,'div01');
++			document.querySelector('form[name=autoForm1]').remove();
++		};
++
++		if (document.autoRunScript!=null && document.autoRunScript!=undefined && document.autoRunScript.run!=null && document.autoRunScript.run.value!=''){
++			let s = document.autoRunScript.run.value;
++			let script = document.createElement("script");
++
++			script.innerText = s;
++			document.body.appendChild(script);
++			document.querySelector('form[name=autoRunScript] > input[name=run]').remove();
++		};
++
++		if (document.autoRunScript1!=null && document.autoRunScript1!=undefined){
++			if (document.autoRunScript1.count!=null && document.autoRunScript1.count!=undefined && document.autoRunScript1.count.value!=''){
++				var count = parseInt(document.autoRunScript1.count.value);
++				for (var i=0;i<count;i++){
++					var run = eval("document.autoRunScript1.run"+i);
++					if (run!=null && run!=undefined && run.value!=''){
++						var s = run.value;
++
++						var script = document.createElement("script");
++						script.textContent = s;
++						document.querySelector("body").appendChild(script);
++
++						run.remove();
++					};
++				};
++			}else if (document.autoRunScript1.run!=null && document.autoRunScript1.run!=undefined && document.autoRunScript1.run.value!=''){
++				var s = document.autoRunScript1.run.value;
++				s = htmlEncode(s);
++				var script = document.createElement("script");
++				script.textContent = s;
++				document.querySelector("body").appendChild(script);
++
++				document.querySelector('form[name=autoRunScript1] > input[name=run]').remove();
++			};
++		};
++	} catch (error) {
++		console.error("Script Error:", error);
++	};
++</script>
++
++
++
++</html>
+--- /dev/null
++++ b/tests/fixtures/t163sb05_otc_115_03_mini.html
+@@ -0,0 +1,95 @@
++
++
++
++<html>
++<head>
++	<title>公開資訊觀測站</title>
++	
++	
++	<link href="css/css2.css" rel="stylesheet" type="text/css" Media="Screen"/> 
++	
++	<script type="text/javascript" src="js/mops2.js"></script>
++	
++	
++	
++</head>
++
++<body>
++
++
++<div id="div01" >
++<form action='/mops/web/ajax_t163sb05'  method='post' onsubmit='return false;' name='fm'>
++<table class='noBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='reportCont'><td style='text-align:center !important;'><h2>上櫃公司第三季資料</h2></td></tr><tr class='reportCont'><td style='text-align:left !important;'>註：依證券交易法第36條及證券期貨局相關函令規定，財務報告申報期限如下：</td></tr><tr class='reportCont'><td style='text-align:left !important;'>1.一般行業申報期限：第一季為5月15日，第二季為8月14日，第三季為11月14日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>2.金控業申報期限：第一季為5月30日，第二季為8月31日，第三季為11月29日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>3.銀行及票券業申報期限：第一季為5月15日，第二季為8月31日，第三季為11月14日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>4.保險業申報期限：第一季為5月15日，第二季為8月31日，第三季為11月14日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>5.證券業申報期限：第一季為5月15日，第二季為8月31日，第三季為11月14日，年度為3月31日。</td></tr><tr class='reportCont'><td style='text-align:left !important;'>6.第二上市（櫃）公司請循「投資專區/臺灣存託憑證專區/臺灣存託憑證發行人簡明財務報表彙總表」查詢。</td></tr><tr class='reportCont'><td style='text-align:right !important;'>單位：新台幣仟元</td></tr></table>
++<form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234453629.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><table class='hasBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='tblHead'><th align='center' width='100px'>公司<br>代號</th><th align='center' width='100px'>公司名稱</th><th align='center' nowrap width='100px'>流動資產</th><th align='center' nowrap width='100px'>非流動資產</th><th align='center' nowrap width='100px'>資產總計</th><th align='center' nowrap width='100px'>流動負債</th><th align='center' nowrap width='100px'>非流動負債</th><th align='center' nowrap width='100px'>負債總計</th><th align='center' nowrap width='100px'>股本</th><th align='center' nowrap width='100px'>權益－具證券性質之虛擬通貨</th><th align='center' nowrap width='100px'>資本公積</th><th align='center' nowrap width='100px'>保留盈餘（或累積虧損）</th><th align='center' nowrap width='100px'>其他權益</th><th align='center' nowrap width='100px'>庫藏股票</th><th align='center' nowrap width='100px'>歸屬於母公司業主權益合計</th><th align='center' nowrap width='100px'>共同控制下前手權益</th><th align='center' nowrap width='100px'>合併前非屬共同控制股權</th><th align='center' nowrap width='100px'>非控制權益</th><th align='center' nowrap width='100px'>權益總計</th><th align='center' nowrap width='100px'>待註銷股本股數（單位：股）</th><th align='center' nowrap width='100px'>預收股款（權益項下）之約當發行股數（單位：股）</th><th align='center' nowrap width='100px'>母公司暨子公司持有之母公司庫藏股股數（單位：股）</th><th class='tblHead' nowrap width='100px'>每股參考淨值</td></tr><tr class='odd'><td align='center' nowrap width='100px'>5864</td><td align='center' nowrap width='100px'>致和證</td><td align='right' nowrap width='100px'>17,515,351</td><td align='right' nowrap width='100px'>1,639,948</td><td align='right' nowrap width='100px'>19,155,299</td><td align='right' nowrap width='100px'>6,144,073</td><td align='right' nowrap width='100px'>36,398</td><td align='right' nowrap width='100px'>6,180,471</td><td align='right' nowrap width='100px'>5,044,901</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>517,177</td><td align='right' nowrap width='100px'>7,285,488</td><td align='right' nowrap width='100px'>127,262</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>12,974,828</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 25.72</td></tr><tr class='odd'><td align='center' nowrap width='100px'>6015</td><td align='center' nowrap width='100px'>宏遠證</td><td align='right' nowrap width='100px'>19,059,912</td><td align='right' nowrap width='100px'>1,780,060</td><td align='right' nowrap width='100px'>20,839,972</td><td align='right' nowrap width='100px'>13,402,170</td><td align='right' nowrap width='100px'>89,170</td><td align='right' nowrap width='100px'>13,491,340</td><td align='right' nowrap width='100px'>4,168,761</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>410,140</td><td align='right' nowrap width='100px'>2,522,796</td><td align='right' nowrap width='100px'>246,935</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>7,348,632</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>7,348,632</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>13,261,974</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 17.63</td></tr></table><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_234453629.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><br><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_23445412.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><table class='hasBorder' style='margin-right:0px !important; margin-left:0px !important;'><tr class='tblHead'><th align='center' width='100px'>公司<br>代號</th><th align='center' width='100px'>公司名稱</th><th align='center' nowrap width='100px'>流動資產</th><th align='center' nowrap width='100px'>非流動資產</th><th align='center' nowrap width='100px'>資產總計</th><th align='center' nowrap width='100px'>流動負債</th><th align='center' nowrap width='100px'>非流動負債</th><th align='center' nowrap width='100px'>負債總計</th><th align='center' nowrap width='100px'>股本</th><th align='center' nowrap width='100px'>權益─具證券性質之虛擬通貨</th><th align='center' nowrap width='100px'>資本公積</th><th align='center' nowrap width='100px'>保留盈餘</th><th align='center' nowrap width='100px'>其他權益</th><th align='center' nowrap width='100px'>庫藏股票</th><th align='center' nowrap width='100px'>歸屬於母公司業主之權益合計</th><th align='center' nowrap width='100px'>共同控制下前手權益</th><th align='center' nowrap width='100px'>合併前非屬共同控制股權</th><th align='center' nowrap width='100px'>非控制權益</th><th align='center' nowrap width='100px'>權益總計</th><th align='center' nowrap width='100px'>待註銷股本股數（單位：股）</th><th align='center' nowrap width='100px'>預收股款（權益項下）之約當發行股數（單位：股）</th><th align='center' nowrap width='100px'>母公司暨子公司所持有之母公司庫藏股股數（單位：股）</th><th class='tblHead' nowrap width='100px'>每股參考淨值</td></tr><tr class='even'><td align='center' nowrap width='100px'>1240</td><td align='center' nowrap width='100px'>茂生農經</td><td align='right' nowrap width='100px'>1,208,438</td><td align='right' nowrap width='100px'>1,033,075</td><td align='right' nowrap width='100px'>2,241,513</td><td align='right' nowrap width='100px'>611,160</td><td align='right' nowrap width='100px'>52,541</td><td align='right' nowrap width='100px'>663,701</td><td align='right' nowrap width='100px'>464,440</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>144,279</td><td align='right' nowrap width='100px'>837,852</td><td align='right' nowrap width='100px'>69,626</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>1,516,197</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>61,615</td><td align='right' nowrap width='100px'>1,577,812</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 32.65</td></tr><tr class='even'><td align='center' nowrap width='100px'>1591</td><td align='center' nowrap width='100px'>駿吉-KY</td><td align='right' nowrap width='100px'>434,998</td><td align='right' nowrap width='100px'>340,741</td><td align='right' nowrap width='100px'>775,739</td><td align='right' nowrap width='100px'>301,213</td><td align='right' nowrap width='100px'>21,699</td><td align='right' nowrap width='100px'>322,912</td><td align='right' nowrap width='100px'>380,480</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>149,153</td><td align='right' nowrap width='100px'>42,080</td><td align='right' nowrap width='100px'>-118,886</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>452,827</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>452,827</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 11.90</td></tr><tr class='even'><td align='center' nowrap width='100px'>1777</td><td align='center' nowrap width='100px'>生泰</td><td align='right' nowrap width='100px'>1,581,776</td><td align='right' nowrap width='100px'>1,359,113</td><td align='right' nowrap width='100px'>2,940,889</td><td align='right' nowrap width='100px'>186,022</td><td align='right' nowrap width='100px'>63,339</td><td align='right' nowrap width='100px'>249,361</td><td align='right' nowrap width='100px'>445,917</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>983,776</td><td align='right' nowrap width='100px'>1,261,835</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>2,691,528</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 60.36</td></tr><tr class='even'><td align='center' nowrap width='100px'>5347</td><td align='center' nowrap width='100px'>世界</td><td align='right' nowrap width='100px'>65,443,224</td><td align='right' nowrap width='100px'>157,233,954</td><td align='right' nowrap width='100px'>222,677,178</td><td align='right' nowrap width='100px'>39,447,953</td><td align='right' nowrap width='100px'>84,075,788</td><td align='right' nowrap width='100px'>123,523,741</td><td align='right' nowrap width='100px'>18,785,022</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>21,659,745</td><td align='right' nowrap width='100px'>27,151,850</td><td align='right' nowrap width='100px'>-1,046,216</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>66,550,401</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>32,603,036</td><td align='right' nowrap width='100px'>99,153,437</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                 35.43</td></tr><tr class='even'><td align='center' nowrap width='100px'>6488</td><td align='center' nowrap width='100px'>環球晶</td><td align='right' nowrap width='100px'>162,070,902</td><td align='right' nowrap width='100px'>139,565,084</td><td align='right' nowrap width='100px'>301,635,986</td><td align='right' nowrap width='100px'>99,157,572</td><td align='right' nowrap width='100px'>56,610,173</td><td align='right' nowrap width='100px'>155,767,745</td><td align='right' nowrap width='100px'>5,281,137</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>89,329,507</td><td align='right' nowrap width='100px'>56,590,110</td><td align='right' nowrap width='100px'>-5,332,513</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>145,868,241</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>--</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>145,868,241</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>0</td><td align='right' nowrap width='100px'>                276.21</td></tr></table><form action='/mops/web/ajax_t51sb12' method='post' onsubmit='return false;' name='fm2'><input type='hidden' name='firstin' value='true'><input type='hidden' name='step' value='10'><input type='hidden' name='filename' value='t163sb04_20261127_23445412.csv'><button style='background-color:transparent;border:0;cursor:pointer;text-decoration:underline;' onclick="action='/server-java/t105sb02';submit();"><img src='images/bu_03.gif' hspace='3' ></button></form><br>
++</form>
++
++</div>
++
++
++</body>
++
++
++
++<script>
++	try {
++		if(!document.querySelector('#table01')){
++			var table01 = document.createElement("div");
++			table01.id = "table01"; 
++			document.body.appendChild(table01);
++			if(document.querySelector("#div01")){
++				table01.appendChild(div01);
++			};
++		};
++
++		if (document.autoForm!=null && document.autoForm!=undefined && document.autoForm.run.value==''){
++			ajax1(document.autoForm,'div01');
++			document.querySelector('form[name=autoForm]').remove();
++		};
++
++		if (document.autoForm1!=null && document.autoForm1!=undefined && document.autoForm1.run.value==''){
++			ajax1(document.autoForm1,'div01');
++			document.querySelector('form[name=autoForm1]').remove();
++		};
++
++		if (document.autoRunScript!=null && document.autoRunScript!=undefined && document.autoRunScript.run!=null && document.autoRunScript.run.value!=''){
++			let s = document.autoRunScript.run.value;
++			let script = document.createElement("script");
++
++			script.innerText = s;
++			document.body.appendChild(script);
++			document.querySelector('form[name=autoRunScript] > input[name=run]').remove();
++		};
++
++		if (document.autoRunScript1!=null && document.autoRunScript1!=undefined){
++			if (document.autoRunScript1.count!=null && document.autoRunScript1.count!=undefined && document.autoRunScript1.count.value!=''){
++				var count = parseInt(document.autoRunScript1.count.value);
++				for (var i=0;i<count;i++){
++					var run = eval("document.autoRunScript1.run"+i);
++					if (run!=null && run!=undefined && run.value!=''){
++						var s = run.value;
++
++						var script = document.createElement("script");
++						script.textContent = s;
++						document.querySelector("body").appendChild(script);
++
++						run.remove();
++					};
++				};
++			}else if (document.autoRunScript1.run!=null && document.autoRunScript1.run!=undefined && document.autoRunScript1.run.value!=''){
++				var s = document.autoRunScript1.run.value;
++				s = htmlEncode(s);
++				var script = document.createElement("script");
++				script.textContent = s;
++				document.querySelector("body").appendChild(script);
++
++				document.querySelector('form[name=autoRunScript1] > input[name=run]').remove();
++			};
++		};
++	} catch (error) {
++		console.error("Script Error:", error);
++	};
++</script>
++
++
++
++</html>

@@ -14,11 +14,13 @@ from ..health import load_snapshot, medians, missing_keys
 from ..tradingcal import HOLIDAYS, is_trading_day, load_closed, trading_days  # noqa: F401（沿用的對外名稱）
 from .daily import (ALL_DATASETS, DATASET_KEYS, DAY_KEYS, HOLDINGS_KEYS, INDEX, PARSE_ERRORS, PRICES, TPEX_INDEX,  # noqa: F401
                     collect_for_date, collect_tpex_index)
+from .balance import collect_balance
 from .financials import collect_financials
 from .revenue import collect_monthly_revenue, revenue_month_for
 
 FINANCIALS = "financials"       # history --only financials：季報（第 10 輪），不在預設資料集
 SECONDS_PER_QUARTER = 4.5       # mopsov 節流 3 秒＋約 1.6 MB 回應
+BALANCE = "balance"             # 第 52 輪 F52-3：history --only balance：資產負債表，不在預設資料集
 
 # 依網站節流間隔 + 回應時間的實測值（秒，每個細項）
 SECONDS_PER_KEY = {"prices.TWSE": 4, "prices.TPEx": 4, "pe.TWSE": 4, "pe.TPEx": 3.2, "insti.TWSE": 4, "insti.TPEx": 3.2,
@@ -71,7 +73,7 @@ def run_financials(start: date, end: date, force=False) -> tuple:
     """季報補抓：每季每市場 1 個請求；已有的 (季, 市場) 略過（force 才重抓）；first_seen 一律 NULL。回傳 (完成, 錯誤說明)。"""
     have = set() if force else load_fin_have()
     todo = [(y, q, m) for y, q in fin_quarters(start, end, tw_now().date()) for m in ("TWSE", "TPEx") if (y, q, m) not in have]
-    print(f"\n📑 季報：待抓 {len(todo)} 次（季別 × 市場）；⏱️  預估約 {len(todo) * SECONDS_PER_QUARTER / 60:.1f} 分鐘")
+    print(f"\n📑 季報：待抓 {len(todo)} 次（季別 × 市場，每次另抓資產負債表）；⏱️  預估約 {len(todo) * 2 * SECONDS_PER_QUARTER / 60:.1f} 分鐘")   # 第 52 輪 D219
     for y, q, m in todo:
         try:
             collect_financials(y, q, None, (m,))
@@ -80,6 +82,39 @@ def run_financials(start: date, end: date, force=False) -> tuple:
         except PARSE_ERRORS as e:
             return False, f"在 {y}Q{q} {m} 停止：官方欄位不符（{e}），需要修改程式"
     return True, ""
+
+
+def load_balance_have():
+    """第 52 輪：資料庫已有資產負債表的 (年, 季, 市場)；資料表不存在 → None。"""
+    conn = db.connect()
+    try:
+        cur = conn.cursor()
+        if cur.execute("SELECT OBJECT_ID('quarterly_balance')").fetchone()[0] is None:
+            return None
+        return {tuple(r) for r in cur.execute(
+            "SELECT DISTINCT b.fin_year, b.fin_quarter, s.market_type FROM quarterly_balance b "
+            "JOIN stocks s ON s.stock_id = b.stock_id").fetchall()}
+    finally:
+        conn.close()
+
+
+def run_balance(start: date, end: date, force=False) -> tuple:
+    """第 52 輪 F52-3：資產負債表補抓（同 run_financials）；資料表不存在 → 不發請求。回傳 (完成, 錯誤說明, 被限流時該季第一天)。"""
+    have = load_balance_have()
+    if have is None:
+        print("❌ 尚未建立 quarterly_balance，請先執行 python3 -m twstock setup-db")
+        return False, "", None
+    have = set() if force else have
+    todo = [(y, q, m) for y, q in fin_quarters(start, end, tw_now().date()) for m in ("TWSE", "TPEx") if (y, q, m) not in have]
+    print(f"\n📑 資產負債表：待抓 {len(todo)} 次（季別 × 市場）；⏱️  預估約 {len(todo) * SECONDS_PER_QUARTER / 60:.1f} 分鐘")
+    for y, q, m in todo:
+        try:
+            collect_balance(y, q, None, (m,))
+        except FetchError as e:
+            return False, f"在 {y}Q{q} {m} 停止：疑似被限流封鎖（{e}）", date(y, q * 3 - 2, 1)
+        except PARSE_ERRORS as e:
+            return False, f"在 {y}Q{q} {m} 停止：官方欄位不符（{e}），需要修改程式", None
+    return True, "", None
 
 
 def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
@@ -91,6 +126,18 @@ def run_history(start: date, end: date, datasets=ALL_DATASETS, force=False,
             print(f"❌ {why}\n   建議等 30 分鐘以上，再用同樣的指令重跑；已寫入的季別會自動跳過。")
             return False
         datasets = tuple(ds for ds in datasets if ds != FINANCIALS)
+        if not datasets:
+            print("🎉 補抓完成！")
+            return True
+    if BALANCE in datasets:         # 第 52 輪 F52-3：資產負債表（同季報；和 financials 一起下時排在季報之後）
+        ok, why, at = run_balance(start, end, force)
+        if why:
+            print(f"❌ {why}" + ("\n   建議等 30 分鐘以上，再用同樣的指令重跑；已寫入的季別會自動跳過。" if at else ""))
+        if at and force:
+            print(f"   這次有 --force：重跑會從頭重抓，請改用 --start {at} 接續。")
+        if not ok:
+            return False
+        datasets = tuple(ds for ds in datasets if ds != BALANCE)
         if not datasets:
             print("🎉 補抓完成！")
             return True

@@ -126,4 +126,6 @@ def collect_financials(year: int, quarter: int, first_seen=None, markets=("TWSE"
         print(f"    📑 {market} {year}Q{quarter}：回應 {len(got)} 家，新增或更正 {changed} 家"
               + (f"，略過 {len(skipped)} 家（stocks 沒有：{'、'.join(skipped[:5])}{'…' if len(skipped) > 5 else ''}）" if skipped else ""))
         total += len(got)
+    from .balance import collect_balance_safe          # 第 52 輪 F52-1（函式內匯入：balance 匯入本模組的 _cells）
+    collect_balance_safe(year, quarter, first_seen, markets)   # 兩個市場的損益表都寫完才抓資產負債表；失敗只 ⚠️，回傳值不變
     return total

@@ -1205,6 +1205,7 @@ const SCR_COLS = {
   eb: ['去年同季EPS', x => x.eb, (v, x) => fmt(v, 2) + finTag(x)],   // 第 22 輪 F22-11：「單季 EPS 轉盈」的對照欄（年增無法計算）
   e4: ['近4季EPS', x => x.e4, v => fmt(v, 2)], gm: ['毛利率', x => x.gm, (v, x) => fmt(v, 1) + '%' + finTag(x)],
   gmy: ['毛利率年增', x => x.gmy, (v, x) => sgn(v, 1) + '點' + finTag(x)], eh: ['EPS新高(季)', x => x.eh, int0],
+  roe: ['ROE', x => x.roe, (v, x) => fmt(v, 1) + '%' + finTag(x)], dr: ['負債比', x => x.dr, (v, x) => fmt(v, 1) + '%' + finTag(x)],   // 第 52 輪 F52-5
   // 第 35 輪 F35-3：最近除息（排序 = 除息至今天數，近的在前）；第二行為填息狀態
   dv: ['最近除息', x => x.dva, (v, x) => md(x.dvd) + `<span class="sub2">${isNum(x.dvn) ? x.dvn + ' 天填息' : x.dvx ? '中斷（' + x.dvx + '）' : '未填息'}</span>`, 1],
   dvg: ['距填息價', x => x.dvg, spct, 1],
@@ -1232,7 +1233,7 @@ function screenTable(list, cols, o = {}) {
     list.map(x => `<tr data-code="${x.code}"><td class="nm">${o.rm ? wCtl(x.code) : ''}<b>${esc(x.n)}</b>${alertBadge(x)}${o.cap && x.cap === 1 ? CAP_TAG : ''}<span>${x.code} ${esc(x.i)}</span></td>
       <td class="num ${cls(x.p)}${x.lm ? ' lm' : ''}">${pfmt(x.c)}</td>${pctCell(x)}${o.rm ? '' : `<td class="num">${fmt(x.tv, 1)}億</td>`}` +
       cols.map(k => { const [, get, f] = SCR_COLS[k], v = get(x);
-        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh', 'lb', 'lp', 'mc', 'to'].includes(k) || k === 'dv' ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
+        return `<td class="num ${['s', 'fs', 'ts', 'nh', 'nl', 'rh', 'r3', 'vr', 'a20', 'sr', 'mu', 'pe', 'pb', 'hd', 'pbp', 'gm', 'eh', 'roe', 'dr', 'lb', 'lp', 'mc', 'to'].includes(k) || k === 'dv' ? '' : cls(v)}">${v == null ? '--' : f(v, x)}</td>`; }).join('') + '</tr>').join('') +
     '</tbody></table></div>';
 }
 
@@ -1298,6 +1299,9 @@ const SCREEN_CONDS = [
   { id: 'eh', g: '基本面', label: '單季 EPS 創 {v} 季新高', opts: [4, 8], def: 4, f: scrGe('eh'), cols: ['eq', 'eh'], title: '最新一季單季 EPS 高於之前連續 N 季' },
   { id: 'ed', g: '基本面', label: '單季 EPS 比去年同季下滑', sw: true, f: x => isNum(x.ey) && x.ey < 0, cols: ['eq', 'ey'] },
   { id: 'et', g: '基本面', label: '單季 EPS 轉盈', sw: true, f: epsTurn, cols: ['eq', 'eb'], title: '最新一季單季 EPS > 0，去年同季 ≤ 0（年增無法計算）' },
+  // 第 52 輪 F52-5：資產負債表（最新一季；null = 金融等業別、資料不足 → 不符合）
+  { id: 'roe', g: '基本面', label: 'ROE ≥ {v}%', opts: [10, 15, 20], def: 15, f: scrGe('roe'), cols: ['roe'], title: '最新一季的近 4 季 ROE（近 4 季淨利 ÷ 一年前同季底與本季底權益的平均）；只計一般業，金融、保險等業別不列入' },
+  { id: 'dr', g: '基本面', label: '負債比 ≤ {v}%', opts: [30, 50, 70], def: 50, f: (x, v) => isNum(x.dr) && x.dr <= v, cols: ['dr'], title: '最新一季季底的負債總計 ÷ 資產總計；只計一般業，金融、保險等業別不列入' },
   { id: 'pe', g: '基本面', label: '0 < 本益比 ≤ {v}', opts: [10, 15, 20], def: 15, val: true, f: (x, v, st) => isNum(x.pe) && x.pe > 0 && x.pe <= v && valGuard(x, st), cols: ['pe'] },
   { id: 'dy', g: '基本面', label: '殖利率 ≥ {v}%', opts: [3, 4, 5, 6], def: 5, val: true, f: (x, v, st) => isNum(x.dy) && x.dy >= v && valGuard(x, st), cols: ['dy', 'dv', 'dvg'] },
   // 第 35 輪 F35-2：股利（近 365 天最近一次除息或除權息；null = 沒有 → 不符合）
@@ -1414,7 +1418,7 @@ async function renderScreen(q) {
       <div class="sec-h" id="scrRes" style="margin:8px 0"><h2>符合 ${fmt(hits.length)} 檔</h2>${hits.length > 100 ? `<span class="muted small">依「${oName}」排序顯示前 100 檔</span>` : ''}</div>
       <div class="card">${hits.length ? screenTable(hits.slice(0, 100), cols, { sort: o, cap: conds.some(c => c.val) })
         : '<div class="empty">沒有同時符合所有條件的股票。參考各條件的「單獨」檔數，放寬最少的那一個。</div>'}</div>
-      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低、KD、RSI 都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。季報條件以各股最新一季判斷：單季 EPS 由累計相減，去年同季虧損時不計算年增，金融業沒有毛利率；財報公布期間各股季別不同（欄位會標出和欄名不同的季別）。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。${DV_NOTE}</div></section>`;
+      <div class="muted small" style="margin-top:6px">篩選結果只是條件的機械比對，不是投資建議。報酬、乖離、均線、新高新低、KD、RSI 都用還原價格（除權息、減資、面額變更不會造成跳動）；量比 = 今日成交額 ÷ 前 20 個交易日平均（無成交日以 0 計），不受面額變更影響。法人金額為張數 × 收盤估算，不含 ETF；投信買超會受主動 ETF 申購影響（申購的資金會被動買進股票，個股頁「主動 ETF 持有」卡列出已收主動 ETF 占投信買超的張數）。本益比、殖利率、淨值比為官方值，90 天內有除權、減資或面額變更的股票官方值可能尚未調整，預設排除。營收條件以各股最新公布的月份判斷：每月 1～10 日是公布期間，已公布的公司當天就換成新月份，各股月份不同（營收欄會標出和欄名不同的月份）。季報條件以各股最新一季判斷：單季 EPS 由累計相減，去年同季虧損時不計算年增，金融業沒有毛利率；財報公布期間各股季別不同（欄位會標出和欄名不同的季別）。ROE、負債比只計一般業，用和季報條件同一季的季底資產負債表：ROE = 近 4 季歸屬母公司淨利 ÷ 一年前同季底與本季底權益的平均，負債比 = 負債總計 ÷ 資產總計；新上市沒有一年前同季權益的股票不計算 ROE。融資融券為張；融資增加率、券資比只計入融資 1,000 張以上的股票。${DV_NOTE}</div></section>`;
     keyCol($(`#view th.sort[data-k="${o}"]`)?.cellIndex);
     const changed = () => { delete st.ps; save(); draw(); };
     onModeSeg();
