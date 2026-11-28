@@ -27,6 +27,7 @@ from .analysis.forecast import build_forecast, load_oi
 from .config import SITE_DATA_DIR, tw_now
 from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, load_state, prev_quarter, share_exists
 from .tradingcal import is_trading_day, load_closed, trading_days
+from .health import news_gaps, news_state         # 第 53 輪 F53-4
 
 REPLAY = 20                    # 泡泡圖回放天數
 FUTURES_DAYS = 500             # 首頁台指期日 K 匯出天數
@@ -1665,6 +1666,51 @@ def bs_note(exists: bool, bs: dict) -> str:
             f"一般業 ROE {sum(b['roe'] is not None for b in ci):,}／{len(ci):,} 檔、負債比 {sum(b['dr'] is not None for b in ci):,}／{len(ci):,} 檔")
 
 
+def _load_news(cur, since):
+    """第 53 輪 F53-4：since 之後的重大訊息（新到舊；同一秒依代號、寫入順序）。只有 SELECT；呼叫端先確認表存在。"""
+    return cur.execute("SELECT market, code, name, speak_date, speak_time, subject FROM material_news WHERE speak_date >= ? "
+                       "ORDER BY speak_date DESC, speak_time DESC, code, id", since).fetchall()
+
+
+def mn_line(s: str) -> str:
+    """第 53 輪 QA53-01：去掉官方主旨的排版換行（\\r\\n）；英數字之間留一個空白，其他直接接上。資料庫照存原文。"""
+    return re.sub(r"\s*[\r\n]+\s*", "", re.sub(r"(?<=[A-Za-z0-9])\s*[\r\n]+\s*(?=[A-Za-z0-9])", " ", s))
+
+
+def mn_export(rows, mks: dict, latest_date: date, closed) -> tuple:
+    """
+    第 53 輪 F53-4：重大訊息 → (各市場 {"f", "w", "x"}, {代號: [[發言日, "HH:MM", 主旨]]}, latest.mn 或 None)。
+    mks = news_state 的第二項；w = 資料日 − 29 天；x = w 起漏收的交易日。不輸出條款。latest.mn 只放最新一個「交易日」發言日的列（D236）。
+    """
+    w = latest_date - timedelta(days=29)
+    base = {mk: {"f": str(f), "w": str(w), "x": [str(d) for d in news_gaps(c, f, l, w, closed)]} for mk, (f, l, c, _) in mks.items()}
+    by_code = defaultdict(list)
+    for mk, code, name, d, t, s in rows:
+        if d >= w:
+            by_code[code].append([str(d), f"{t:%H:%M}", mn_line(s)])
+    days = [r[3] for r in rows if r[3] >= w and is_trading_day(r[3], closed)]
+    if not days:
+        return base, dict(by_code), None
+    d = max(days)
+    top = [r for r in rows if r[3] == d]
+    return base, dict(by_code), {"d": str(d), "f": {mk: b["f"] for mk, b in base.items()}, "x": {mk: b["x"] for mk, b in base.items()},
+                                 "n": {mk: sum(r[0] == mk for r in top) for mk in base},
+                                 "r": [[code, mk, f"{t:%H:%M}", mn_line(s), name] for mk, code, name, _, t, s in top]}
+
+
+def news_note(news, base: dict, mn) -> str:
+    """第 53 輪 F53-4：匯出 📌 一行。news = news_state 的結果。"""
+    ok, mks = news
+    if not ok:
+        return "  📌 重大訊息：尚未建立 material_news（請執行 setup-db），mn 不輸出"
+    if not mks:
+        return "  📌 重大訊息：material_news 還沒有資料，mn 不輸出"
+    one = lambda mk, label: f"{label} {mks[mk][0]} 起 {mks[mk][3]:,} 筆" if mk in mks else f"{label} 尚無資料"
+    gap = lambda mk, label: f"{label} {len(base[mk]['x'])} 天" if mk in base else f"{label} --"
+    return (f"  📌 重大訊息：{one('TWSE', '上市')}、{one('TPEx', '上櫃')}；最新發言日 {mn['d'] if mn else '--'}；"
+            f"近 30 天漏收 {gap('TWSE', '上市')}、{gap('TPEx', '上櫃')}")
+
+
 def _load_balance(cur):
     """{代號: {(年, 季): (資產, 負債, 母公司權益, 權益總計, 每股淨值)}}；資料表不存在 → None。"""
     if cur.execute("SELECT OBJECT_ID('quarterly_balance')").fetchone()[0] is None:
@@ -1894,6 +1940,8 @@ def export_all() -> float:
     epx, emg, esb, esd = _load_etf_hist(cur)                   # 第 15 輪 F15-2：ETF 個股頁
     eev = _load_etf_events(cur)                                # 第 36 輪 F36-1：ETF 官方除息
     sh_stock, sh_etf = share_export(_load_share(cur))          # 第 43 輪 F43-2：集保股權分散（表不存在時兩者皆空）
+    news = news_state(cur, latest_date - timedelta(days=45))   # 第 53 輪 F53-4：重大訊息（表不存在時 (False, {})）
+    mn_base, mn_rows, mn_latest = mn_export(_load_news(cur, latest_date - timedelta(days=29)) if news[1] else [], news[1], latest_date, closed)
     conn.close()
     mlast = {m: ds[-1] for m, ds in mdates.items()}
     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
@@ -2003,6 +2051,7 @@ def export_all() -> float:
                                  idx_close[info["market"]], w52_start)} if d_[-1] == latest_date and any(x is not None for x in c) else {}),
             "dv": dividends(d_, c, ev, events.get(code, [])),      # 第 24 輪 F24-6：股利與填息（沒有紀錄是 []）
             **({"nx": nx_stock[code]} if code in nx_stock else {}),     # 第 40 輪 F40-2：下一次除權除息預告
+            **({"mn": {**mn_base[mk_], "r": mn_rows.get(code, [])}} if mk_ in mn_base else {}),   # 第 53 輪 F53-4：該市場有資料就輸出（0 則是 []）
         })
         # 市場寬度：還原收盤（無成交日不列入）、成交額
         b_series[info["market"]].append({d_[i]: float(c[i]) * af[i] for i in range(len(d_)) if d_[i] >= b_from and c[i] is not None})
@@ -2187,6 +2236,8 @@ def export_all() -> float:
         latest["sx"] = sx                                       # 第 51 輪 F51-3：證交所上市類股指數（沒有資料不輸出）
     if latest_date in ixr_close:
         latest["ixr"] = {"d": str(latest_date), "pf": ixr_perf(p_days, ixr_close, w52_start)}   # 第 51 輪 F51-5：近期表現的加權報酬指數同期
+    if mn_latest:
+        latest["mn"] = mn_latest                                 # 第 53 輪 F53-4：今日卡的重大訊息（最新一個交易日發言日）
     # screen.json 在 latest.json 之前寫：中途失敗時前端比對 d／fd 會顯示不同步
     S = screen_build(screen, {"d": str(latest_date), "fd": str(dates[-1]), "md": {m: str(d) for m, d in mlast.items()},
                               "sd": {m: str(d) for m, d in slast.items()}})
@@ -2215,6 +2266,7 @@ def export_all() -> float:
         print(f"⚠️  上市官方漲跌 0、收盤 ≠ 前收，但找不到除權息／減資事件 {len(miss_all)} 筆（維持「不比價」）：" +
               "、".join(f"{c} {d}" for c, d in miss_all[:10]))
     print(bs_note(bal is not None, bs_all))                     # 第 52 輪 F52-4（放在 ⚠️ 之後：test_iter51 執行「ETF 個股」到 if bad_all 這一段）
+    print(news_note(news, mn_base, mn_latest))                  # 第 53 輪 F53-4
     print(f"✅ 匯出完成：資料日 {latest_date}，個股 {len(prices)} 檔，"
           f"類股 {len(latest['groups']['industry'])}、產業鏈 {len(latest['groups']['chain'])}、"
           f"概念 {len(latest['groups']['concept'])}，台指期 {len(futures['d']) if futures else 0} 天，"

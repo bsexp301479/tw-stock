@@ -1,0 +1,1344 @@
+--- a/README.md
++++ b/README.md
+@@ -95,6 +95,7 @@
+ python3 tests/test_iter50.py                     # 第 50 輪測試（收在漲停／跌停標記、選股條件、主動 ETF 折溢價）
+ python3 tests/test_iter51.py                     # 第 51 輪測試（證交所類股指數、加權報酬指數、比較頁含息點線、近期表現含息同期）
+ python3 tests/test_iter52.py                     # 第 52 輪測試（資產負債表彙總、ROE、負債比、每股淨值、選股條件）
++python3 tests/test_iter53.py                     # 第 53 輪測試（重大訊息收集、check、匯出 mn、個股卡與今日清單）
+ ```
+ 
+ 也可以直接雙擊：Mac 的 `scripts/mac/preview.command`、`collect.command`，Windows 的 `scripts\windows\preview.bat`、`collect.bat`。`collect.command`、`collect.bat` 補齊最近缺的資料（等同 `collect --catch-up`）；帶參數時照傳。
+@@ -165,6 +166,7 @@
+ - 第 50 輪收在漲停／跌停與主動 ETF 折溢價：匯出時依 R73 推算每檔股票今天是否收在漲停價、跌停價（本站推算：參考價 = 收盤 − 畫面上的漲跌，漲停價 = 參考價 × 1.1 依升降單位捨去、跌停價 = 參考價 × 0.9 依升降單位進位，升降單位看漲跌停價本身所在級距，用 Decimal 計算），`latest.json` 的 `stocks` 多 `lm`（1 = 收在漲停價、-1 = 收在跌停價，其他沒有這個鍵）；新上市前 5 個交易日（無漲跌幅限制）、今日無成交、漲跌空白都不標，只對股票、ETF 不標。所有股票表格的漲跌欄在百分比下面多一行小字「漲停」「跌停」，個股頁頭寫「收在漲停價」「收在跌停價」，選股價量組多「今日收在 {漲停價／跌停價}」（網址 `lm=1`、`lm=-1`），漲幅、跌幅排行說明多一句；匯出訊息多一行本站推算家數和官方家數，方便每晚對照。8 檔主動 ETF 持股頁「每單位淨值」卡多一行「MM/DD 收盤 X.XX，折價／溢價 Y.YY%」，`etfs/{代號}.json` 的 `sum` 多 `pc`（持股日收盤）、`pm`（收盤 ÷ 每單位淨值 − 1，%），持股日當天沒有收盤就不輸出。重大訊息資料集（D184）只做格式實測，記在 `docs/iterations/50/03-design.md`，沒有建表或收集。
+ - 第 51 輪證交所類股指數與加權報酬指數：每晚已在抓的 MI_INDEX（上市行情）回應裡有「價格指數(臺灣證券交易所)」「報酬指數(臺灣證券交易所)」兩張表，新表 `twse_index`（`setup-db` 建立；日期、`kind` P／R、官方列順序 `seq`、官方名稱、收盤、漲跌）存兩張表全部列，0 個新請求。寫入附掛在加權指數那一段（`prices.TWSE` 或 `index.TAIEX`，同一次收集只寫一次），找不到表、欄位不符、資料表不存在或寫入失敗都只印一行 ⚠️，個股行情與加權指數照常（R74、R80）；新表不在 `check` 裡（R87）。匯出：`site/data/ixr.json` = `{"d": 交易日（同 ix.json）, "TAIEXR": 發行量加權股價報酬指數收盤（沒有值為 null）}`，`latest.json` 多 `sx`（類股指數：`d`、5／20 日基準日 `b5`／`b20`、`r` = [名稱, 收盤, 漲跌, 漲跌%, 5 日%, 20 日%]，官方列順序；名稱以「類指數」結尾、排除電子工業等 5 個合併／綜合類別、能對到本站上市產業別的才列入，對不到時匯出訊息列出兩邊名稱）與 `ixr`（`d`、`pf` = 近期表現同一組基準日的加權報酬指數 %）。畫面：今日頁「法人資金」錢流卡之後多「類股指數」表（證交所，上市；點漲跌、5 日、20 日換排序，先顯示 10 列）；比較頁多一條點線「加權報酬指數（含息）」與表格一列，灰色虛線「加權指數（不含息）」不變；上市股票與所有 ETF 的近期表現表下多一行「加權報酬指數（含息）同期」，原表格與說明不變；上櫃股票不加。回補：`python3 -m twstock history --start 2025-10-30 --only index --force`（每天 1 次請求，會用官方值覆寫既有加權指數；被限流停下時改用 `--start 停下那天` 接續，不要從頭重跑，D202 起畫面會提示），回補前先 `backup`。缺值不拿前後日子補（R84）。
+ - 第 52 輪資產負債表：新表 `quarterly_balance`（`setup-db` 建立；資產總計、負債總計、歸屬母公司業主權益、權益總計（千元，季底時點）、每股參考淨值（元）；官方「--」存 NULL，不存業別），來源是公開資訊觀測站舊版「資產負債表彙總」`ajax_t163sb05`（參數同損益表）。收集附掛在季報（`collect_financials`）：兩個市場的損益表都寫完才抓兩個市場的資產負債表（季報收集期間每晚多 2 個請求），請求、解析或寫入失敗都只印一行 ⚠️，損益表照常；`check` 不變。`history --only financials` 也會一起抓（每季次 2 個請求）。回補：`python3 -m twstock history --start 2024-01-01 --only balance`（每個季別 × 市場 1 個請求，已有的略過；被限流停下時用同一個指令重跑），回補前先 `backup`；晚交或缺漏的公司用 `--start`／`--end` 縮到那一季再加 `--force`（例 `history --start 2026-07-01 --end 2026-09-30 --only balance --force`）。匯出：個股 JSON 多 `bs`（和 `fin` 同一季：`q`、一般業另有 `roe`／`roep`（近 4 季 ROE 與一年前）、算不出時的原因 `rn`（`c` 本季沒有權益、`a` 沒有一年前同季權益、`i` 近 4 季淨利不足、`e` 平均權益 ≤ 0）、`dr`／`drp`（負債比與去年同季），所有業別有 `bv`／`bvp`（每股參考淨值與去年同季））；`screen.json` 多 `roe`、`dr`（只有一般業）。ROE = 近 4 季歸屬母公司淨利 ÷（一年前同季底 + 本季底權益）÷ 2，母公司權益是「--」時用權益總計；負債比 = 負債總計 ÷ 資產總計。畫面：個股「基本面」季報卡原 6 格之下多一排「ROE（近 4 季）」「負債比」「每股淨值」，金融、保險等業別的 ROE、負債比寫「不適用」；選股「基本面」多 `ROE ≥ 15%`、`負債比 ≤ 50%`（門檻可換，只計一般業）。
++- 第 53 輪重大訊息：新表 `material_news`（`setup-db` 建立；市場、代號、官方名稱、發言日、發言時間、主旨原文、符合條款、事實發生日、出表日期、首次看到日；**不存說明全文**，全部保留不刪），來源是證交所 OpenAPI `t187ap04_L`、櫃買 OpenAPI `mopsfin_t187ap04_O`（官方每次只提供一天的公告，不能回補）。`collect --catch-up` 的計畫鍵 `news`：表存在才排，兩個市場各自依最近一次成功的出表日期判斷（早於今天才抓，休市日、週末也抓，每次每市場最多 1 個請求），請求、解析或寫入失敗只印一行 ⚠️（不算異常、不通知），有新增的公告才算有新資料。`check` 多一行「重大訊息最後成功」，近 30 天漏收的交易日與太久沒有新發言日只標 ⚠️。匯出：個股 JSON 多 `mn`（收錄起日 `f`、近 30 天起日 `w`、漏收日 `x`、近 30 天的 `[發言日, 時:分, 主旨]`；該市場有資料就輸出，0 則是 `[]`），`latest.mn` 只放最新一個交易日發言日的全部主旨（休市日的發言只在個股卡）。畫面：個股「走勢」分頁最下方「重大訊息」卡（先列 10 則，可顯示全部），今日「總覽」最下方可收合清單（只看自選、文字篩選）；主旨照官方原文只跳脫 HTML，不分類、不加註解；沒收到的日子目前無法補。
+ - 今日頁法人買超／賣超表與錢流標示「估算，不含 ETF」；三大法人卡的官方值含 ETF 與權證避險，兩者口徑不同。
+ - 加權指數取自證交所 MI_INDEX（與上市行情同一個請求）；櫃買指數取自櫃買 `indexInfo/inx`（月查詢，可查歷史），缺的月份由 `collect --catch-up` 或 `history --only tpex_index` 補。
+ - 處置／注意股取自證交所 OpenAPI（`announcement/punish`、`announcement/notice`）與櫃買 OpenAPI（`tpex_disposal_information`、`tpex_trading_warning_information`），端點只有近幾日，錯過無法回補；`--catch-up` 每個交易日 15:00 後、19:00 後各抓一次；不在股票清單的權證、可轉債不寫入。第 16 輪：證交所 OpenAPI `announcement/notice` 實測一直只回傳空白佔位列（第 1～15 輪上市注意股 0 筆），上市注意股改查證交所網站「公布注意交易資訊」（`www.twse.com.tw/rwd/zh/announcement/notice`，每次查最近 30 天，漏收的日子下次收集會自動補上，每天多 1 個請求）；原因去掉網頁的 HTML 標籤。收集輸出分市場（「處置 上市 a／上櫃 b 筆、注意 上市 c／上櫃 d 筆」），上市注意 30 天內 0 筆、上櫃注意 0 筆時多印一行提醒（只提醒，不算失敗）。第 17 輪：收集輸出的上市注意數字標「（近 30 天）」；證交所網站（上市注意）抓取失敗時只略過上市注意並印警告，上櫃與上市處置照常寫入（下次收集會補最近 30 天）；OpenAPI 4 個來源任一失敗仍整批不寫。
+--- a/docs/iterations/README.md
++++ b/docs/iterations/README.md
+@@ -42,4 +42,5 @@
+ - 第 50 輪（2026-11-25 使用者要求盤點缺少的常用資訊，本輪做 F50-1 收在漲停／跌停＋F50-12 主動 ETF 折溢價，小項輪＋SA）。分析師 `50/01-analyst.md`：常用資訊 52 項、F50-1～F50-12、R73～R79、Q50-1～Q50-7，D179～D185 全 A。PM `50/02-pm.md`：畫面文字逐字定稿、驗收 27 條、Q50-8；D186 = A（個股頁頭標記，改 `test_iter49:261` 1 行）、D187 = A（套用後 export）。設計 `50/03-design.md`（＋`03-design.diff`）：`export.py` 新函式 `limit_flag`、`snapshot` 加 `lm`、匯出訊息 1 行、`holding_export` 加 `close`（`sum.pc`、`sum.pm`）；`app.js` `pctCell`、選股 `lm` 條件、排行說明、持股頁淨值卡與說明；`stock.js` 頁頭 1 行；新測試 `test_iter50`；D184 重大訊息實測 2 次請求（只記錄）；D188 = A。PG `50/04-dev.md`：原樣套用並 `export`（11/25 資料，0 外部請求），匯出訊息「收在漲停 上市 4／上櫃 3、跌停 上市 46／上櫃 54」和官方相同，8 檔主動 ETF `pm` 和 PM 相同，50 個測試 export 前後全過。QA `50/05-qa.md` 有條件通過：驗收 27 條全部通過、50 個測試全過、歷史比對 31／34 天相同（其他 3 天各差 1 檔，同 SA）、反證 26／28；QA50-01（匯出訊息官方 0 家會寫成 `--` 時測試擋不住，補 `test_iter50` 3 行，D189）、QA50-02（個股頁頭「收在漲停價」在 360～390 寬斷在詞中間，`stock.js` 加 `white-space:nowrap`，D190）待使用者決定。
+ - 第 51 輪（2026-11-26 使用者選 F46-延伸b＋F50-2：證交所類股指數與加權報酬指數，五角色）。分析師 `51/01-analyst.md`：MI_INDEX 既有回應已有兩張證交所指數表、32 類對應本站產業別、R80～R87、Q51-1～Q51-7，D191～D201 全 A。PM `51/02-pm.md`：畫面文字逐字定稿、驗收 39 條；D202、D203 = A；PM 自行決定 19 點使用者全部同意。設計 `51/03-design.md`（＋`03-design.diff`）：新表 `twse_index`（加 `seq` 欄）、`daily.py` 解析與附掛寫入、`export.py` 新函式 `ixr_export`、`ixr_perf`、`sx_export`、`ixr.json`、`latest.sx`／`latest.ixr`；`app.js` `sxCard`；`compare.js` 含息點線；`stock.js` 近期表現 1 行；舊測試 2 行（D200），新測試 `test_iter51`；SA 實測 3 次請求；D204 = A。PG `51/04-dev.md`：原樣套用，使用者同意上線（備份、setup-db、`history --only index --force` 回補 261 天 261 次請求、0 失敗，TAIEX 比對 0 差異，export），51 個測試全過。QA `51/05-qa.md` 有條件通過：驗收 39 條全部通過、自行重算 0 差異；D205 = A 已修 QA51-01（官方平盤漲跌點數非數字 → 前一交易日收盤相同視為 0，`export.py` 3 行，已重跑 export）；D206 = A 已修 QA51-02（`test_iter51` 檢查 ⚠️ 只印一次）。
+ - 第 52 輪（2026-11-27 使用者選 F50-3 資產負債表指標，五角色）。分析師 `52/01-analyst.md`：R88～R97、Q52-1～Q52-8，D207～D218 全 A（D212 = A1＋B1）。PM `52/02-pm.md`：畫面文字逐字定稿、驗收 42 條；D219 = A；PM 自行決定 20 點使用者全部同意。設計 `52/03-design.md`（＋`03-design.diff`）：SA 實測 `ajax_t163sb05`（上市、上櫃 115Q3）；新檔 `collectors/balance.py`、新表 `quarterly_balance`、附掛在 `collect_financials`、`history --only balance`、`export.py` 個股 `bs` 與 `screen.json` `roe`／`dr`、`stock.js` 季報卡 3 格、`app.js` 選股 2 個條件；舊測試 0 行，新測試 `test_iter52`；D220 = A。PG `52/04-dev.md`：原樣套用，使用者同意上線（備份、setup-db、`history --start 2024-01-01 --only balance` 22 次請求、0 失敗，`quarterly_balance` 21,509 列，export），52 個測試全過。QA `52/05-qa.md` 有條件通過：驗收 42 條全部通過、自行重算 0 差異、每股淨值與官方淨值比 1,947／1,948 相符；D221 = A 已修 QA52-01（`test_iter52` 補 4 行）。
++- 第 53 輪（2026-11-28 使用者選 F22-7 重大訊息，五角色）。分析師 `53/01-analyst.md`：R98～R108、Q53-1～Q53-10，D222～D235 全 A。PM `53/02-pm.md`：畫面文字逐字定稿、驗收 52 條；D236 = A。設計 `53/03-design.md`（＋`03-design.diff`）：SA 實測 3 次（11/28 週六）；新檔 `collectors/news.py`、新表 `material_news`、計畫鍵 `news`、`check` 一行、匯出 `mn`／`latest.mn`、`stock.js` 走勢分頁卡、`app.js` 總覽清單；舊測試 0 行，新測試 `test_iter53`；D237、D238。
+ - 規範：回應與文件用繁體中文；程式風格比照既有程式碼；只改必要的地方；外部網站請求要經過 `twstock/fetch.py` 的 `request`（有節流）；不要 commit 或 push；不要動 `.env`（建立專案副本時也不要複製 `.env`）；不要安裝排程或改系統設定（launchd、crontab、pmset、docker 設定），這些由使用者自行執行；埠 8000 是使用者自己的伺服器，測試用 8001 並在結束時關掉。改了 `site/` 的 js 或 css 要同步更新 `index.html` 的 `?v=`（sha1 前 8 碼，`test_iter23` 失敗時會印出正確的 3 行）。
+--- a/site/app.js
++++ b/site/app.js
+@@ -229,7 +229,7 @@
+         ${QUADS.map(([q, d]) => `<a class="quad q-${q}" href="#/bubble" data-q="${q}"><div class="t">${q}</div><div class="n num">${counts[q]}</div><div class="d">${d}</div></a>`).join('')}
+       </div>
+     </section>
+-    ${alertBoard(L)}`,
++    ${alertBoard(L)}${newsBoard(L)}`,   // 第 53 輪 F53-6
+     credit: `<section class="sec grid ${marginCard(L) && valCard(L) ? 'g2' : 'g-one'}">${marginCard(L)}${valCard(L)}</section>`,   // 信用交易、估值左右並排
+     fut: fut.trim() || '<div class="empty">沒有期貨資料</div>',
+   };
+@@ -270,6 +270,7 @@
+     App.sxSort = { k, d: o.k === k ? -o.d : -1 }; renderToday(); }));
+   $('#alMore')?.addEventListener('click', () => { App.alertAll = !App.alertAll; renderToday(); });
+   $('#view details.al-box')?.addEventListener('toggle', e => { App.alOpen = e.target.open; });
++  mnWire();                                                              // 第 53 輪 F53-6
+   $('#view').addEventListener('click', onRowClick);
+   if (tab === 'fut') { drawFutures(L.futures); drawOI(L.futures_oi); }
+ }
+@@ -456,6 +457,54 @@
+ }
+ 
+ // 市場寬度卡（A3＋A8）：全部為網站自算（還原收盤、股票、不含 ETF）；官方家數在成交額卡
++// 第 53 輪 F53-6：總覽最下方的重大訊息清單（最新一個交易日發言日；預設收合；只看自選、文字篩選只隱藏列，不重畫）
++function newsBoard(L) {
++  const M = L.mn;
++  if (!M) return '';
++  const cnt = m => M.n[m] ? fmt(M.n[m]) + ' 則' : '尚未收到', lb = { TWSE: '上市', TPEx: '上櫃' }, mks = ['TWSE', 'TPEx'].filter(m => M.f[m]);
++  const row = ([c, mk, t, s, nm0]) => {
++    const inner = `<div class="al-l"><b>${esc(L.stocks[c]?.n || nm0 || c)}</b><span class="muted small">${esc(c)}・${mk === 'TWSE' ? '上市' : '上櫃'}</span><span class="sp"></span><span class="small num">${t}</span></div><div class="muted small al-why mn-s" title="${esc(s)}">${esc(s)}</div>`;
++    return L.stocks[c] ? `<a class="al-row mn-r" href="#/stock/${esc(c)}" data-c="${esc(c)}">${inner}</a>` : `<div class="al-row mn-r" data-c="${esc(c)}">${inner}</div>`;
++  };
++  const from = new Set(mks.map(m => M.f[m])).size > 1 ? mks.map(m => `${lb[m]} ${M.f[m].replace(/-/g, '/')}`).join('、') : M.f[mks[0]].replace(/-/g, '/');
++  const gaps = mks.map(m => [m, mnGap(M.x[m])]).filter(x => x[1]).map(([m, g]) => `；${lb[m]} ${g}`).join('');
++  return `<section class="sec card"><details class="al-box mn-box"${App.mnOpen ? ' open' : ''}>
++  <summary class="sec-h"><h2>重大訊息</h2><span class="muted small">發言日 ${md(M.d)}　上市 ${cnt('TWSE')}　上櫃 ${cnt('TPEx')}</span><span class="sp"></span><i></i></summary>
++  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px">${App.watch.size ? segHTML('mnSeg', [['all', '全部'], ['w', '只看自選']], App.mnW ? 'w' : 'all') : ''}<input id="mnQ" class="sel" type="search" placeholder="篩選代號、名稱或主旨" aria-label="篩選重大訊息" value="${esc(App.mnQ || '')}"></div>
++  ${M.r.map(row).join('')}
++  <div class="muted small" id="mnNone" style="display:none"></div>
++  <div class="muted small" style="margin-top:6px">本站自 ${from} 起收錄${gaps}。官方每次只提供一天的資料，沒收到的日子本站目前無法補</div>
++  <div class="muted small">依公開資訊觀測站每日重大訊息，只列主旨；內容以原文為準。點股票看近 30 天。原文請到<a href="https://mops.twse.com.tw/" target="_blank" rel="noopener noreferrer">公開資訊觀測站</a>以代號與發言日 ${md(M.d)} 查詢</div>
++</details></section>`;
++}
++// x = 漏收的交易日（舊到新）；個股卡、今日卡共用
++function mnGap(x) {
++  if (!x || !x.length) return '';
++  return x.length <= 5 ? `${x.map(md).join('、')} 沒有收到` : `近 30 天有 ${x.length} 個交易日沒有收到，最近一次 ${md(x[x.length - 1])}`;
++}
++function mnApply() {
++  const box = $('#view details.mn-box');
++  if (!box) return;
++  const q = (App.mnQ || '').trim().toUpperCase(), w = App.mnW && App.watch.size;
++  let n = 0;
++  box.querySelectorAll('.mn-r').forEach(r => {
++    const on = (!w || App.watch.has(r.dataset.c)) && (!q || r.textContent.toUpperCase().includes(q));
++    r.style.display = on ? '' : 'none';
++    n += on ? 1 : 0;
++  });
++  const none = $('#mnNone');
++  none.textContent = w && ![...box.querySelectorAll('.mn-r')].some(r => App.watch.has(r.dataset.c)) ? `自選股在 ${md(App.latest.mn.d)} 沒有重大訊息` : '沒有符合的重大訊息';
++  none.style.display = n ? 'none' : '';
++}
++function mnWire() {
++  const inp = $('#mnQ');
++  if (!inp) return;
++  inp.addEventListener('input', () => { App.mnQ = inp.value; mnApply(); });
++  if ($('#mnSeg')) onSeg('mnSeg', v => { App.mnW = v === 'w'; document.querySelectorAll('#mnSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); mnApply(); });
++  $('#view details.mn-box').addEventListener('toggle', e => { App.mnOpen = e.target.open; });
++  mnApply();
++}
++
+ function breadthCard(L) {
+   const B = L.breadth;
+   if (!B) return '';
+--- a/site/index.html
++++ b/site/index.html
+@@ -10,8 +10,8 @@
+ <link rel="stylesheet" href="app.css?v=d1508f41">
+ <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2.35.2/plotly-basic.min.js" defer></script>
+ <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+-<script src="app.js?v=6cde9106" defer></script>
+-<script src="stock.js?v=7c592b0f" defer></script>
++<script src="app.js?v=8437a8c1" defer></script>
++<script src="stock.js?v=d889075b" defer></script>
+ <script src="tools.js?v=0a050889" defer></script>
+ <script src="help.js?v=a5a5a7e8" defer></script>
+ <script src="compare.js?v=f7e0bca5" defer></script>
+--- a/site/stock.js
++++ b/site/stock.js
+@@ -399,6 +399,7 @@
+   if (tab === 'chip' && $('#chipInv')) onSeg('chipInv', v => { chipI = v; document.querySelectorAll('#chipInv button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
+   if (tab === 'chip') buildChip(data, E);
+   if (tab !== 'k') return;
++  if (!E && data.mn) { $('#view').insertAdjacentHTML('beforeend', mnCard(data.mn, code)); $('#mnMore')?.addEventListener('click', mnShowAll); }   // 第 53 輪 F53-5：走勢分頁最下方
+   // 第 25 輪 D25-05：關鍵數字列在寬螢幕併進頁首卡、手機放到 K 線卡下方，主圖進第一屏
+   if (matchMedia('(min-width:721px)').matches) $('#view .s-head').after($('#view .metrics.kv')); else $('#vC').after($('#view .metrics.kv'));   // 第 27 輪 D27-06：手機放在主圖下方；第 28 輪 D28-05：改到成交量之後，K 線和成交量相鄰、十字線不斷開
+   if (!E) $('#adjSeg').title = '還原：依除權息、減資、面額變更調整歷史價格（現金增資除權也依官方參考價調整），最新收盤不變。均線訊號與 52 週高低一律以還原價格計算';
+@@ -863,6 +864,23 @@
+ // 第 22 輪 F22-10：MACD 柱依昨（a）、今（b）的正負寫看到的變化；多空照舊只看柱值升降（b > a 偏多，持平偏空）
+ const macdBar = (a, b) => b === a ? 'MACD 柱持平' : b > a ? (a < 0 && b > 0 ? 'MACD 柱由負翻正' : b > 0 ? 'MACD 正柱加長' : 'MACD 負柱縮短')
+   : a > 0 && b < 0 ? 'MACD 柱由正翻負' : b < 0 ? 'MACD 負柱加長' : 'MACD 正柱縮短';
++
++// 第 53 輪 F53-5：走勢分頁最下方的重大訊息卡（主旨照官方原文，只跳脫；超過 10 則先藏起來，按「顯示全部」再顯示）
++function mnCard(M, code) {
++  const late = M.f > M.w, F = M.f.replace(/-/g, '/'), g = mnGap(M.x), sub = late ? md(M.f) + ' 起' : '近 30 天';
++  const short = '只列官方主旨，不含說明全文；內容以原文為準', full = '重大訊息是上市櫃公司依規定在公開資訊觀測站發布的公告。本站只列發言日、時間與主旨，不含說明全文，也不分類、不加註解；同一件事的更正或補充，官方會另發一則，兩則都會列出。資料來自證交所、櫃買中心的開放資料，官方每次只提供一天的公告，本站沒收到的日子目前無法補；「沒有收到」是指那個交易日本站一則都沒有收到。時間是公司的發言時間。';
++  const rows = M.r.map((r, i) => `<div class="al-row mn-row"${i >= 10 ? ' style="display:none"' : ''}><span class="small muted num">${md(r[0])} ${r[1]}</span>　<span class="mn-s">${esc(r[2])}</span></div>`).join('');
++  return `<section class="sec card mn"><div class="sec-h"><h2>重大訊息</h2><span class="muted small">${sub}，公開資訊觀測站</span></div>
++${rows || `<div class="muted small">${sub}沒有重大訊息</div>`}
++${M.r.length > 10 ? `<button class="chip" id="mnMore" style="margin-top:8px">顯示全部 ${M.r.length} 則</button>` : ''}
++<div class="muted small" style="margin-top:6px">本站自 ${F} 起收錄${g ? '；' + g : ''}。官方每次只提供一天的資料，沒收到的日子本站目前無法補</div>
++<div class="muted small">原文請到<a href="https://mops.twse.com.tw/" target="_blank" rel="noopener noreferrer">公開資訊觀測站</a>以代號 ${code} 與發言日查詢</div>
++<div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
++}
++function mnShowAll() {
++  document.querySelectorAll('#view .mn-row').forEach(e => { e.style.display = ''; });
++  $('#mnMore')?.remove();
++}
+ 
+ function renderSignals(rows, mode) {
+   const period = { '日': '日線', '週': '週線', '月': '月線' }[mode];
+--- /dev/null
++++ b/tests/fixtures/mopsfin_t187ap04_O_mini.json
+@@ -0,0 +1,90 @@
++[
++ {
++  "Date": "1151127",
++  "發言日期": "1151126",
++  "發言時間": "70003",
++  "SecuritiesCompanyCode": "3489",
++  "CompanyName": "長耀地產",
++  "主旨": "公告本公司名稱由「森寶開發股份有限公司」更名為 \r\n「長耀地產投資股份有限公司」，公告期間：\r\n115年11月4日至116年2月3日",
++  "符合條款": "第53款",
++  "事實發生日": "1151103",
++  "說明": ""
++ },
++ {
++  "Date": "1151127",
++  "發言日期": "1151126",
++  "發言時間": "70003",
++  "SecuritiesCompanyCode": "6474",
++  "CompanyName": "維夫拉克控股",
++  "主旨": "公告本公司名稱由「華豫寧股份有限公司」更名為「維夫拉克控股\r\n股份有限公司」，公告期間：115年11月16日至116年2月15日",
++  "符合條款": "第53款",
++  "事實發生日": "1151111",
++  "說明": ""
++ },
++ {
++  "Date": "1151127",
++  "發言日期": "1151126",
++  "發言時間": "134350",
++  "SecuritiesCompanyCode": "6643",
++  "CompanyName": "M31",
++  "主旨": "公告本公司發言人異動",
++  "符合條款": "第8款",
++  "事實發生日": "1151126",
++  "說明": ""
++ },
++ {
++  "Date": "1151127",
++  "發言日期": "1151126",
++  "發言時間": "140746",
++  "SecuritiesCompanyCode": "6118",
++  "CompanyName": "建達",
++  "主旨": "本公司受邀參加中國信託證券舉辦之法說會",
++  "符合條款": "第12款",
++  "事實發生日": "1151127",
++  "說明": ""
++ },
++ {
++  "Date": "1151127",
++  "發言日期": "1151126",
++  "發言時間": "141011",
++  "SecuritiesCompanyCode": "2719",
++  "CompanyName": "燦星旅",
++  "主旨": "本公司受邀參加康和證券所舉辦之法說會",
++  "符合條款": "第12款",
++  "事實發生日": "1151127",
++  "說明": ""
++ },
++ {
++  "Date": "1151127",
++  "發言日期": "1151126",
++  "發言時間": "181707",
++  "SecuritiesCompanyCode": "8042",
++  "CompanyName": "金山電",
++  "主旨": "代重要子公司金山電子工業(泰國)股份有限公司公告決議\r\n辦理現金增資",
++  "符合條款": "第11款",
++  "事實發生日": "1151126",
++  "說明": ""
++ },
++ {
++  "Date": "1151127",
++  "發言日期": "1151126",
++  "發言時間": "182621",
++  "SecuritiesCompanyCode": "8042",
++  "CompanyName": "金山電",
++  "主旨": "本公司及代子公司CHINSAN (CAYMAN) ENT. CO., LTD.公告\r\n董事會決議現金增資金山電子工業(泰國)股份有限公司",
++  "符合條款": "第20款",
++  "事實發生日": "1151126",
++  "說明": ""
++ },
++ {
++  "Date": "1151127",
++  "發言日期": "1151126",
++  "發言時間": "221021",
++  "SecuritiesCompanyCode": "8042",
++  "CompanyName": "金山電",
++  "主旨": "公告本公司董事會通過設置永續長",
++  "符合條款": "第8款",
++  "事實發生日": "1151126",
++  "說明": ""
++ }
++]
+\ No newline at end of file
+--- /dev/null
++++ b/tests/fixtures/t187ap04_L_mini.json
+@@ -0,0 +1,90 @@
++[
++ {
++  "出表日期": "1151128",
++  "發言日期": "1151127",
++  "發言時間": "92041",
++  "公司代號": "7855",
++  "公司名稱": "和運租車",
++  "主旨 ": "公告本公司將受邀參加台新證券所舉辦之法人說明會",
++  "符合條款": "第12款",
++  "事實發生日": "1151201",
++  "說明": ""
++ },
++ {
++  "出表日期": "1151128",
++  "發言日期": "1151127",
++  "發言時間": "112232",
++  "公司代號": "6515",
++  "公司名稱": "穎崴",
++  "主旨 ": "澄清媒體報導",
++  "符合條款": "第51款",
++  "事實發生日": "1151127",
++  "說明": ""
++ },
++ {
++  "出表日期": "1151128",
++  "發言日期": "1151127",
++  "發言時間": "133016",
++  "公司代號": "2423",
++  "公司名稱": "固緯",
++  "主旨 ": "公告致茂電子股份有限公司對本公司提起之公平交易法\r\n訴訟，經智慧財產及商業法院第一審判決駁回",
++  "符合條款": "第2款",
++  "事實發生日": "1151127",
++  "說明": ""
++ },
++ {
++  "出表日期": "1151128",
++  "發言日期": "1151127",
++  "發言時間": "133423",
++  "公司代號": "3607",
++  "公司名稱": "谷崧",
++  "主旨 ": "公告本公司召開法說會相關訊息",
++  "符合條款": "第12款",
++  "事實發生日": "1151130",
++  "說明": ""
++ },
++ {
++  "出表日期": "1151128",
++  "發言日期": "1151127",
++  "發言時間": "134715",
++  "公司代號": "2545",
++  "公司名稱": "皇翔",
++  "主旨 ": "本公司受邀參加元大證券舉辦之線上法人說明會",
++  "符合條款": "第12款",
++  "事實發生日": "1151203",
++  "說明": ""
++ },
++ {
++  "出表日期": "1151128",
++  "發言日期": "1151127",
++  "發言時間": "212533",
++  "公司代號": "8499",
++  "公司名稱": "鼎炫-KY",
++  "主旨 ": "代子公司隆揚電子(昆山)股份有限公司公告2026年第三次臨\r\n時股東大會決議事項",
++  "符合條款": "第18款",
++  "事實發生日": "1151127",
++  "說明": ""
++ },
++ {
++  "出表日期": "1151128",
++  "發言日期": "1151127",
++  "發言時間": "212552",
++  "公司代號": "8499",
++  "公司名稱": "鼎炫-KY",
++  "主旨 ": "代子公司隆揚電子(昆山)股份有限公司公告董事長異動",
++  "符合條款": "第6款",
++  "事實發生日": "1151127",
++  "說明": ""
++ },
++ {
++  "出表日期": "1151128",
++  "發言日期": "1151127",
++  "發言時間": "212607",
++  "公司代號": "8499",
++  "公司名稱": "鼎炫-KY",
++  "主旨 ": "代子公司隆揚電子(昆山)股份有限公司公告總經理異動",
++  "符合條款": "第6款",
++  "事實發生日": "1151127",
++  "說明": ""
++ }
++]
+\ No newline at end of file
+--- /dev/null
++++ b/tests/test_iter53.py
+@@ -0,0 +1,572 @@
++"""第 53 輪（不連網、不連資料庫）：重大訊息（F53-1～F53-7）。
++解析用 tests/fixtures/t187ap04_L_mini.json、mopsfin_t187ap04_O_mini.json（SA 2026-11-28 實測原始回應只刪列，「說明」值改成空字串）；
++收集以 test_iter03 的假世界執行（只有 HTTP 與資料庫是假的）；check、匯出測純函式；畫面取出 stock.js、app.js 的函式在 node 執行（node 14 可跑）。
++檢查函式都接受原始碼字串，最後的 test_contrast 把原始碼改壞（反證），確認對應的檢查會失敗。
++
++  python3 tests/test_iter53.py
++"""
++import contextlib
++import hashlib
++import io
++import json
++import re
++import sys
++from datetime import date, time
++from pathlib import Path
++from unittest import mock
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tests"))
++from twstock import db, export, fetch, health  # noqa: E402
++from twstock.collectors import catchup, news  # noqa: E402
++from twstock.fetch import SchemaError  # noqa: E402
++import test_iter03 as t3  # noqa: E402
++import test_iter40 as t40  # noqa: E402
++import test_iter52 as T52  # noqa: E402
++
++D, TM, CLOSED = t3.D, t3.T, t3.CLOSED
++SITE, HTML, APP, STK = T52.SITE, T52.HTML, T52.APP, T52.STK
++FIX = ROOT / "tests" / "fixtures"
++SRC = lambda p: (ROOT / p).read_text(encoding="utf-8")
++NEWS, CAT, HEA, EXP, DBS, README = (SRC(p) for p in ("twstock/collectors/news.py", "twstock/collectors/catchup.py", "twstock/health.py",
++                                                     "twstock/export.py", "twstock/db.py", "README.md"))
++ADVICE = T52.ADVICE | {"利多", "利空"}
++_grab, _grab_py, _fn, _fns, _node, _raises, _mut = T52._grab, T52._grab_py, T52._fn, T52._fns, T52._node, T52._raises, T52._mut
++L_RAW = json.loads((FIX / "t187ap04_L_mini.json").read_text(encoding="utf-8"))
++O_RAW = json.loads((FIX / "mopsfin_t187ap04_O_mini.json").read_text(encoding="utf-8"))
++NEWS_FNS = ("_time", "parse_news", "fetch_news", "collect_news")
++ONE = {"出表日期": "1151128", "發言日期": "1151127", "發言時間": "153000", "公司代號": "2330", "公司名稱": "台積電", "主旨 ": "公告本公司董事會決議",
++       "符合條款": "第12款", "事實發生日": "1151127", "說明": ""}
++
++
++def _parse(src=NEWS):
++    return _fns(news, src, NEWS_FNS)[1]
++
++
++# ─── 解析（驗收 3～9）────────────────────────────────────────
++def check_fixture(src=NEWS):
++    parse = _parse(src)
++    (ol, rl, kl), (oo, ro, ko) = parse("TWSE", L_RAW), parse("TPEx", O_RAW)
++    keys = {"code", "name", "speak_date", "speak_time", "subject", "clause", "fact_date"}
++    first = rl[0]
++    return (ol == D(11, 28) and len(rl) == 8 and kl == 0 and oo == D(11, 27) and len(ro) == 8 and ko == 0
++            and all(set(r) == keys for r in rl + ro) and "主旨 " in L_RAW[0] and "主旨" in O_RAW[0]
++            and first == {"code": "7855", "name": L_RAW[0]["公司名稱"], "speak_date": D(11, 27), "speak_time": time(9, 20, 41),
++                          "subject": L_RAW[0]["主旨 "], "clause": L_RAW[0]["符合條款"], "fact_date": D(12, 1)}
++            and ro[0]["speak_time"] == time(7, 0, 3) and ro[0]["speak_date"] == D(11, 26) and ro[0]["code"] == "3489"
++            and [r["code"] for r in rl].count("8499") == 3 and all(x["說明"] == "" for x in L_RAW + O_RAW))
++
++
++def test_fixture():
++    assert check_fixture()
++
++
++def check_fields(src=NEWS):
++    parse = _parse(src)
++    row = lambda **k: [{**ONE, **k}]
++    ren = lambda old, new: [{(new if k == old else k): v for k, v in ONE.items()}]
++    drop = lambda *ks: [{k: v for k, v in ONE.items() if k not in ks}]
++    t = lambda s: parse("TWSE", row(發言時間=s))
++    ok_t = [t(s)[1][0]["speak_time"] for s in ("70004", "4", "153000", "07:00:04")]
++    bad_t = [t(s)[1:] for s in ("250000", "076000", "abc", "")]
++    fd = lambda s: parse("TWSE", row(事實發生日=s))[1][0]["fact_date"]
++    o, r, k = parse("TWSE", drop("公司名稱", "符合條款", "事實發生日"))
++    buf = io.StringIO()
++    with contextlib.redirect_stdout(buf):
++        o2, _, _ = parse("TWSE", row() + row(出表日期="1151127", 發言時間="070000"))
++    return (ok_t == [time(7, 0, 4), time(0, 0, 4), time(15, 30), time(7, 0, 4)] and all(x == ([], 1) for x in bad_t)
++            and parse("TWSE", row(發言日期="115/11/24"))[1][0]["speak_date"] == D(11, 24) and parse("TWSE", row(發言日期="x"))[1:] == ([], 1)
++            and fd("1201123") is None and fd("") is None and fd("1151123") == D(11, 23)
++            and all(_raises(lambda: parse("TWSE", ren(a, a + "x")), SchemaError) for a in ("公司代號", "發言日期", "發言時間", "主旨 ", "出表日期"))
++            and o == D(11, 28) and len(r) == 1 and (r[0]["name"], r[0]["clause"], r[0]["fact_date"]) == (None, None, None)
++            and parse("TPEx", [{"Date": "1151127", "發言日期": "1151126", "發言時間": "70003", "SecuritiesCompanyCode": "6488", "CompanyName": "環球晶",
++                                "主旨": "x"}])[1][0]["code"] == "6488"
++            and _raises(lambda: parse("TWSE", {"a": 1}), SchemaError) and parse("TWSE", []) == (None, [], 0)
++            and _raises(lambda: parse("TWSE", ["x"]), SchemaError) and _raises(lambda: parse("TWSE", row(出表日期="")), SchemaError)
++            and o2 == D(11, 28) and buf.getvalue() == "  ⚠️  上市重大訊息的出表日期不一致（2026-11-27 ～ 2026-11-28），以最晚的為準\n")
++
++
++def test_fields():
++    assert check_fields()
++
++
++def check_dedup(src=NEWS):
++    parse = _parse(src)
++    a = {**ONE, "主旨 ": "ABC 公告", "公司名稱": "舊"}
++    _, r, _ = parse("TWSE", [a, {**a, "公司名稱": "中"}, {**a, "主旨 ": "ａｂｃ 公告", "公司名稱": "新"}, {**a, "主旨 ": "另一則"}, ["x"]])
++    _, r2, k2 = parse("TWSE", [{**ONE, "主旨 ": "字" * 401}, {**ONE, "公司代號": " "}, {**ONE, "公司代號": "1" * 11},
++                               {**ONE, "公司名稱": "名" * 41}])
++    return ([x["subject"] for x in r] == ["ａｂｃ 公告", "另一則"] and r[0]["name"] == "新" and len(r2) == 1 and k2 == 3 and r2[0]["name"] is None)
++
++
++def test_dedup():
++    assert check_dedup()
++
++
++# ─── 抓取、MERGE、DDL（驗收 10～12）─────────────────────────────
++class NCur:
++    def __init__(self, log, result=None, err=None):
++        self.log, self.result, self.err = log, result, err
++
++    def cursor(self):
++        return self
++
++    def execute(self, s, *p):
++        if self.err:
++            raise self.err
++        self.log.append((s, p))
++        return self
++
++    def fetchall(self):
++        return self.result
++
++    def commit(self):
++        self.log.append("commit")
++
++    def close(self):
++        pass
++
++
++def _collect(src=NEWS, data=L_RAW, result=None, err=None):
++    log, out, calls = [], io.StringIO(), []
++    req = lambda *a, **k: (calls.append((a, k)), data)[1]
++    _, _, _, collect = _fns(news, src, NEWS_FNS)
++    with mock.patch.dict(collect.__globals__, {"request": req}), mock.patch.object(db, "connect", lambda: NCur(log, result, err)), \
++            contextlib.redirect_stdout(out):
++        try:
++            r = collect("TWSE", D(11, 28))
++        except Exception as e:
++            r = e
++    return r, log, out.getvalue(), calls
++
++
++def check_collect(src=NEWS):
++    r, log, out, calls = _collect(src, result=[("INSERT",)] * 8)
++    s, p = log[0]
++    upd = s[s.index("THEN UPDATE"):s.index("WHEN NOT MATCHED")]
++    r2, _, out2, _ = _collect(src, result=[("UPDATE",)] * 8)
++    r3, log3, out3, _ = _collect(src, data=[])
++    r4, _, _, _ = _collect(src, err=db.pyodbc.Error("42S02", "[42S02] Invalid object name 'material_news'."))
++    j = json.loads(p[0])
++    return (r == {"on": "2026-11-28", "t": "2026-11-28", "d": "2026-11-27", "n": 8, "new": 8} and log[1] == "commit"
++            and out == "  📰 上市重大訊息 8 筆（出表 2026-11-28，發言日 2026-11-27，新增 8 筆）\n"
++            and "MERGE material_news" in s and "OUTPUT $action" in s and "first_seen" not in upd
++            and "ON t.market = ? AND t.code = s.code AND t.speak_date = s.speak_date AND t.speak_time = s.speak_time AND t.subject = s.subject" in s
++            and p[1:] == ("TWSE", D(11, 28), "TWSE", D(11, 28), D(11, 28)) and j[0]["speak_time"] == "09:20:41" and "說明" not in s and all(set(x) == {"code", "name", "speak_date", "speak_time", "subject", "clause", "fact_date"} for x in j)
++            and "description" not in s and r2["new"] == 0 and r3 is None and log3 == []
++            and out3 == "  📰 上市重大訊息：官方目前沒有資料（0 筆），下次執行再抓\n"
++            and isinstance(r4, RuntimeError) and str(r4) == "material_news 寫入失敗（請確認已執行 setup-db）：('42S02', \"[42S02] Invalid object name 'material_news'.\")"
++            and calls == [(("GET", "https://openapi.twse.com.tw/v1/opendata/t187ap04_L"), {"isolated": True})])
++
++
++def test_collect():
++    assert check_collect()
++    calls = []
++    with mock.patch.object(news, "request", lambda *a, **k: (calls.append((a, k)), [])[1]):
++        news.fetch_news("TPEx")
++    assert calls == [(("GET", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O"), {"isolated": True})]
++    ddl = "\n".join(db.DDL)
++    blk = next(d for d in db.DDL if "material_news" in d)
++    for s in ("CREATE TABLE material_news (", "market      NVARCHAR(4)    NOT NULL CHECK (market IN ('TWSE','TPEx')),", "speak_time  TIME(0)        NOT NULL,",
++              "subject     NVARCHAR(400)  NOT NULL,", "first_seen  DATE           NOT NULL,",
++              "CONSTRAINT UQ_material_news UNIQUE (market, code, speak_date, speak_time, subject)"):
++        assert s in blk, s
++    pos = lambda t: next(k for k, d in enumerate(db.DDL) if f"CREATE TABLE {t} " in d)
++    assert pos("material_news") == pos("quarterly_balance") + 1 and "說明" not in blk and "description" not in ddl
++    assert all(w not in blk for w in ("quarterly_balance", "twse_index", "CREATE TABLE market_index", "CREATE TABLE etf_events"))
++    assert "quarterly_balance（第 52 輪）、material_news（第 53 輪）、\"" in DBS and "twse_index（第 51 輪）、etf_holding_gaps\")" in DBS
++
++
++# ─── 時機（驗收 13～19）────────────────────────────────────────
++def _plan(now, news_=True, recs=None, src=CAT, closed=CLOSED):
++    mp = _fn(catchup, src, "make_plan")
++    st = {"alerts_at": None, "events_to": None, "revenue_on": None, **({"news": recs} if recs is not None else {})}
++    return mp(now, 10, t3._full_snapshot(health.due_days(now, 10, closed)), st, closed, {}, news=news_)
++
++
++def check_plan(src=CAT):
++    rec = lambda t: (D(11, 28), t, D(11, 27), 1)
++    now = TM(11, 30, 18)
++    p_empty = {**_plan(now, None, src=src), "news": []}
++    return (_plan(now, None, src=src)["news"] == [] and _plan(now, False, src=src)["news"] == [] and _plan(now, src=src)["news"] == ["TWSE", "TPEx"]
++            and _plan(now, recs={"TWSE": rec(D(11, 29)), "TPEx": rec(D(11, 30))}, src=src)["news"] == ["TWSE"]
++            and _plan(now, recs={"TWSE": rec(D(11, 30)), "TPEx": rec(D(12, 1))}, src=src)["news"] == []
++            and _plan(TM(12, 25, 10), recs={"TWSE": rec(D(12, 24))}, src=src)["news"] == ["TWSE", "TPEx"]
++            and _plan(TM(11, 28, 10), src=src)["news"] == ["TWSE", "TPEx"] and _plan(TM(11, 29, 10), src=src)["news"] == ["TWSE", "TPEx"]
++            and _plan(TM(12, 26, 10), src=src, closed=CLOSED | {D(d, m) for d, m in ()})["news"] == ["TWSE", "TPEx"]
++            and not catchup.plan_is_empty({**p_empty, "by_date": [], "news": ["TWSE"]}))
++
++
++def test_plan():
++    assert check_plan()
++    now = TM(11, 28, 10)
++    old = catchup.make_plan(now, 10, t3._full_snapshot(health.due_days(now, 10, CLOSED)), {"alerts_at": None, "events_to": None, "revenue_on": None}, CLOSED, {})
++    assert old["news"] == [] and "news" not in catchup.plan_for_date(D(11, 27), TM(11, 28), False)
++    assert catchup.plan_is_empty({**old, "by_date": [], "alerts": False, "events": None, "revenue": [], "financials": None, "tdcc": None})
++
++
++class NewsWorld(t3.World):
++    """test_iter03 的 World 加上兩個重大訊息端點（out = 各市場官方的出表日期民國字串）與 material_news（table = 表是否存在）。"""
++
++    def __init__(self, seed, table=True):
++        super().__init__(seed)
++        self.table, self.keys, self.out = table, set(), {"TWSE": "1151128", "TPEx": "1151127"}
++        self.revenue[(2026, 10)] = 1980
++
++    def http(self, method, url, timeout=30, params=None, data=None, json=None):
++        for mk, ep, raw, k in (("TWSE", "t187ap04_L", L_RAW, "出表日期"), ("TPEx", "mopsfin_t187ap04_O", O_RAW, "Date")):
++            if ep in url:
++                self.requests.append(("/" + ep, {}))
++                return t3.Resp(status=500) if ep in self.down else t3.Resp([{**r, k: self.out[mk]} for r in raw])
++        return super().http(method, url, timeout, params, data, json)
++
++
++class NewsCursor(t3.FakeCursor):
++    def execute(self, sql, *p):
++        w = self.w
++        if "OBJECT_ID('material_news')" in sql:
++            self.result = [(1 if w.table else None,)]
++        elif "MERGE material_news" in sql:
++            ks = [(p[1], r["code"], r["speak_date"], r["speak_time"], r["subject"]) for r in json.loads(p[0])]
++            self.result = [("UPDATE",) if k in w.keys else ("INSERT",) for k in ks]
++            w.keys |= set(ks)
++        else:
++            return super().execute(sql, *p)
++        return self
++
++
++def run_news(w, now, src=None):
++    w.requests.clear()
++    buf = io.StringIO()
++    with mock.patch.object(t3.FakeConn, "cursor", lambda self: NewsCursor(self.w)), t3.env(w), contextlib.ExitStack() as st:
++        if src:
++            st.enter_context(mock.patch.object(catchup, "_run_locked", _fns(catchup, src, ("make_plan", "execute_plan", "_run_locked"))[2]))
++        st.enter_context(contextlib.redirect_stdout(buf))
++        rc = catchup.run(days=10, now=now, notify=True)
++    return rc, buf.getvalue(), [p for p, _ in w.requests if "t187ap04" in p], json.loads(w.runs[-1][2])
++
++
++def check_world(src=CAT):
++    bad = []
++    base = NewsWorld(D(11, 27), table=False)
++    rc0, out0, n0, d0 = run_news(base, TM(11, 28, 10), src)
++    w = NewsWorld(D(11, 27))
++    rc, out, n, d = run_news(w, TM(11, 28, 10), src)
++    if (n0, rc, n, w.exports, len(w.requests)) != ([], rc0, ["/t187ap04_L", "/mopsfin_t187ap04_O"], 1, len(base.requests) + 2) or \
++            d["undated"].get("news") != {"TWSE": {"on": "2026-11-28", "t": "2026-11-28", "d": "2026-11-27", "n": 8, "new": 8},
++                                         "TPEx": {"on": "2026-11-28", "t": "2026-11-27", "d": "2026-11-26", "n": 8, "new": 8}} or \
++            "  📰 上櫃重大訊息 8 筆（出表 2026-11-27，發言日 2026-11-26，新增 8 筆）\n" not in out or "重大訊息" in out0:
++        bad.append(("首次", n, w.exports, out[-400:]))
++    rc, out, n, d = run_news(w, TM(11, 28, 12), src)                 # 上市已是今天的出表：只再抓上櫃，新增 0 → 不匯出
++    if n != ["/mopsfin_t187ap04_O"] or w.exports != 1 or "ℹ️  沒有新資料，不匯出" not in out or d["undated"]["news"]["TPEx"]["new"] != 0:
++        bad.append(("同一天", n, w.exports))
++    w.out["TPEx"] = "1151128"
++    run_news(w, TM(11, 28, 13), src)
++    if run_news(w, TM(11, 28, 14), src)[2] != []:
++        bad.append("出表 = 今天不再抓")
++    return bad
++
++
++def test_world():
++    assert check_world() == []
++
++
++def check_isolation(src=CAT):
++    base = NewsWorld(D(11, 27), table=False)
++    rc0, _, _, d0 = run_news(base, TM(11, 30, 17, 30), src)
++    w = NewsWorld(D(11, 27))
++    w.down.add("t187ap04_L")
++    w.out = {"TWSE": "1151130", "TPEx": "1151130"}                          # 兩市場都已是今天的出表
++    rc, out, n, d = run_news(w, TM(11, 30, 17, 30), src)
++    bad = []
++    if (rc, d["items"], w.notices) != (rc0, d0["items"], base.notices) or "news.TWSE" not in d["errors"] \
++            or "TWSE" in d["undated"].get("news", {}) or "TPEx" not in d["undated"].get("news", {}):
++        bad.append(("隔離", rc, rc0, d["errors"]))
++    if "  ⚠️  news.TWSE 失敗：openapi.twse.com.tw 附屬查詢失敗（不重試，收集繼續）" not in out or "❌ news" in out or "Traceback" in out \
++            or "openapi.twse.com.tw" in fetch._dead_hosts or n != ["/t187ap04_L", "/mopsfin_t187ap04_O"]:
++        bad.append(("輸出", out[-400:]))
++    w.down.clear()
++    if run_news(w, TM(11, 30, 18), src)[2] != ["/t187ap04_L"]:
++        bad.append("下一次再抓上市")
++    return bad
++
++
++def test_isolation():
++    assert check_isolation() == []
++
++
++def check_state(src=HEA):
++    fn = _fn(health, src, "load_state")
++    j = lambda **k: json.dumps(k)
++    v = lambda on, t, d, n: {"on": on, "t": t, "d": d, "n": n, "new": 0}
++    rows = [(TM(11, 30, 22), 0, j(undated={"news": {"TPEx": v("2026-11-30", "2026-11-30", "2026-11-27", 57)}}), "catch-up", "ok", None),
++            (TM(11, 29, 22), 0, j(undated={"news": {"TWSE": v("2026-11-29", "2026-11-29", "2026-11-28", 9), "TPEx": v("2026-11-29", "2026-11-28", "2026-11-26", 50)}}),
++             "catch-up", "ok", None),
++            (TM(11, 28, 22), 1, j(undated={"events_to": "2026-11-27"}), "catch-up", "ok", 20.0)]
++    s = fn(t40.Rows(rows))
++    return (s["news"] == {"TPEx": (D(11, 30), D(11, 30), D(11, 27), 57), "TWSE": (D(11, 29), D(11, 29), D(11, 28), 9)}
++            and s["notices"] == {} and s["tdcc_on"] is None and fn(t40.Rows([]))["news"] == {})
++
++
++def test_state():
++    assert check_state()
++
++
++# ─── check（驗收 20～23）─────────────────────────────────────────
++NS = (True, {"TWSE": (D(11, 30), D(12, 18), {}, 900), "TPEx": (D(11, 30), D(12, 18), {}, 600)})
++REC = {"TWSE": (D(12, 21), D(12, 21), D(12, 18), 94), "TPEx": (D(12, 21), D(12, 21), D(12, 18), 57)}
++
++
++def _ns(gaps=(), mk_gaps=(), l=D(12, 18)):
++    days = [d for d in health.trading_days(D(11, 30), l, CLOSED)]
++    c = lambda skip: {d: 3 for d in days if d not in skip}
++    return True, {"TWSE": (D(11, 30), l, c(set(gaps)), 900), "TPEx": (D(11, 30), l, c(set(mk_gaps)), 600)}
++
++
++def check_line(src=HEA):
++    fn = _fns(health, src, ("news_gaps", "news_line"))[1]
++    head = "重大訊息最後成功：上市 2026-12-21（出表 12/21，發言日 12/18，94 筆）、上櫃 2026-12-21（出表 12/21，發言日 12/18，57 筆）"
++    t = D(12, 21)
++    return (fn((False, {}), {}, t, CLOSED) == "重大訊息：尚未建立資料表，請執行一次 python -m twstock setup-db"
++            and fn(_ns(), {}, t, CLOSED) == "重大訊息最後成功：尚無執行紀錄"
++            and fn(_ns(), REC, t, CLOSED) == head
++            and fn(_ns(), {"TWSE": REC["TWSE"]}, t, CLOSED) == head.split("、上櫃")[0] + "、上櫃 尚無紀錄"
++            and fn(_ns((D(12, 4), D(12, 11), D(12, 6))), REC, t, CLOSED) == head + "；⚠️ 近 30 天漏收：上市 12/04、12/11，漏收的日子無法回補"
++            and fn(_ns((D(12, 4),), (D(12, 4),)), REC, t, CLOSED) == head + "；⚠️ 近 30 天漏收：上市 12/04，上櫃 12/04，漏收的日子無法回補"
++            and fn(_ns(l=D(12, 17)), REC, t, CLOSED) == head                                    # lag = 1：不提示
++            and fn(_ns((D(12, 4),), l=D(12, 15)), REC, t, CLOSED) == head + "；⚠️ 近 30 天漏收：上市 12/04，漏收的日子無法回補；⚠️ 上市已 3 個交易日沒有收到新的發言日；⚠️ 上櫃已 3 個交易日沒有收到新的發言日"
++            and "漏收" not in fn(_ns((D(11, 30),)), REC, D(12, 30), CLOSED) and "漏收：上市 11/30" in fn(_ns((D(11, 30),)), REC, D(12, 21), CLOSED))                     # 11/30 在 今天 − 29 天之前，不算
++
++
++def test_line():
++    assert check_line()
++    assert health.news_gaps({D(12, 1): 1}, D(11, 30), D(12, 2), D(11, 30), CLOSED) == [D(11, 30), D(12, 2)]
++    assert health.news_gaps({}, D(11, 30), D(12, 2), D(12, 2), CLOSED) == [D(12, 2)] and health.news_gaps({}, None, None, D(1, 1), CLOSED) == []
++    assert health.news_gaps({}, D(12, 24), D(12, 28), D(12, 1), CLOSED) == [D(12, 24), D(12, 28)]          # 12/25 休市、週末不算
++    now = TM(12, 21, 10)
++    days = health.due_days(now, 20, CLOSED)
++    snap, st = t3._full_snapshot(days), {"alerts_at": TM(12, 18, 19), "events_to": days[-1], "news": REC}
++    (t0, rc0), (t1, rc1) = health.check_report(days, snap, now, st, CLOSED), health.check_report(days, snap, now, st, CLOSED, news=_ns((D(12, 4),)))
++    L1 = t1.splitlines()
++    i = next(k for k, l in enumerate(L1) if l.startswith("重大訊息"))
++    assert rc0 == rc1 == 0 and L1[i - 1].startswith("除權除息預告") and L1[:i] + L1[i + 1:] == t0.splitlines() and "重大訊息" not in t0
++    w, buf = NewsWorld(D(11, 27), table=False), io.StringIO()
++    with t3.env(w), mock.patch.object(health, "load_snapshot", w.snapshot), contextlib.redirect_stdout(buf):
++        rc = health.run_check(20, TM(11, 30, 12))
++    assert rc == 0 and "重大訊息：尚未建立資料表，請執行一次 python -m twstock setup-db" in buf.getvalue() and w.requests == [] and w.merges == []
++
++
++# ─── 匯出（驗收 24～29）─────────────────────────────────────────
++def _rows():
++    r = lambda mk, c, d, t, s, n="名": (mk, c, n, d, t, s)
++    return [r("TWSE", "2330", D(12, 19), time(10, 0), "休市日的一則"), r("TWSE", "2330", D(12, 18), time(14, 35), "B"), r("TWSE", "2330", D(12, 18), time(14, 35), "A"),
++            r("TPEx", "9999", D(12, 18), time(7, 0, 4), "官方名稱", "某公司"), r("TWSE", "2330", D(11, 19), time(8, 0), "邊界")]
++
++
++def check_export(src=EXP):
++    mn, note = _fns(export, src, ("mn_export", "news_note"))
++    c = {d: 1 for d in health.trading_days(D(11, 30), D(12, 18), CLOSED) if d not in (D(12, 4), D(12, 11))}
++    mks = {"TWSE": (D(11, 30), D(12, 19), c, 900), "TPEx": (D(12, 18), D(12, 18), {D(12, 18): 1}, 1)}
++    base, by, top = mn(_rows(), mks, D(12, 18), CLOSED)
++    one = mn([_rows()[0]], {"TWSE": (D(12, 19), D(12, 19), {}, 1)}, D(12, 18), CLOSED)
++    return (base == {"TWSE": {"f": "2026-11-30", "w": "2026-11-19", "x": ["2026-12-04", "2026-12-11"]}, "TPEx": {"f": "2026-12-18", "w": "2026-11-19", "x": []}}
++            and by["2330"] == [["2026-12-19", "10:00", "休市日的一則"], ["2026-12-18", "14:35", "B"], ["2026-12-18", "14:35", "A"], ["2026-11-19", "08:00", "邊界"]]
++            and top == {"d": "2026-12-18", "f": {"TWSE": "2026-11-30", "TPEx": "2026-12-18"}, "x": {"TWSE": ["2026-12-04", "2026-12-11"], "TPEx": []},
++                        "n": {"TWSE": 2, "TPEx": 1}, "r": [["2330", "TWSE", "14:35", "B", "名"], ["2330", "TWSE", "14:35", "A", "名"], ["9999", "TPEx", "07:00", "官方名稱", "某公司"]]}
++            and one[2] is None and mn([], {}, D(12, 18), CLOSED) == ({}, {}, None)
++            and note((True, mks), base, top) == "  📌 重大訊息：上市 2026-11-30 起 900 筆、上櫃 2026-12-18 起 1 筆；最新發言日 2026-12-18；近 30 天漏收 上市 2 天、上櫃 0 天"
++            and note((True, {"TWSE": mks["TWSE"]}), {"TWSE": base["TWSE"]}, None) == "  📌 重大訊息：上市 2026-11-30 起 900 筆、上櫃 尚無資料；最新發言日 --；近 30 天漏收 上市 2 天、上櫃 --"
++            and note((False, {}), {}, None) == "  📌 重大訊息：尚未建立 material_news（請執行 setup-db），mn 不輸出"
++            and note((True, {}), {}, None) == "  📌 重大訊息：material_news 還沒有資料，mn 不輸出")
++
++
++def test_export():
++    assert check_export()
++    assert export._load_news(t40.Rows([1]), D(11, 19)) == [1]
++    for s in ("    print(bs_note(bal is not None, bs_all))", "    print(news_note(news, mn_base, mn_latest))", '    print(f"✅ 匯出完成'):
++        assert s in EXP, s
++    assert EXP.index("    print(bs_note(bal is not None, bs_all))") < EXP.index("    print(news_note(news, mn_base, mn_latest))") < EXP.index('    print(f"✅ 匯出完成')
++    assert '**({"nx": nx_stock[code]} if code in nx_stock else {}),     # 第 40 輪 F40-2：下一次除權除息預告\n            **({"mn": {**mn_base[mk_], "r": mn_rows.get(code, [])}} if mk_ in mn_base else {}),' in EXP
++    assert "ORDER BY speak_date DESC, speak_time DESC, code, id" in _grab_py(EXP, "_load_news") and "clause" not in _grab_py(EXP, "mn_export")
++    assert EXP.index("    news = news_state(cur, latest_date - timedelta(days=45))") < EXP.index("    conn.close()\n    mlast")
++    assert "mn" not in _grab_py(EXP, "etf_export")
++
++
++# ─── 畫面（驗收 30～41）─────────────────────────────────────────
++SHORT = "只列官方主旨，不含說明全文；內容以原文為準"
++FULL = ("重大訊息是上市櫃公司依規定在公開資訊觀測站發布的公告。本站只列發言日、時間與主旨，不含說明全文，也不分類、不加註解；同一件事的更正或補充，官方會另發一則，兩則都會列出。"
++        "資料來自證交所、櫃買中心的開放資料，官方每次只提供一天的公告，本站沒收到的日子目前無法補；「沒有收到」是指那個交易日本站一則都沒有收到。時間是公司的發言時間。")
++TAIL = "。官方每次只提供一天的資料，沒收到的日子本站目前無法補"
++LINK = '<a href="https://mops.twse.com.tw/" target="_blank" rel="noopener noreferrer">公開資訊觀測站</a>'
++NASTY = "<b>a&b</b>\"'"
++
++
++def _js(stk, app, body):
++    return "\n".join([_grab(app, n) for n in ("fmt", "esc", "md", "noteHTML", "segHTML", "mnGap", "newsBoard", "mnApply")] +
++                     [_grab(stk, n) for n in ("mnCard", "mnShowAll")]) + "\n" + body
++
++
++def check_card(stk=STK, app=APP):
++    r = lambda n: [["2026-12-18", f"{i % 24:02d}:00", f"主旨{i}"] for i in range(n)]
++    cases = [{"f": "2026-11-30", "w": "2026-11-19", "x": [], "r": [["2026-12-18", "14:35", NASTY], ["2026-12-18", "07:00", "B"], ["2026-12-04", "07:00", "C"]]},
++             {"f": "2026-11-30", "w": "2026-11-19", "x": ["2026-12-04", "2026-12-11"], "r": r(11)},
++             {"f": "2026-11-30", "w": "2026-11-19", "x": [f"2026-12-{d:02d}" for d in (1, 2, 3, 4, 8, 18)], "r": r(10)},
++             {"f": "2026-11-10", "w": "2026-11-19", "x": [], "r": []}, {"f": "2026-11-30", "w": "2026-11-19", "x": [], "r": []}]
++    got = _node(_js(stk, app, f"console.log(JSON.stringify({json.dumps(cases)}.map(M => mnCard(M, '2330'))));"))
++    if got is None:
++        return True
++    if got == "ERR":
++        return False
++    row = lambda d, t, s, hide=False: f'<div class="al-row mn-row"{" style=\"display:none\"" if hide else ""}><span class="small muted num">{d} {t}</span>　<span class="mn-s">{s}</span></div>'
++    want = lambda sub, rows, btn, g: (f'<section class="sec card mn"><div class="sec-h"><h2>重大訊息</h2><span class="muted small">{sub}，公開資訊觀測站</span></div>\n{rows}\n{btn}\n'
++                                      f'<div class="muted small" style="margin-top:6px">本站自 2026/11/30 起收錄{g}{TAIL}</div>\n'
++                                      f'<div class="muted small">原文請到{LINK}以代號 2330 與發言日查詢</div>\n'
++                                      f'<div class="muted small" style="margin-top:6px"><details class="note"><summary>{SHORT}<i>說明</i></summary><div>{FULL}</div></details></div></section>')
++    w0 = want("11/30 起", row("12/18", "14:35", "&lt;b&gt;a&amp;b&lt;/b&gt;&quot;&#39;") + row("12/18", "07:00", "B") + row("12/04", "07:00", "C"), "", "")
++    return (got[0] == w0 and "<b>" not in got[0] and got[1].count('style="display:none"') == 1 and '<button class="chip" id="mnMore" style="margin-top:8px">顯示全部 11 則</button>' in got[1]
++            and "本站自 2026/11/30 起收錄；12/04、12/11 沒有收到。" in got[1] and "mnMore" not in got[2]
++            and "本站自 2026/11/30 起收錄；近 30 天有 6 個交易日沒有收到，最近一次 12/18。" in got[2]
++            and '<span class="muted small">近 30 天，公開資訊觀測站</span></div>\n<div class="muted small">近 30 天沒有重大訊息</div>' in got[3].replace("2026/11/10", "2026/11/30")
++            and '<span class="muted small">11/30 起，公開資訊觀測站</span></div>\n<div class="muted small">11/30 起沒有重大訊息</div>' in got[4])
++
++
++def check_show_all(stk=STK, app=APP):
++    got = _node(_js(stk, app, """const rows = [{ style: { display: 'none' } }, { style: { display: '' } }]; let gone = 0;
++global.document = { querySelectorAll: s => s === '#view .mn-row' ? rows : [] }; const $ = s => s === '#mnMore' ? { remove: () => { gone++; } } : null;
++mnShowAll(); console.log(JSON.stringify([rows.map(r => r.style.display), gone]));"""))
++    return got is None or got == [["", ""], 1]
++
++
++def test_card():
++    assert check_card() and check_show_all()
++    k = STK.index("  if (tab !== 'k') return;\n")
++    assert STK[k:].startswith("  if (tab !== 'k') return;\n  if (!E && data.mn) { $('#view').insertAdjacentHTML('beforeend', mnCard(data.mn, code)); $('#mnMore')?.addEventListener('click', mnShowAll); }")
++    assert "const STOCK_TABS = [['k', '走勢'], ['chip', '籌碼'], ['fund', '基本面']];" in STK
++
++
++L0 = {"stocks": {"2330": {"n": "台積電"}}, "mn": {"d": "2026-11-27", "f": {"TWSE": "2026-11-28", "TPEx": "2026-11-28"}, "x": {"TWSE": [], "TPEx": []},
++                                                 "n": {"TWSE": 2, "TPEx": 0}, "r": [["2330", "TWSE", "14:35", NASTY, "台積電"], ["9999", "TWSE", "07:00", "主旨", "某公司"]]}}
++
++
++def check_board(stk=STK, app=APP):
++    L1 = json.loads(json.dumps(L0))
++    L1["mn"]["f"]["TPEx"], L1["mn"]["x"]["TPEx"] = "2026-11-30", ["2026-12-04"]
++    js = _js(stk, app, f"""const L0 = {json.dumps(L0)}, L1 = {json.dumps(L1)};
++let App = {{ watch: new Set() }}; const a = newsBoard(L0); App = {{ watch: new Set(['2330']), mnOpen: true, mnW: true, mnQ: 'x"' }}; const b = newsBoard(L0);
++console.log(JSON.stringify([a, b, newsBoard(L1), newsBoard({{ stocks: {{}} }})]));""")
++    got = _node(js)
++    if got is None:
++        return True
++    if got == "ERR":
++        return False
++    a, b, c, e = got
++    s = "&lt;b&gt;a&amp;b&lt;/b&gt;&quot;&#39;"
++    return (a.startswith('<section class="sec card"><details class="al-box mn-box">\n  <summary class="sec-h"><h2>重大訊息</h2><span class="muted small">發言日 11/27　上市 2 則　上櫃 尚未收到</span><span class="sp"></span><i></i></summary>')
++            and "mnSeg" not in a and 'placeholder="篩選代號、名稱或主旨" aria-label="篩選重大訊息" value=""' in a
++            and f'<a class="al-row mn-r" href="#/stock/2330" data-c="2330"><div class="al-l"><b>台積電</b><span class="muted small">2330・上市</span><span class="sp"></span><span class="small num">14:35</span></div><div class="muted small al-why mn-s" title="{s}">{s}</div></a>' in a
++            and '<div class="al-row mn-r" data-c="9999"><div class="al-l"><b>某公司</b>' in a and "<b>a&b" not in a
++            and f'本站自 2026/11/28 起收錄{TAIL}</div>' in a and f"原文請到{LINK}以代號與發言日 11/27 查詢</div>\n</details></section>" in a
++            and '<details class="al-box mn-box" open>' in b and '<div class="seg" id="mnSeg"><button data-v="all" class="">全部</button><button data-v="w" class="on">只看自選</button></div>' in b
++            and 'value="x&quot;"' in b and f"本站自 上市 2026/11/28、上櫃 2026/11/30 起收錄；上櫃 12/04 沒有收到{TAIL}" in c and e == "")
++
++
++def check_filter(stk=STK, app=APP):
++    js = _js(stk, app, """const mk = (c, t) => ({ dataset: { c }, textContent: t, style: {} });
++const rows = [mk('2330', '台積電2330・上市14:35公告 KY 子公司'), mk('9999', '某公司9999・上市07:00董事會 Abc')], none = { style: {}, textContent: '' };
++const box = { querySelectorAll: () => rows }; const $ = s => s === '#view details.mn-box' ? box : s === '#mnNone' ? none : null;
++let App; const run = a => { App = Object.assign({ watch: new Set(), latest: { mn: { d: '2026-11-27' } } }, a); mnApply(); return [rows.map(r => r.style.display).join(','), none.style.display, none.textContent]; };
++console.log(JSON.stringify([run({ mnQ: ' 2330 ' }), run({ mnQ: 'ky' }), run({ mnW: true, watch: new Set(['9999']) }), run({ mnW: true, watch: new Set(['1234']) }),
++  run({ mnQ: 'zzz' }), run({ mnW: true }), run({}), run({ mnQ: 'aBC' })]));""")
++    got = _node(js)
++    return got is None or got == [[",none", "none", "沒有符合的重大訊息"], [",none", "none", "沒有符合的重大訊息"], ["none,", "none", "沒有符合的重大訊息"],
++                                  ["none,none", "", "自選股在 11/27 沒有重大訊息"], ["none,none", "", "沒有符合的重大訊息"], [",", "none", "沒有符合的重大訊息"], [",", "none", "沒有符合的重大訊息"], ["none,", "none", "沒有符合的重大訊息"]]
++
++
++def test_board():
++    assert check_board() and check_filter()
++    assert "    ${alertBoard(L)}${newsBoard(L)}`,   // 第 53 輪 F53-6\n" in APP
++    assert "  $('#view details.al-box')?.addEventListener('toggle', e => { App.alOpen = e.target.open; });\n  mnWire();" in APP
++    assert all("newsBoard" not in _grab(APP, n) for n in ("alertBoard", "watchGrp", "renderWatch"))
++    assert APP.index("function watchGrp(") < APP.index("function newsBoard(") < APP.index("function breadthCard(")
++
++
++# ─── 用詞、node 14、?v=、文件（驗收 40～45）─────────────────────────
++def _segs(stk=STK, app=APP, src=NEWS):
++    segs = [src] + [_grab(stk, n) for n in ("mnCard", "mnShowAll")] + [_grab(app, n) for n in ("newsBoard", "mnGap", "mnWire", "mnApply")]
++    segs += [_grab_py(HEA, n) for n in ("news_exists", "news_state", "news_gaps", "news_line")] + [_grab_py(EXP, n) for n in ("_load_news", "mn_export", "news_note")]
++    segs += [l for f in (app, stk, CAT, HEA, EXP, DBS) for l in f.splitlines() if "第 53 輪" in l]
++    segs += [l for l in README.splitlines() if l.startswith("- 第 53 輪重大訊息")]
++    return "\n".join(segs).replace("借券賣出", "")
++
++
++def check_words(stk=STK, app=APP, src=NEWS):
++    seg, js = _segs(stk, app, src), "\n".join([_grab(stk, n) for n in ("mnCard", "mnShowAll")] + [_grab(app, n) for n in ("newsBoard", "mnGap", "mnWire", "mnApply")])
++    return all(w not in seg for w in ADVICE) and all(w not in js for w in (".at(", "replaceAll", "||=", "&&=", "??="))
++
++
++def test_words_node14():
++    assert check_words()
++
++
++def test_version_and_docs():
++    for f in ("app.js", "stock.js", "app.css", "tools.js", "help.js", "compare.js"):
++        v = hashlib.sha1((SITE / f).read_bytes()).hexdigest()[:8]
++        assert f"{f}?v={v}" in HTML, f"index.html 要改成 {f}?v={v}"
++    for s in ("app.css?v=d1508f41", "tools.js?v=0a050889", "help.js?v=a5a5a7e8", "compare.js?v=f7e0bca5"):
++        assert s in HTML, s
++    assert "app.js?v=6cde9106" not in HTML and "stock.js?v=7c592b0f" not in HTML and HTML.count("https://") == 2
++    assert "python3 tests/test_iter53.py" in README and "第 53 輪" in (ROOT / "docs" / "iterations" / "README.md").read_text(encoding="utf-8")
++    r = next(l for l in README.splitlines() if l.startswith("- 第 53 輪重大訊息"))
++    for s in ("material_news", "`news`", "出表日期", "休市日", "⚠️", "說明", "`mn`", "`latest.mn`", "走勢", "總覽", "check", "無法補"):
++        assert s in r, s
++    assert not re.search(r"第 (?!53 輪)\d+ 輪", r)
++
++
++def test_contrast():
++    rows = [
++        ("欄名不 strip()", check_fixture, NEWS, "{k.strip(): v for k, v in raw.items()}", "dict(raw)"),
++        ("讀了說明", check_fixture, NEWS, '"subject": subject,', '"subject": subject, "說明": r.get("說明"),'),
++        ("時間不補 0", check_fields, NEWS, "        s = s.zfill(6)\n", ""),
++        ("事實發生日不檢查年份", check_fields, NEWS, " and (fd - sd).days <= 366", ""),
++        ("出表日期取最早", check_fields, NEWS, "return max(outs), list", "return min(outs), list"),
++        ("去重不正規化", check_dedup, NEWS, 'unicodedata.normalize("NFKC", subject).casefold()', "subject"),
++        ("不是 isolated", check_collect, NEWS, 'request("GET", _URLS[market], isolated=True)', 'request("GET", _URLS[market])'),
++        ("MERGE 更新 first_seen", check_collect, NEWS, "out_date = ?\n", "out_date = ?, first_seen = ?\n"),
++        ("空陣列也回傳紀錄", check_collect, NEWS, '下次執行再抓")\n        return None\n', '下次執行再抓")\n        return {}\n'),
++        ("pyodbc.Error 不包", check_collect, NEWS, "except pyodbc.Error as e:", "except ZeroDivisionError as e:"),
++        ("比發言日不比出表日期", check_plan, CAT, 'state["news"][mk][1] < now.date()', 'state["news"][mk][2] < now.date()'),
++        ("< 改 <=", check_plan, CAT, 'state["news"][mk][1] < now.date()', 'state["news"][mk][1] <= now.date()'),
++        ("news 加進 undated_errors", lambda s: check_isolation(s) == [], CAT, '("alerts", "events", "revenue", "financials", "industry", "chains")]', '("alerts", "events", "revenue", "financials", "industry", "chains") or k.startswith("news")]'),
++        ("changed 那一行拿掉", lambda s: check_world(s) == [], CAT, '        changed = changed or any(v.get("new")', '        changed = changed and any(v.get("new")'),
++        ("load_state 取最舊", check_state, HEA, 'state["news"].setdefault(mk, ', 'state["news"].__setitem__(mk, '),
++        ("lag 門檻 ≥ 1", check_line, HEA, "        if lag >= 2:", "        if lag >= 1:"),
++        ("漏收算到休市日", check_line, HEA, "return [d for d in trading_days(max(f, start), l, closed) if not counts.get(d)]",
++         "return [f + timedelta(n) for n in range((l - max(f, start)).days + 1) if not counts.get(f + timedelta(n)) and f + timedelta(n) >= start]"),
++        ("窗口用 30 天", check_export, EXP, "    w = latest_date - timedelta(days=29)\n", "    w = latest_date - timedelta(days=30)\n"),
++        ("d 取含休市日的最新發言日", check_export, EXP, "if r[3] >= w and is_trading_day(r[3], closed)]", "if r[3] >= w]"),
++        ("輸出條款", check_export, EXP, 'by_code[code].append([str(d), f"{t:%H:%M}", s])', 'by_code[code].append([str(d), f"{t:%H:%M}", s, None])'),
++        ("主旨不 esc", check_card, STK, '<span class="mn-s">${esc(r[2])}</span>', '<span class="mn-s">${r[2]}</span>'),
++        ("隱藏用 hidden 屬性", check_card, STK, """${i >= 10 ? ' style="display:none"' : ''}""", "${i >= 10 ? ' hidden' : ''}"),
++        ("顯示全部不還原", check_show_all, STK, "e.style.display = '';", "e.hidden = false;"),
++        ("自選 0 檔仍顯示切換鈕", lambda a: check_board(app=a), APP, "${App.watch.size ? segHTML(", "${1 ? segHTML("),
++        ("今日卡主旨不 esc", lambda a: check_board(app=a), APP, 'title="${esc(s)}">${esc(s)}</div>', 'title="${esc(s)}">${s}</div>'),
++        ("篩選不分大小寫拿掉", lambda a: check_filter(app=a), APP, "r.textContent.toUpperCase().includes(q)", "r.textContent.includes(q)"),
++        ("用詞（清單中的任一詞）", check_words, STK, "只列官方主旨", f"{sorted(ADVICE)[0]}只列官方主旨"),
++        ("node 14 不支援的寫法", lambda a: check_words(app=a), APP, "md(x[x.length - 1])", "md(x.at(-1))"),
++    ]
++    for name, check, src, old, new in rows:
++        bad = _mut(src, old, new)
++        try:
++            ok = check(bad)
++        except Exception:
++            ok = False
++        assert not ok, f"反證沒有被擋下：{name}"
++        print(f"  ✔ 反證擋下：{name}")
++
++
++if __name__ == "__main__":
++    for n, f in list(globals().items()):
++        if n.startswith("test_") and callable(f):
++            f()
++            print(f"✅ {n}")
+--- a/twstock/collectors/catchup.py
++++ b/twstock/collectors/catchup.py
+@@ -25,6 +25,7 @@
+ from .financials import collect_financials
+ from .futures import collect_futures, collect_futures_institutional
+ from .industry import update_industry
++from .news import collect_news
+ from .notices import collect_notices
+ from .revenue import collect_monthly_revenue, revenue_month_for
+ from .tdcc import collect_tdcc
+@@ -38,7 +39,7 @@
+     return d.year, d.month
+ 
+ 
+-def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, revenue_counts=None, fin_counts=None, *, share=None) -> dict:
++def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, revenue_counts=None, fin_counts=None, *, share=None, news=None) -> dict:
+     """
+     純函式：輸入現在時間、資料現況、執行紀錄、日曆；輸出待抓清單（不連網、不連資料庫）。
+     days：評估範圍；by_date：[(日期, 鍵)]；tpex_months；futures、futures_oi：(起, 迄)；alerts：bool；
+@@ -46,12 +47,14 @@
+     notices：bool（第 40 輪 F40-1：除權除息預告表，和 events 同一個條件，每個新交易日一次；collect --date 不抓）。
+     tdcc：{"latest": 表中最新資料日} 或 None（第 43 輪 F43-1：集保股權分散。share = share_state 的結果，None 或表不存在不排；
+     表中最新一週早於 last_full_week、今天還沒抓過才排；比週不比日期，休市日也排）。
++    news：待抓重大訊息的市場清單（第 53 輪 F53-3：news = 表是否存在；該市場沒有紀錄或最近一次成功的出表日期早於今天才排，休市日也排）。
+     """
+     days = due_days(now, n, closed)
+     plan = {"days": days, "by_date": [], "tpex_months": [], "futures": None, "futures_oi": None,
+             "alerts": False, "events": None, "revenue": [], "financials": None, "notices": False}
+     due = share and share[0] and (share[1] is None or week_of(share[1]) < last_full_week(now.date(), closed)) and state.get("tdcc_on") != now.date()
+     plan["tdcc"] = {"latest": share[1]} if due else None
++    plan["news"] = [mk for mk in ("TWSE", "TPEx") if news and (mk not in (state.get("news") or {}) or state["news"][mk][1] < now.date())]   # 第 53 輪：放在 if not days 之前
+     if not days:
+         return plan
+     med = medians(snap)
+@@ -105,7 +108,7 @@
+ 
+ def plan_is_empty(plan: dict) -> bool:
+     return not (plan["by_date"] or plan["tpex_months"] or plan["futures"] or plan["futures_oi"]
+-                or plan["alerts"] or plan["events"] or plan["revenue"] or plan.get("financials") or plan.get("tdcc"))
++                or plan["alerts"] or plan["events"] or plan["revenue"] or plan.get("financials") or plan.get("tdcc") or plan.get("news"))
+ 
+ 
+ def _guard(key, errors, fn, *args):
+@@ -150,6 +153,11 @@
+     sd = []
+     if plan.get("tdcc") and _guard("tdcc", errors, lambda: sd.append(collect_tdcc(plan["tdcc"]["latest"], now.date()))):
+         undated["tdcc"] = sd[0]
++    # 第 53 輪 F53-3：重大訊息兩個市場各抓各的（isolated，不重試）；失敗只印 ⚠️，不列入 undated_errors；官方沒有資料（None）不記錄，下次執行再抓
++    for mk in plan.get("news") or ():
++        mn = []
++        if _guard(f"news.{mk}", errors, lambda: mn.append(collect_news(mk, now.date()))) and mn[0] is not None:
++            undated.setdefault("news", {})[mk] = mn[0]
+     if plan["revenue"] and not no_revenue:
+         if all([_guard("revenue", errors, collect_monthly_revenue, y, m) for y, m in plan["revenue"]]):
+             undated["revenue"] = str(now.date())
+@@ -249,6 +257,7 @@
+         warn_uncovered(closed, now)
+         state = load_state(cur)
+         share = share_state(cur)            # 第 43 輪 F43-1：表不存在時不排集保股權分散（setup-db 之前收集照常）
++        news = health.news_exists(cur)            # 第 53 輪 F53-3：表不存在時不排重大訊息
+         # 中位數需要 20 個交易日
+         base = due_days(now, max(days, health.MEDIAN_DAYS), closed)[0]
+         end = date_ or now.date()
+@@ -266,7 +275,7 @@
+                 print(f"ℹ️  {date_} 休市，不發行情請求")
+             plan = plan_for_date(date_, now, is_closed, financial_counts(cur), closed)
+         else:
+-            plan = make_plan(now, days, before, state, closed, _revenue_counts(cur), financial_counts(cur), share=share)
++            plan = make_plan(now, days, before, state, closed, _revenue_counts(cur), financial_counts(cur), share=share, news=news)
+     finally:
+         conn.close()
+ 
+@@ -303,6 +312,7 @@
+         closed = load_closed(cur)       # 含剛才登記或移除的臨時休市
+         changed = any(before[k] != after[k] for k in before) or _undated_counts(cur) != undated_before
+         changed = changed or any((undated.get("tdcc") or {}).get(k) for k in ("s", "e"))    # 第 43 輪 D115 = A：寫入新的一週算有新資料
++        changed = changed or any(v.get("new") for v in (undated.get("news") or {}).values())    # 第 53 輪：有新增的重大訊息才算有新資料
+         items = evaluate(day_list, after, now, errors)
+         result = health.outcome(items)
+         undated_errors = [k for k in errors if k in ("alerts", "events", "revenue", "financials", "industry", "chains")]
+--- /dev/null
++++ b/twstock/collectors/news.py
+@@ -0,0 +1,110 @@
++"""
++第 53 輪 F53-1：上市、上櫃重大訊息（證交所 OpenAPI t187ap04_L、櫃買 OpenAPI mopsfin_t187ap04_O）。
++官方每次只提供一天的公告（不能回補）；collect --catch-up 依「出表日期」判斷要不要抓，休市日、週末也抓，寫入 material_news。
++只存發言日、時間、主旨等短欄位，不讀、不存「說明」。鍵 = (市場, 代號, 發言日, 發言時間, 主旨)；不刪除，first_seen 只在新增時寫。
++"""
++import re
++import unicodedata
++from datetime import time
++
++import pyodbc
++
++from .. import db
++from ..fetch import SchemaError, request
++from .alerts import roc_date
++
++_URLS = {"TWSE": "https://openapi.twse.com.tw/v1/opendata/t187ap04_L",
++         "TPEx": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O"}
++# (代號, 名稱, 出表日期)；其餘欄名兩市場相同。上市「主旨 」欄名結尾有空白，比對前每個鍵先 strip()
++_FIELDS = {"TWSE": ("公司代號", "公司名稱", "出表日期"), "TPEx": ("SecuritiesCompanyCode", "CompanyName", "Date")}
++_LABEL = {"TWSE": "上市", "TPEx": "上櫃"}
++
++
++def _time(s):
++    """1～6 碼數字（補 0 到 6 碼）或 HH:MM:SS → time；其他寫法或超出範圍 → None。"""
++    s = str(s or "").strip()
++    if re.fullmatch(r"\d{1,6}", s):
++        s = s.zfill(6)
++        h, m, x = int(s[:2]), int(s[2:4]), int(s[4:])
++    elif re.fullmatch(r"\d{2}:\d{2}:\d{2}", s):
++        h, m, x = (int(v) for v in s.split(":"))
++    else:
++        return None
++    return time(h, m, x) if h < 24 and m < 60 and x < 60 else None
++
++
++def parse_news(market: str, data) -> tuple:
++    """官方回應 → (出表日期, rows, 略過列數)。空陣列 → (None, [], 0)；不是陣列、缺必要欄、出表日期全部解析不到 → SchemaError。
++    rows = [{code, name, speak_date, speak_time, subject, clause, fact_date}]；同一則（主旨以 NFKC＋casefold 比較）只留最後一列。"""
++    c_code, c_name, c_out = _FIELDS[market]
++    if not isinstance(data, list):
++        raise SchemaError(f"{market} 重大訊息回應不是陣列")
++    if not data:
++        return None, [], 0
++    if not isinstance(data[0], dict):
++        raise SchemaError(f"{market} 重大訊息欄位不符：{data[0]!r}"[:200])
++    first = {k.strip() for k in data[0]}
++    if not all(k in first for k in (c_code, "發言日期", "發言時間", "主旨", c_out)):
++        raise SchemaError(f"{market} 重大訊息欄位不符：{list(data[0])}")
++    outs, out, skipped = [], {}, 0
++    for raw in data:
++        if not isinstance(raw, dict):
++            skipped += 1
++            continue
++        r = {k.strip(): v for k, v in raw.items()}
++        if (o := roc_date(r.get(c_out))) is not None:
++            outs.append(o)
++        code, subject = str(r.get(c_code) or "").strip(), str(r.get("主旨") or "").strip()
++        sd, st = roc_date(r.get("發言日期")), _time(r.get("發言時間"))
++        if not code or len(code) > 10 or not subject or len(subject) > 400 or sd is None or st is None:
++            skipped += 1
++            continue
++        name, clause = str(r.get(c_name) or "").strip(), str(r.get("符合條款") or "").strip()
++        fd = roc_date(r.get("事實發生日"))
++        out[(code, sd, st, unicodedata.normalize("NFKC", subject).casefold())] = {
++            "code": code, "name": name if 0 < len(name) <= 40 else None, "speak_date": sd, "speak_time": st, "subject": subject,
++            "clause": clause if 0 < len(clause) <= 40 else None,
++            "fact_date": fd if fd is not None and (fd - sd).days <= 366 else None}        # 1201123 這種年份打錯的日子存 NULL
++    if not outs:
++        raise SchemaError(f"{market} 重大訊息出表日期無法解析")
++    if min(outs) != max(outs):
++        print(f"  ⚠️  {_LABEL[market]}重大訊息的出表日期不一致（{min(outs)} ～ {max(outs)}），以最晚的為準")
++    return max(outs), list(out.values()), skipped
++
++
++def fetch_news(market: str) -> tuple:
++    return parse_news(market, request("GET", _URLS[market], isolated=True))
++
++
++def collect_news(market: str, seen):
++    """抓一個市場並 MERGE；seen = 抓取日（台灣日期）。官方沒有資料 → None（不記錄，下次執行再抓）；
++    否則回傳 {"on": 抓取日, "t": 出表日期, "d": 最新發言日, "n": 筆數, "new": 新增筆數}。寫入失敗包成 RuntimeError（_guard 只印 ⚠️）。"""
++    out_date, rows, skipped = fetch_news(market)
++    if not rows:
++        print(f"  📰 {_LABEL[market]}重大訊息：官方目前沒有資料（0 筆），下次執行再抓")
++        return None
++    j = db.to_json([{**r, "speak_date": r["speak_date"].isoformat(), "speak_time": r["speak_time"].isoformat(),
++                     "fact_date": r["fact_date"] and r["fact_date"].isoformat()} for r in rows])
++    try:
++        conn = db.connect()
++        try:
++            got = conn.cursor().execute("""
++                MERGE material_news AS t
++                USING (SELECT * FROM OPENJSON(?) WITH (code NVARCHAR(10), name NVARCHAR(40), speak_date DATE, speak_time TIME(0),
++                       subject NVARCHAR(400), clause NVARCHAR(40), fact_date DATE)) AS s
++                ON t.market = ? AND t.code = s.code AND t.speak_date = s.speak_date AND t.speak_time = s.speak_time AND t.subject = s.subject
++                WHEN MATCHED THEN UPDATE SET name = s.name, clause = s.clause, fact_date = s.fact_date, out_date = ?
++                WHEN NOT MATCHED THEN INSERT (market, code, name, speak_date, speak_time, subject, clause, fact_date, out_date, first_seen)
++                     VALUES (?, s.code, s.name, s.speak_date, s.speak_time, s.subject, s.clause, s.fact_date, ?, ?)
++                OUTPUT $action;
++            """, j, market, out_date, market, out_date, seen).fetchall()
++            conn.commit()
++        finally:
++            conn.close()
++    except pyodbc.Error as e:
++        raise RuntimeError(f"material_news 寫入失敗（請確認已執行 setup-db）：{str(e).splitlines()[0][:120]}") from e
++    new = sum(r[0] == "INSERT" for r in got)
++    lo, hi = min(r["speak_date"] for r in rows), max(r["speak_date"] for r in rows)
++    print(f"  📰 {_LABEL[market]}重大訊息 {len(rows):,} 筆（出表 {out_date}，發言日 {lo}{f' ～ {hi}' if hi != lo else ''}，新增 {new:,} 筆"
++          + (f"，略過 {skipped:,} 筆無法解析" if skipped else "") + "）")
++    return {"on": str(seen), "t": str(out_date), "d": str(hi), "n": len(rows), "new": new}
+--- a/twstock/db.py
++++ b/twstock/db.py
+@@ -503,6 +503,26 @@
+         created_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+         updated_at    DATETIME       NOT NULL DEFAULT GETDATE(),
+         CONSTRAINT UQ_quarterly_balance UNIQUE (stock_id, fin_year, fin_quarter)
++    )
++    """,
++    # 重大訊息（第 53 輪 F53-2）：上市、上櫃 OpenAPI 每日重大訊息的主旨等短欄位，不存「說明」；全部保留不刪。
++    # 唯一鍵含主旨（同一秒多則）；out_date = 最近一次看到該則時的出表日期，first_seen 只在新增時寫
++    """
++    IF OBJECT_ID('material_news') IS NULL
++    CREATE TABLE material_news (
++        id          INT IDENTITY(1,1) PRIMARY KEY,
++        market      NVARCHAR(4)    NOT NULL CHECK (market IN ('TWSE','TPEx')),
++        code        NVARCHAR(10)   NOT NULL,
++        name        NVARCHAR(40)   NULL,
++        speak_date  DATE           NOT NULL,
++        speak_time  TIME(0)        NOT NULL,
++        subject     NVARCHAR(400)  NOT NULL,
++        clause      NVARCHAR(40)   NULL,
++        fact_date   DATE           NULL,
++        out_date    DATE           NOT NULL,
++        first_seen  DATE           NOT NULL,
++        created_at  DATETIME       NOT NULL DEFAULT GETDATE(),
++        CONSTRAINT UQ_material_news UNIQUE (market, code, speak_date, speak_time, subject)
+     )
+     """,
+     # 借券賣出（第 11 輪 B14；股，和融資融券的張不同）：上市 TWT93U、上櫃 margin/sbl 的「借券賣出」6 欄＋備註原文；
+@@ -660,5 +680,5 @@
+     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
+           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
+           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
+-          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、quarterly_balance（第 52 輪）、"
++          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、quarterly_balance（第 52 輪）、material_news（第 53 輪）、"
+           "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、share_distribution（第 43 輪）、twse_index（第 51 輪）、etf_holding_gaps")
+--- a/twstock/export.py
++++ b/twstock/export.py
+@@ -27,6 +27,7 @@
+ from .config import SITE_DATA_DIR, tw_now
+ from .health import FIN_DUE, HOLDINGS, build_status, fin_quarter_for, load_state, prev_quarter, share_exists
+ from .tradingcal import is_trading_day, load_closed, trading_days
++from .health import news_gaps, news_state         # 第 53 輪 F53-4
+ 
+ REPLAY = 20                    # 泡泡圖回放天數
+ FUTURES_DAYS = 500             # 首頁台指期日 K 匯出天數
+@@ -1665,6 +1666,46 @@
+             f"一般業 ROE {sum(b['roe'] is not None for b in ci):,}／{len(ci):,} 檔、負債比 {sum(b['dr'] is not None for b in ci):,}／{len(ci):,} 檔")
+ 
+ 
++def _load_news(cur, since):
++    """第 53 輪 F53-4：since 之後的重大訊息（新到舊；同一秒依代號、寫入順序）。只有 SELECT；呼叫端先確認表存在。"""
++    return cur.execute("SELECT market, code, name, speak_date, speak_time, subject FROM material_news WHERE speak_date >= ? "
++                       "ORDER BY speak_date DESC, speak_time DESC, code, id", since).fetchall()
++
++
++def mn_export(rows, mks: dict, latest_date: date, closed) -> tuple:
++    """
++    第 53 輪 F53-4：重大訊息 → (各市場 {"f", "w", "x"}, {代號: [[發言日, "HH:MM", 主旨]]}, latest.mn 或 None)。
++    mks = news_state 的第二項；w = 資料日 − 29 天；x = w 起漏收的交易日。不輸出條款。latest.mn 只放最新一個「交易日」發言日的列（D236）。
++    """
++    w = latest_date - timedelta(days=29)
++    base = {mk: {"f": str(f), "w": str(w), "x": [str(d) for d in news_gaps(c, f, l, w, closed)]} for mk, (f, l, c, _) in mks.items()}
++    by_code = defaultdict(list)
++    for mk, code, name, d, t, s in rows:
++        if d >= w:
++            by_code[code].append([str(d), f"{t:%H:%M}", s])
++    days = [r[3] for r in rows if r[3] >= w and is_trading_day(r[3], closed)]
++    if not days:
++        return base, dict(by_code), None
++    d = max(days)
++    top = [r for r in rows if r[3] == d]
++    return base, dict(by_code), {"d": str(d), "f": {mk: b["f"] for mk, b in base.items()}, "x": {mk: b["x"] for mk, b in base.items()},
++                                 "n": {mk: sum(r[0] == mk for r in top) for mk in base},
++                                 "r": [[code, mk, f"{t:%H:%M}", s, name] for mk, code, name, _, t, s in top]}
++
++
++def news_note(news, base: dict, mn) -> str:
++    """第 53 輪 F53-4：匯出 📌 一行。news = news_state 的結果。"""
++    ok, mks = news
++    if not ok:
++        return "  📌 重大訊息：尚未建立 material_news（請執行 setup-db），mn 不輸出"
++    if not mks:
++        return "  📌 重大訊息：material_news 還沒有資料，mn 不輸出"
++    one = lambda mk, label: f"{label} {mks[mk][0]} 起 {mks[mk][3]:,} 筆" if mk in mks else f"{label} 尚無資料"
++    gap = lambda mk, label: f"{label} {len(base[mk]['x'])} 天" if mk in base else f"{label} --"
++    return (f"  📌 重大訊息：{one('TWSE', '上市')}、{one('TPEx', '上櫃')}；最新發言日 {mn['d'] if mn else '--'}；"
++            f"近 30 天漏收 {gap('TWSE', '上市')}、{gap('TPEx', '上櫃')}")
++
++
+ def _load_balance(cur):
+     """{代號: {(年, 季): (資產, 負債, 母公司權益, 權益總計, 每股淨值)}}；資料表不存在 → None。"""
+     if cur.execute("SELECT OBJECT_ID('quarterly_balance')").fetchone()[0] is None:
+@@ -1894,6 +1935,8 @@
+     epx, emg, esb, esd = _load_etf_hist(cur)                   # 第 15 輪 F15-2：ETF 個股頁
+     eev = _load_etf_events(cur)                                # 第 36 輪 F36-1：ETF 官方除息
+     sh_stock, sh_etf = share_export(_load_share(cur))          # 第 43 輪 F43-2：集保股權分散（表不存在時兩者皆空）
++    news = news_state(cur, latest_date - timedelta(days=45))   # 第 53 輪 F53-4：重大訊息（表不存在時 (False, {})）
++    mn_base, mn_rows, mn_latest = mn_export(_load_news(cur, latest_date - timedelta(days=29)) if news[1] else [], news[1], latest_date, closed)
+     conn.close()
+     mlast = {m: ds[-1] for m, ds in mdates.items()}
+     m5 = {m: ds[-6] if len(ds) >= 6 else None for m, ds in mdates.items()}
+@@ -2003,6 +2046,7 @@
+                                  idx_close[info["market"]], w52_start)} if d_[-1] == latest_date and any(x is not None for x in c) else {}),
+             "dv": dividends(d_, c, ev, events.get(code, [])),      # 第 24 輪 F24-6：股利與填息（沒有紀錄是 []）
+             **({"nx": nx_stock[code]} if code in nx_stock else {}),     # 第 40 輪 F40-2：下一次除權除息預告
++            **({"mn": {**mn_base[mk_], "r": mn_rows.get(code, [])}} if mk_ in mn_base else {}),   # 第 53 輪 F53-4：該市場有資料就輸出（0 則是 []）
+         })
+         # 市場寬度：還原收盤（無成交日不列入）、成交額
+         b_series[info["market"]].append({d_[i]: float(c[i]) * af[i] for i in range(len(d_)) if d_[i] >= b_from and c[i] is not None})
+@@ -2187,6 +2231,8 @@
+         latest["sx"] = sx                                       # 第 51 輪 F51-3：證交所上市類股指數（沒有資料不輸出）
+     if latest_date in ixr_close:
+         latest["ixr"] = {"d": str(latest_date), "pf": ixr_perf(p_days, ixr_close, w52_start)}   # 第 51 輪 F51-5：近期表現的加權報酬指數同期
++    if mn_latest:
++        latest["mn"] = mn_latest                                 # 第 53 輪 F53-4：今日卡的重大訊息（最新一個交易日發言日）
+     # screen.json 在 latest.json 之前寫：中途失敗時前端比對 d／fd 會顯示不同步
+     S = screen_build(screen, {"d": str(latest_date), "fd": str(dates[-1]), "md": {m: str(d) for m, d in mlast.items()},
+                               "sd": {m: str(d) for m, d in slast.items()}})
+@@ -2215,6 +2261,7 @@
+         print(f"⚠️  上市官方漲跌 0、收盤 ≠ 前收，但找不到除權息／減資事件 {len(miss_all)} 筆（維持「不比價」）：" +
+               "、".join(f"{c} {d}" for c, d in miss_all[:10]))
+     print(bs_note(bal is not None, bs_all))                     # 第 52 輪 F52-4（放在 ⚠️ 之後：test_iter51 執行「ETF 個股」到 if bad_all 這一段）
++    print(news_note(news, mn_base, mn_latest))                  # 第 53 輪 F53-4
+     print(f"✅ 匯出完成：資料日 {latest_date}，個股 {len(prices)} 檔，"
+           f"類股 {len(latest['groups']['industry'])}、產業鏈 {len(latest['groups']['chain'])}、"
+           f"概念 {len(latest['groups']['concept'])}，台指期 {len(futures['d']) if futures else 0} 天，"
+--- a/twstock/health.py
++++ b/twstock/health.py
+@@ -234,9 +234,11 @@
+     warnings（最後一次收集的警告）、export_failed（最近一筆「有新資料或有匯出」的紀錄是 abnormal 且沒有匯出耗時 = 匯出失敗）。
+     第 40 輪：notices = {市場: (最近一次成功的抓取日, 筆數)}，兩個市場各自取最新一筆；從沒成功的市場沒有鍵。
+     第 43 輪：tdcc_on = 最近一次抓到集保股權分散的抓取日（不論官方有沒有更新），同一天不再抓。
++    第 53 輪：news = {市場: (抓取日, 出表日期, 最新發言日, 筆數)}，兩個市場各自取最新一筆；從沒成功的市場沒有鍵。
+     """
+     state = {"alerts_at": None, "events_to": None, "revenue_on": None, "financials_on": None, "collected_at": None, "last_run": None,
+              "events_at": None, "events_n": None, "warnings": [], "export_failed": None, "notices": {}, "tdcc_on": None}
++    state["news"] = {}                                              # 第 53 輪 F53-3
+     for finished, new_data, detail, *extra in cur.execute(
+             "SELECT TOP 200 finished_at, new_data, detail, command, outcome, export_seconds FROM collect_runs ORDER BY run_id DESC").fetchall():
+         d = json.loads(detail)
+@@ -261,6 +263,8 @@
+             state["notices"].setdefault(mk, (date.fromisoformat(v["on"]), v["n"]))
+         if und.get("tdcc") and state["tdcc_on"] is None:
+             state["tdcc_on"] = date.fromisoformat(und["tdcc"]["on"])
++        for mk, v in (und.get("news") or {}).items():               # 第 53 輪：新到舊，先看到的就是最新一筆
++            state["news"].setdefault(mk, (*(date.fromisoformat(v[k]) for k in ("on", "t", "d")), v["n"]))
+     return state
+ 
+ 
+@@ -425,7 +429,7 @@
+     return ABNORMAL, f"{head}，最後一次收集季報 {fin_on or '尚無紀錄'}"
+ 
+ 
+-def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None, financials=None, *, share=None) -> tuple:
++def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None, financials=None, *, share=None, news=None) -> tuple:
+     """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求；schedule 由呼叫端傳入（schedule_status()）；revenue = 各月營收家數（None 不印營收一行）；
+     financials = 各季季報家數 {(年, 季): (總家數, 金融業家數)}（None 不印季報一行）；share = share_state 的結果（None 不印集保股權分散一行）。"""
+     items, med = evaluate(days, snap, now), medians(snap)
+@@ -466,6 +470,8 @@
+     out.append(notices_line(state.get("notices"), days[-1], closed))         # 第 40 輪 F40-1：放在警告之後，事件與警告兩行相鄰不變
+     if share is not None:
+         out.append(share_line(share, now.date(), closed))                      # 第 43 輪 F43-1：只顯示，不算異常
++    if news is not None:
++        out.append(news_line(news, state.get("news"), now.date(), closed))     # 第 53 輪 F53-3：只顯示，不算異常
+     rev = revenue_status(now.date(), revenue, state.get("revenue_on"), closed) if revenue is not None else None
+     if rev:
+         out.append(rev[1] if rev[0] != ABNORMAL else f"{rev[1]}，❌ 異常")
+@@ -526,8 +532,58 @@
+     latest = cur.execute("SELECT MAX(data_date) FROM share_distribution").fetchone()[0]
+     n = dict(cur.execute("SELECT is_etf, COUNT(*) FROM share_distribution WHERE data_date = ? GROUP BY is_etf", latest).fetchall()) if latest else {}
+     return True, latest, n.get(False, 0), n.get(True, 0)
++
++
++def news_exists(cur) -> bool:
++    """第 53 輪：material_news 是否已建立（setup-db 之前收集、匯出、check 都不查這張表）。"""
++    row = cur.execute("SELECT OBJECT_ID('material_news')").fetchone()
++    return bool(row and row[0] is not None)
++
++
++def news_state(cur, since) -> tuple:
++    """第 53 輪：(表是否存在, {市場: (第一個發言日, 最新發言日, {發言日: 筆數}, 全部筆數)})；每日筆數只算 since 之後。check 與匯出共用。"""
++    if not news_exists(cur):
++        return False, {}
++    out = {mk: (f, l, {}, n) for mk, f, l, n in cur.execute(
++        "SELECT market, MIN(speak_date), MAX(speak_date), COUNT(*) FROM material_news GROUP BY market").fetchall()}
++    for mk, d, n in cur.execute("SELECT market, speak_date, COUNT(*) FROM material_news WHERE speak_date >= ? GROUP BY market, speak_date",
++                                since).fetchall():
++        out[mk][2][d] = n
++    return True, out
+ 
+ 
++def news_gaps(counts: dict, f, l, start, closed) -> list:
++    """第 53 輪：max(f, start) ～ l 之間一則都沒有的交易日（舊到新）；休市日（含臨時休市）不算。"""
++    if f is None or l is None:
++        return []
++    return [d for d in trading_days(max(f, start), l, closed) if not counts.get(d)]
++
++
++def news_line(news, records, today: date, closed) -> str:
++    """第 53 輪 F53-3：check 的重大訊息一行（只顯示，不算異常）。records = load_state 的 news。"""
++    ok, mks = news
++    if not ok:
++        return "重大訊息：尚未建立資料表，請執行一次 python -m twstock setup-db"
++    if not records:
++        return "重大訊息最後成功：尚無執行紀錄"
++    label = {"TWSE": "上市", "TPEx": "上櫃"}
++    def one(mk):
++        if mk not in records:
++            return f"{label[mk]} 尚無紀錄"
++        on, t, d, n = records[mk]
++        return f"{label[mk]} {on}（出表 {t:%m/%d}，發言日 {d:%m/%d}，{n:,} 筆）"
++    line = f"重大訊息最後成功：{one('TWSE')}、{one('TPEx')}"
++    gaps = [(mk, news_gaps(c, f, l, today - timedelta(days=29), closed)) for mk, (f, l, c, _) in sorted(mks.items(), key=lambda x: x[0] != "TWSE")]
++    if any(x for _, x in gaps):
++        line += "；⚠️ 近 30 天漏收：" + "，".join(f"{label[mk]} " + "、".join(f"{d:%m/%d}" for d in x) for mk, x in gaps if x) + "，漏收的日子無法回補"
++    prev = trading_days(today - timedelta(days=45), today - timedelta(days=1), closed)
++    for mk, (f, l, c, _) in sorted(mks.items(), key=lambda x: x[0] != "TWSE"):
++        lag = len(trading_days(l + timedelta(days=1), prev[-1], closed)) if prev else 0
++        if lag >= 2:
++            line += f"；⚠️ {label[mk]}已 {lag} 個交易日沒有收到新的發言日"
++    return line
++
++
+ def revenue_counts(cur) -> dict:
+     """{(年, 月): 家數}；SQL 與 collectors.catchup._revenue_counts 相同。"""
+     return {(y, m): n for y, m, n in cur.execute(
+@@ -554,11 +610,12 @@
+         revenue = revenue_counts(cur)
+         financials = financial_counts(cur)
+         share = share_state(cur)                                    # 第 43 輪 F43-1
++        news = news_state(cur, now.date() - timedelta(days=45))     # 第 53 輪 F53-3
+         adhoc = [r[0] for r in cur.execute("SELECT holiday_date FROM market_holidays WHERE source = 'adhoc' AND holiday_date BETWEEN ? AND ? "
+                                            "ORDER BY holiday_date", start, days[-1]).fetchall()]
+     finally:
+         conn.close()
+-    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue, financials, share=share)
++    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue, financials, share=share, news=news)
+     print(text)
+     return rc
+ 

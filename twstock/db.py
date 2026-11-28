@@ -505,6 +505,26 @@ DDL = [
         CONSTRAINT UQ_quarterly_balance UNIQUE (stock_id, fin_year, fin_quarter)
     )
     """,
+    # 重大訊息（第 53 輪 F53-2）：上市、上櫃 OpenAPI 每日重大訊息的主旨等短欄位，不存「說明」；全部保留不刪。
+    # 唯一鍵含主旨（同一秒多則）；out_date = 最近一次看到該則時的出表日期，first_seen 只在新增時寫
+    """
+    IF OBJECT_ID('material_news') IS NULL
+    CREATE TABLE material_news (
+        id          INT IDENTITY(1,1) PRIMARY KEY,
+        market      NVARCHAR(4)    NOT NULL CHECK (market IN ('TWSE','TPEx')),
+        code        NVARCHAR(10)   NOT NULL,
+        name        NVARCHAR(40)   NULL,
+        speak_date  DATE           NOT NULL,
+        speak_time  TIME(0)        NOT NULL,
+        subject     NVARCHAR(400)  NOT NULL,
+        clause      NVARCHAR(40)   NULL,
+        fact_date   DATE           NULL,
+        out_date    DATE           NOT NULL,
+        first_seen  DATE           NOT NULL,
+        created_at  DATETIME       NOT NULL DEFAULT GETDATE(),
+        CONSTRAINT UQ_material_news UNIQUE (market, code, speak_date, speak_time, subject)
+    )
+    """,
     # 借券賣出（第 11 輪 B14；股，和融資融券的張不同）：上市 TWT93U、上櫃 margin/sbl 的「借券賣出」6 欄＋備註原文；
     # 股票 sbl_trades、ETF etf_sbl 欄位相同（比照 margin_trades／etf_margin）。單檔最大 3481 約 7.9 億股（11/06，INT 上限的 37%），一律 BIGINT 留餘裕
     """
@@ -660,5 +680,5 @@ def setup_database():
     print("✅ 資料表已確認：stocks、daily_prices、monthly_revenue、stock_fundamentals、"
           "institutional_trades、futures_daily_prices、futures_institutional、industry_chains、"
           "market_index、stock_alerts、price_events、insti_amount、collect_runs、market_holidays、"
-          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、quarterly_balance（第 52 輪）、"
+          "etfs、etf_daily、margin_trades、etf_margin、margin_market、etf_holdings、etf_holding_summary、market_breadth、quarterly_financials、quarterly_balance（第 52 輪）、material_news（第 53 輪）、"
           "sbl_trades、etf_sbl（第 11 輪另加 stocks.shares）、etf_events（第 24 輪另加 price_events 股利欄）、foreign_holdings（第 29 輪）、dividend_notices（第 40 輪）、share_distribution（第 43 輪）、twse_index（第 51 輪）、etf_holding_gaps")

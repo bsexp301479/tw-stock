@@ -229,7 +229,7 @@ function renderToday(t) {
         ${QUADS.map(([q, d]) => `<a class="quad q-${q}" href="#/bubble" data-q="${q}"><div class="t">${q}</div><div class="n num">${counts[q]}</div><div class="d">${d}</div></a>`).join('')}
       </div>
     </section>
-    ${alertBoard(L)}`,
+    ${alertBoard(L)}${newsBoard(L)}`,   // 第 53 輪 F53-6
     credit: `<section class="sec grid ${marginCard(L) && valCard(L) ? 'g2' : 'g-one'}">${marginCard(L)}${valCard(L)}</section>`,   // 信用交易、估值左右並排
     fut: fut.trim() || '<div class="empty">沒有期貨資料</div>',
   };
@@ -270,6 +270,7 @@ function renderToday(t) {
     App.sxSort = { k, d: o.k === k ? -o.d : -1 }; renderToday(); }));
   $('#alMore')?.addEventListener('click', () => { App.alertAll = !App.alertAll; renderToday(); });
   $('#view details.al-box')?.addEventListener('toggle', e => { App.alOpen = e.target.open; });
+  mnWire();                                                              // 第 53 輪 F53-6
   $('#view').addEventListener('click', onRowClick);
   if (tab === 'fut') { drawFutures(L.futures); drawOI(L.futures_oi); }
 }
@@ -456,6 +457,54 @@ function watchGrp(W, S) {
 }
 
 // 市場寬度卡（A3＋A8）：全部為網站自算（還原收盤、股票、不含 ETF）；官方家數在成交額卡
+// 第 53 輪 F53-6：總覽最下方的重大訊息清單（最新一個交易日發言日；預設收合；只看自選、文字篩選只隱藏列，不重畫）
+function newsBoard(L) {
+  const M = L.mn;
+  if (!M) return '';
+  const cnt = m => M.n[m] ? fmt(M.n[m]) + ' 則' : '尚未收到', lb = { TWSE: '上市', TPEx: '上櫃' }, mks = ['TWSE', 'TPEx'].filter(m => M.f[m]);
+  const row = ([c, mk, t, s, nm0]) => {
+    const inner = `<div class="al-l"><b>${esc(L.stocks[c]?.n || nm0 || c)}</b><span class="muted small">${esc(c)}・${mk === 'TWSE' ? '上市' : '上櫃'}</span><span class="sp"></span><span class="small num">${t}</span></div><div class="muted small al-why mn-s" title="${esc(s)}">${esc(s)}</div>`;
+    return L.stocks[c] ? `<a class="al-row mn-r" href="#/stock/${esc(c)}" data-c="${esc(c)}">${inner}</a>` : `<div class="al-row mn-r" data-c="${esc(c)}">${inner}</div>`;
+  };
+  const from = new Set(mks.map(m => M.f[m])).size > 1 ? mks.map(m => `${lb[m]} ${M.f[m].replace(/-/g, '/')}`).join('、') : M.f[mks[0]].replace(/-/g, '/');
+  const gaps = mks.map(m => [m, mnGap(M.x[m])]).filter(x => x[1]).map(([m, g]) => `；${lb[m]} ${g}`).join('');
+  return `<section class="sec card"><details class="al-box mn-box"${App.mnOpen ? ' open' : ''}>
+  <summary class="sec-h"><h2>重大訊息</h2><span class="muted small">發言日 ${md(M.d)}　上市 ${cnt('TWSE')}　上櫃 ${cnt('TPEx')}</span><span class="sp"></span><i></i></summary>
+  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px">${App.watch.size ? segHTML('mnSeg', [['all', '全部'], ['w', '只看自選']], App.mnW ? 'w' : 'all') : ''}<input id="mnQ" class="sel" type="search" placeholder="篩選代號、名稱或主旨" aria-label="篩選重大訊息" value="${esc(App.mnQ || '')}"></div>
+  ${M.r.map(row).join('')}
+  <div class="muted small" id="mnNone" style="display:none"></div>
+  <div class="muted small" style="margin-top:6px">本站自 ${from} 起收錄${gaps}。官方每次只提供一天的資料，沒收到的日子本站目前無法補</div>
+  <div class="muted small">依公開資訊觀測站每日重大訊息，只列主旨；內容以原文為準。點股票看近 30 天。原文請到<a href="https://mops.twse.com.tw/" target="_blank" rel="noopener noreferrer">公開資訊觀測站</a>以代號與發言日 ${md(M.d)} 查詢</div>
+</details></section>`;
+}
+// x = 漏收的交易日（舊到新）；個股卡、今日卡共用
+function mnGap(x) {
+  if (!x || !x.length) return '';
+  return x.length <= 5 ? `${x.map(md).join('、')} 沒有收到` : `近 30 天有 ${x.length} 個交易日沒有收到，最近一次 ${md(x[x.length - 1])}`;
+}
+function mnApply() {
+  const box = $('#view details.mn-box');
+  if (!box) return;
+  const q = (App.mnQ || '').trim().toUpperCase(), w = App.mnW && App.watch.size;
+  let n = 0;
+  box.querySelectorAll('.mn-r').forEach(r => {
+    const on = (!w || App.watch.has(r.dataset.c)) && (!q || r.textContent.toUpperCase().includes(q));
+    r.style.display = on ? '' : 'none';
+    n += on ? 1 : 0;
+  });
+  const none = $('#mnNone');
+  none.textContent = w && ![...box.querySelectorAll('.mn-r')].some(r => App.watch.has(r.dataset.c)) ? `自選股在 ${md(App.latest.mn.d)} 沒有重大訊息` : '沒有符合的重大訊息';
+  none.style.display = n ? 'none' : '';
+}
+function mnWire() {
+  const inp = $('#mnQ');
+  if (!inp) return;
+  inp.addEventListener('input', () => { App.mnQ = inp.value; mnApply(); });
+  if ($('#mnSeg')) onSeg('mnSeg', v => { App.mnW = v === 'w'; document.querySelectorAll('#mnSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); mnApply(); });
+  $('#view details.mn-box').addEventListener('toggle', e => { App.mnOpen = e.target.open; });
+  mnApply();
+}
+
 function breadthCard(L) {
   const B = L.breadth;
   if (!B) return '';

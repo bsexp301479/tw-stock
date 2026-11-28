@@ -2,7 +2,7 @@
 
 - 資料庫：`TwStock`（Docker 容器 `MySqlServer`，Azure SQL Edge）
 - 依據：實際資料庫的 `sys.tables`／`sys.columns`／`sys.indexes`／`sys.foreign_keys`（唯讀查詢），欄位說明取自 `twstock/db.py` 的 DDL 註解
-- 產生日期：2026-11-21（第 40 輪之後）；筆數是當天的概數，只供參考。第 43 輪的 `share_distribution` 依 DDL 補寫
+- 產生日期：2026-11-21（第 40 輪之後）；筆數是當天的概數，只供參考。第 43 輪的 `share_distribution` 依 DDL 補寫；第 51～53 輪的 `twse_index`、`quarterly_balance`、`material_news` 於 2026-11-28 依 DDL 與 `sys.indexes` 補寫，筆數是當天的數字
 - 建表／遷移：`python3 -u -m twstock setup-db`（可重複執行）
 
 ## 共通慣例
@@ -26,6 +26,7 @@
 | 行情 | [`market_index`](#market_index) | 大盤指數 | 第 4 輪前 | 532 |
 | 行情 | [`market_breadth`](#market_breadth) | 漲跌家數 | 5 | 28 |
 | 行情 | [`futures_daily_prices`](#futures_daily_prices) | 期貨每日行情 | 第 4 輪前 | 19,981 |
+| 行情 | [`twse_index`](#twse_index) | 證交所價格指數與報酬指數（含類股指數） | 51 | 26,986 |
 | 籌碼 | [`institutional_trades`](#institutional_trades) | 三大法人買賣超（股票，股） | 第 4 輪前 | 473,409 |
 | 籌碼 | [`insti_amount`](#insti_amount) | 三大法人買賣金額（市場合計，元） | 第 4 輪前（第 9 輪加 market） | 912 |
 | 籌碼 | [`futures_institutional`](#futures_institutional) | 期貨三大法人交易與未平倉 | 第 4 輪前 | 6,135 |
@@ -39,10 +40,12 @@
 | 基本面 | [`monthly_revenue`](#monthly_revenue) | 月營收 | 第 4 輪前 | 89,641 |
 | 基本面 | [`stock_fundamentals`](#stock_fundamentals) | 本益比、淨值比、殖利率（每日） | 第 4 輪前 | 502,097 |
 | 基本面 | [`quarterly_financials`](#quarterly_financials) | 季報（年初至今累計） | 10 | 21,498 |
+| 基本面 | [`quarterly_balance`](#quarterly_balance) | 資產負債表（季底時點） | 52 | 21,509 |
 | 除權息與公司事件 | [`price_events`](#price_events) | 股票價格調整事件（除權息、減資、面額變更） | 第 4 輪前 | 1,707 |
 | 除權息與公司事件 | [`etf_events`](#etf_events) | ETF 除權息事件 | 24 | 1,224 |
 | 除權息與公司事件 | [`dividend_notices`](#dividend_notices) | 除權除息預告表快照 | 40 | 0 |
 | 除權息與公司事件 | [`stock_alerts`](#stock_alerts) | 處置／注意股 | 第 4 輪前 | 876 |
+| 除權息與公司事件 | [`material_news`](#material_news) | 重大訊息（上市、上櫃每日） | 53 | 154 |
 | ETF 持股 | [`etf_holdings`](#etf_holdings) | 主動型 ETF 持股明細 | 5 | 65,534 |
 | ETF 持股 | [`etf_holding_summary`](#etf_holding_summary) | 主動型 ETF 持股彙總 | 5 | 1,334 |
 | ETF 持股 | [`etf_holding_gaps`](#etf_holding_gaps) | ETF 確定沒有持股明細的日期 | 6 | 8 |
@@ -59,6 +62,7 @@ stocks.stock_id
   └─ margin_trades
   └─ monthly_revenue
   └─ price_events
+  └─ quarterly_balance
   └─ quarterly_financials
   └─ sbl_trades
   └─ stock_alerts
@@ -73,7 +77,7 @@ etfs.etf_id
   └─ etf_sbl
 ```
 
-沒有外鍵、以代號字串關聯的表：`industry_chains.stock_code`（含興櫃）、`dividend_notices.code`、`share_distribution.code`（股票與 ETF 同表，寫入時只收 `stocks`／`etfs` 已有代號）。
+沒有外鍵、以代號字串關聯的表：`industry_chains.stock_code`（含興櫃）、`dividend_notices.code`、`share_distribution.code`（股票與 ETF 同表，寫入時只收 `stocks`／`etfs` 已有代號）、`material_news.code`（官方代號原樣，可能不在 `stocks`）。`twse_index` 以官方指數名稱為鍵，不關聯其他表。
 
 ## 一、基本資料
 
@@ -274,6 +278,28 @@ ETF 日成交。約 86,623 筆。
 
 - PK `PK__futures___3213E83F7DAF531A`：(id)
 - UNIQUE `UQ_futures_daily`：(commodity_id,contract_month,session,trade_date)
+
+### twse_index
+
+證交所 MI_INDEX 的「價格指數(臺灣證券交易所)」與「報酬指數(臺灣證券交易所)」兩張表的全部列（第 51 輪；含類股指數）。官方回應沒有指數代碼，以官方名稱為鍵。約 26,986 筆（P、R 各 262 個交易日，2025-10-30～2026-11-27）。
+
+| # | 欄位 | 型別 | NULL | 預設 | 說明 |
+|---:|---|---|:---:|---|---|
+| 1 | `id` | INT |  |  | 自動編號主鍵 |
+| 2 | `trade_date` | DATE |  |  | 交易日 |
+| 3 | `kind` | CHAR(1) |  |  | P = 價格指數、R = 報酬指數 |
+| 4 | `seq` | SMALLINT |  |  | 官方表的列順序（0 起；匯出依這欄排，不依 id） |
+| 5 | `index_name` | NVARCHAR(40) |  |  | 官方名稱原樣（例：半導體類指數、發行量加權股價報酬指數） |
+| 6 | `close_price` | DECIMAL(12,2) |  |  | 收盤指數 |
+| 7 | `change` | DECIMAL(12,2) | Y |  | 漲跌點數（帶正負號）；漲跌百分比、特殊處理註記不存 |
+| 8 | `created_at` | DATETIME |  | GETDATE() | 建立時間（容器 GETDATE()，UTC） |
+
+- 跟著大盤（TAIEX）收集一起抓，不另發請求。
+
+**索引／條件約束**
+
+- PK `PK__twse_ind__3213E83F808FED42`：(id)
+- UNIQUE `UQ_twse_index`：(trade_date,kind,index_name)
 
 ## 三、籌碼
 
@@ -616,6 +642,33 @@ ETF 日成交。約 86,623 筆。
 - PK `PK__quarterl__3213E83F21749F43`：(id)
 - UNIQUE `UQ_quarterly_financials`：(stock_id,fin_year,fin_quarter)
 
+### quarterly_balance
+
+資產負債表彙總的季底時點數字（第 52 輪；mopsov `ajax_t163sb05`）。跟著季報收集一起抓。約 21,509 筆（2024 Q1～2026 Q3）。
+
+| # | 欄位 | 型別 | NULL | 預設 | 說明 |
+|---:|---|---|:---:|---|---|
+| 1 | `id` | INT |  |  | 自動編號主鍵 |
+| 2 | `stock_id` | INT |  |  | 股票 ID（→ stocks.stock_id） |
+| 3 | `fin_year` | INT |  |  | 財報年度（西元） |
+| 4 | `fin_quarter` | TINYINT |  |  | 季別 1～4（CHECK） |
+| 5 | `total_assets` | BIGINT | Y |  | 資產總計（季底，千元） |
+| 6 | `total_liab` | BIGINT | Y |  | 負債總計（季底，千元） |
+| 7 | `parent_equity` | BIGINT | Y |  | 歸屬於母公司業主之權益（千元）；官方「--」（個體報表公司）存 NULL，匯出時改用權益總計 |
+| 8 | `total_equity` | BIGINT | Y |  | 權益總計（千元） |
+| 9 | `bvps` | DECIMAL(10,2) | Y |  | 每股參考淨值（元） |
+| 10 | `first_seen` | DATE | Y |  | 日常收集第一次收到的日期（補抓為 NULL，更新時不動） |
+| 11 | `created_at` | DATETIME |  | GETDATE() | 建立時間（容器 GETDATE()，UTC） |
+| 12 | `updated_at` | DATETIME |  | GETDATE() | 更新時間（容器 GETDATE()，UTC） |
+
+- 不存業別，業別看同一季的 `quarterly_financials.industry_tbl`。
+- 匯出的 ROE、負債比由這張表與 `quarterly_financials` 計算，不存表。
+
+**索引／條件約束**
+
+- PK `PK__quarterl__3213E83FAE8CE53F`：(id)
+- UNIQUE `UQ_quarterly_balance`：(stock_id,fin_year,fin_quarter)
+
 ## 五、除權息與公司事件
 
 ### price_events
@@ -708,6 +761,33 @@ ETF 除權息事件。約 1,224 筆。
 
 - PK `PK__stock_al__3213E83FD88B0BB2`：(id)
 - UNIQUE `UQ_stock_alerts`：(stock_id,alert_type,announce_date)
+
+### material_news
+
+重大訊息（第 53 輪；上市 OpenAPI `t187ap04_L`、上櫃 `mopsfin_t187ap04_O`）。只存主旨等短欄位，不存「說明」；全部保留不刪。約 154 筆（2026-11-28 第一次收集，發言日 2026-11-27）。
+
+| # | 欄位 | 型別 | NULL | 預設 | 說明 |
+|---:|---|---|:---:|---|---|
+| 1 | `id` | INT |  |  | 自動編號主鍵 |
+| 2 | `market` | NVARCHAR(4) |  |  | TWSE 上市、TPEx 上櫃（CHECK） |
+| 3 | `code` | NVARCHAR(10) |  |  | 公司代號（官方原樣，不關聯 stocks） |
+| 4 | `name` | NVARCHAR(40) | Y |  | 公司名稱（官方原樣） |
+| 5 | `speak_date` | DATE |  |  | 發言日期 |
+| 6 | `speak_time` | TIME(0) |  |  | 發言時間 |
+| 7 | `subject` | NVARCHAR(400) |  |  | 主旨（官方原文，含排版換行；匯出時才去掉換行） |
+| 8 | `clause` | NVARCHAR(40) | Y |  | 符合條款 |
+| 9 | `fact_date` | DATE | Y |  | 事實發生日 |
+| 10 | `out_date` | DATE |  |  | 最近一次看到這則時的出表日期 |
+| 11 | `first_seen` | DATE |  |  | 第一次收到的日期（只在新增時寫） |
+| 12 | `created_at` | DATETIME |  | GETDATE() | 建立時間（容器 GETDATE()，UTC） |
+
+- 官方每次只提供一天的資料，無法回補歷史。
+- 唯一鍵含主旨，因為同一秒可能有多則。
+
+**索引／條件約束**
+
+- PK `PK__material__3213E83F5D622A2D`：(id)
+- UNIQUE `UQ_material_news`：(market,code,speak_date,speak_time,subject)
 
 ## 六、ETF 持股
 

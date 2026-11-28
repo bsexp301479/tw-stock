@@ -399,6 +399,7 @@ window.renderStock = async function (code, sub) {
   if (tab === 'chip' && $('#chipInv')) onSeg('chipInv', v => { chipI = v; document.querySelectorAll('#chipInv button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); buildChip(data, E); });
   if (tab === 'chip') buildChip(data, E);
   if (tab !== 'k') return;
+  if (!E && data.mn) { $('#view').insertAdjacentHTML('beforeend', mnCard(data.mn, code)); $('#mnMore')?.addEventListener('click', mnShowAll); }   // 第 53 輪 F53-5：走勢分頁最下方
   // 第 25 輪 D25-05：關鍵數字列在寬螢幕併進頁首卡、手機放到 K 線卡下方，主圖進第一屏
   if (matchMedia('(min-width:721px)').matches) $('#view .s-head').after($('#view .metrics.kv')); else $('#vC').after($('#view .metrics.kv'));   // 第 27 輪 D27-06：手機放在主圖下方；第 28 輪 D28-05：改到成交量之後，K 線和成交量相鄰、十字線不斷開
   if (!E) $('#adjSeg').title = '還原：依除權息、減資、面額變更調整歷史價格（現金增資除權也依官方參考價調整），最新收盤不變。均線訊號與 52 週高低一律以還原價格計算';
@@ -863,6 +864,23 @@ const SIG_MIN = 3, MACD_MIN = 35;   // 有效訊號至少 3 項才下結論；MA
 // 第 22 輪 F22-10：MACD 柱依昨（a）、今（b）的正負寫看到的變化；多空照舊只看柱值升降（b > a 偏多，持平偏空）
 const macdBar = (a, b) => b === a ? 'MACD 柱持平' : b > a ? (a < 0 && b > 0 ? 'MACD 柱由負翻正' : b > 0 ? 'MACD 正柱加長' : 'MACD 負柱縮短')
   : a > 0 && b < 0 ? 'MACD 柱由正翻負' : b < 0 ? 'MACD 負柱加長' : 'MACD 正柱縮短';
+
+// 第 53 輪 F53-5：走勢分頁最下方的重大訊息卡（主旨照官方原文，只跳脫；超過 10 則先藏起來，按「顯示全部」再顯示）
+function mnCard(M, code) {
+  const late = M.f > M.w, F = M.f.replace(/-/g, '/'), g = mnGap(M.x), sub = late ? md(M.f) + ' 起' : '近 30 天';
+  const short = '只列官方主旨，不含說明全文；內容以原文為準', full = '重大訊息是上市櫃公司依規定在公開資訊觀測站發布的公告。本站只列發言日、時間與主旨，不含說明全文，也不分類、不加註解；同一件事的更正或補充，官方會另發一則，兩則都會列出。資料來自證交所、櫃買中心的開放資料，官方每次只提供一天的公告，本站沒收到的日子目前無法補；「沒有收到」是指那個交易日本站一則都沒有收到。時間是公司的發言時間。';
+  const rows = M.r.map((r, i) => `<div class="al-row mn-row"${i >= 10 ? ' style="display:none"' : ''}><span class="small muted num">${md(r[0])} ${r[1]}</span>　<span class="mn-s">${esc(r[2])}</span></div>`).join('');
+  return `<section class="sec card mn"><div class="sec-h"><h2>重大訊息</h2><span class="muted small">${sub}，公開資訊觀測站</span></div>
+${rows || `<div class="muted small">${sub}沒有重大訊息</div>`}
+${M.r.length > 10 ? `<button class="chip" id="mnMore" style="margin-top:8px">顯示全部 ${M.r.length} 則</button>` : ''}
+<div class="muted small" style="margin-top:6px">本站自 ${F} 起收錄${g ? '；' + g : ''}。官方每次只提供一天的資料，沒收到的日子本站目前無法補</div>
+<div class="muted small">原文請到<a href="https://mops.twse.com.tw/" target="_blank" rel="noopener noreferrer">公開資訊觀測站</a>以代號 ${code} 與發言日查詢</div>
+<div class="muted small" style="margin-top:6px">${noteHTML(short, full)}</div></section>`;
+}
+function mnShowAll() {
+  document.querySelectorAll('#view .mn-row').forEach(e => { e.style.display = ''; });
+  $('#mnMore')?.remove();
+}
 
 function renderSignals(rows, mode) {
   const period = { '日': '日線', '週': '週線', '月': '月線' }[mode];

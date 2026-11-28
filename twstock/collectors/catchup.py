@@ -25,6 +25,7 @@ from .events import LOOKBACK_DAYS, collect_events
 from .financials import collect_financials
 from .futures import collect_futures, collect_futures_institutional
 from .industry import update_industry
+from .news import collect_news
 from .notices import collect_notices
 from .revenue import collect_monthly_revenue, revenue_month_for
 from .tdcc import collect_tdcc
@@ -38,7 +39,7 @@ def month_key(d: date) -> tuple:
     return d.year, d.month
 
 
-def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, revenue_counts=None, fin_counts=None, *, share=None) -> dict:
+def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, revenue_counts=None, fin_counts=None, *, share=None, news=None) -> dict:
     """
     純函式：輸入現在時間、資料現況、執行紀錄、日曆；輸出待抓清單（不連網、不連資料庫）。
     days：評估範圍；by_date：[(日期, 鍵)]；tpex_months；futures、futures_oi：(起, 迄)；alerts：bool；
@@ -46,12 +47,14 @@ def make_plan(now: datetime, n: int, snap: dict, state: dict, closed: set, reven
     notices：bool（第 40 輪 F40-1：除權除息預告表，和 events 同一個條件，每個新交易日一次；collect --date 不抓）。
     tdcc：{"latest": 表中最新資料日} 或 None（第 43 輪 F43-1：集保股權分散。share = share_state 的結果，None 或表不存在不排；
     表中最新一週早於 last_full_week、今天還沒抓過才排；比週不比日期，休市日也排）。
+    news：待抓重大訊息的市場清單（第 53 輪 F53-3：news = 表是否存在；該市場沒有紀錄或最近一次成功的出表日期早於今天才排，休市日也排）。
     """
     days = due_days(now, n, closed)
     plan = {"days": days, "by_date": [], "tpex_months": [], "futures": None, "futures_oi": None,
             "alerts": False, "events": None, "revenue": [], "financials": None, "notices": False}
     due = share and share[0] and (share[1] is None or week_of(share[1]) < last_full_week(now.date(), closed)) and state.get("tdcc_on") != now.date()
     plan["tdcc"] = {"latest": share[1]} if due else None
+    plan["news"] = [mk for mk in ("TWSE", "TPEx") if news and (mk not in (state.get("news") or {}) or state["news"][mk][1] < now.date())]   # 第 53 輪：放在 if not days 之前
     if not days:
         return plan
     med = medians(snap)
@@ -105,7 +108,7 @@ def plan_for_date(d: date, now: datetime, closed_by_calendar: bool, fin_counts=N
 
 def plan_is_empty(plan: dict) -> bool:
     return not (plan["by_date"] or plan["tpex_months"] or plan["futures"] or plan["futures_oi"]
-                or plan["alerts"] or plan["events"] or plan["revenue"] or plan.get("financials") or plan.get("tdcc"))
+                or plan["alerts"] or plan["events"] or plan["revenue"] or plan.get("financials") or plan.get("tdcc") or plan.get("news"))
 
 
 def _guard(key, errors, fn, *args):
@@ -150,6 +153,11 @@ def execute_plan(plan: dict, now: datetime, no_revenue=False) -> tuple:
     sd = []
     if plan.get("tdcc") and _guard("tdcc", errors, lambda: sd.append(collect_tdcc(plan["tdcc"]["latest"], now.date()))):
         undated["tdcc"] = sd[0]
+    # 第 53 輪 F53-3：重大訊息兩個市場各抓各的（isolated，不重試）；失敗只印 ⚠️，不列入 undated_errors；官方沒有資料（None）不記錄，下次執行再抓
+    for mk in plan.get("news") or ():
+        mn = []
+        if _guard(f"news.{mk}", errors, lambda: mn.append(collect_news(mk, now.date()))) and mn[0] is not None:
+            undated.setdefault("news", {})[mk] = mn[0]
     if plan["revenue"] and not no_revenue:
         if all([_guard("revenue", errors, collect_monthly_revenue, y, m) for y, m in plan["revenue"]]):
             undated["revenue"] = str(now.date())
@@ -249,6 +257,7 @@ def _run_locked(days, date_, no_revenue, no_export, notify, now, export_all) -> 
         warn_uncovered(closed, now)
         state = load_state(cur)
         share = share_state(cur)            # 第 43 輪 F43-1：表不存在時不排集保股權分散（setup-db 之前收集照常）
+        news = health.news_exists(cur)            # 第 53 輪 F53-3：表不存在時不排重大訊息
         # 中位數需要 20 個交易日
         base = due_days(now, max(days, health.MEDIAN_DAYS), closed)[0]
         end = date_ or now.date()
@@ -266,7 +275,7 @@ def _run_locked(days, date_, no_revenue, no_export, notify, now, export_all) -> 
                 print(f"ℹ️  {date_} 休市，不發行情請求")
             plan = plan_for_date(date_, now, is_closed, financial_counts(cur), closed)
         else:
-            plan = make_plan(now, days, before, state, closed, _revenue_counts(cur), financial_counts(cur), share=share)
+            plan = make_plan(now, days, before, state, closed, _revenue_counts(cur), financial_counts(cur), share=share, news=news)
     finally:
         conn.close()
 
@@ -303,6 +312,7 @@ def _run_locked(days, date_, no_revenue, no_export, notify, now, export_all) -> 
         closed = load_closed(cur)       # 含剛才登記或移除的臨時休市
         changed = any(before[k] != after[k] for k in before) or _undated_counts(cur) != undated_before
         changed = changed or any((undated.get("tdcc") or {}).get(k) for k in ("s", "e"))    # 第 43 輪 D115 = A：寫入新的一週算有新資料
+        changed = changed or any(v.get("new") for v in (undated.get("news") or {}).values())    # 第 53 輪：有新增的重大訊息才算有新資料
         items = evaluate(day_list, after, now, errors)
         result = health.outcome(items)
         undated_errors = [k for k in errors if k in ("alerts", "events", "revenue", "financials", "industry", "chains")]

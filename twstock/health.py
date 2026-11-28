@@ -234,9 +234,11 @@ def load_state(cur) -> dict:
     warnings（最後一次收集的警告）、export_failed（最近一筆「有新資料或有匯出」的紀錄是 abnormal 且沒有匯出耗時 = 匯出失敗）。
     第 40 輪：notices = {市場: (最近一次成功的抓取日, 筆數)}，兩個市場各自取最新一筆；從沒成功的市場沒有鍵。
     第 43 輪：tdcc_on = 最近一次抓到集保股權分散的抓取日（不論官方有沒有更新），同一天不再抓。
+    第 53 輪：news = {市場: (抓取日, 出表日期, 最新發言日, 筆數)}，兩個市場各自取最新一筆；從沒成功的市場沒有鍵。
     """
     state = {"alerts_at": None, "events_to": None, "revenue_on": None, "financials_on": None, "collected_at": None, "last_run": None,
              "events_at": None, "events_n": None, "warnings": [], "export_failed": None, "notices": {}, "tdcc_on": None}
+    state["news"] = {}                                              # 第 53 輪 F53-3
     for finished, new_data, detail, *extra in cur.execute(
             "SELECT TOP 200 finished_at, new_data, detail, command, outcome, export_seconds FROM collect_runs ORDER BY run_id DESC").fetchall():
         d = json.loads(detail)
@@ -261,6 +263,8 @@ def load_state(cur) -> dict:
             state["notices"].setdefault(mk, (date.fromisoformat(v["on"]), v["n"]))
         if und.get("tdcc") and state["tdcc_on"] is None:
             state["tdcc_on"] = date.fromisoformat(und["tdcc"]["on"])
+        for mk, v in (und.get("news") or {}).items():               # 第 53 輪：新到舊，先看到的就是最新一筆
+            state["news"].setdefault(mk, (*(date.fromisoformat(v[k]) for k in ("on", "t", "d")), v["n"]))
     return state
 
 
@@ -425,7 +429,7 @@ def financials_status(today: date, counts: dict, fin_on, closed) -> tuple:
     return ABNORMAL, f"{head}，最後一次收集季報 {fin_on or '尚無紀錄'}"
 
 
-def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None, financials=None, *, share=None) -> tuple:
+def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenue=None, financials=None, *, share=None, news=None) -> tuple:
     """回傳 (輸出文字, 回傳碼)。純函式：不連資料庫、不發請求；schedule 由呼叫端傳入（schedule_status()）；revenue = 各月營收家數（None 不印營收一行）；
     financials = 各季季報家數 {(年, 季): (總家數, 金融業家數)}（None 不印季報一行）；share = share_state 的結果（None 不印集保股權分散一行）。"""
     items, med = evaluate(days, snap, now), medians(snap)
@@ -466,6 +470,8 @@ def check_report(days, snap, now, state, closed, adhoc=(), schedule=None, revenu
     out.append(notices_line(state.get("notices"), days[-1], closed))         # 第 40 輪 F40-1：放在警告之後，事件與警告兩行相鄰不變
     if share is not None:
         out.append(share_line(share, now.date(), closed))                      # 第 43 輪 F43-1：只顯示，不算異常
+    if news is not None:
+        out.append(news_line(news, state.get("news"), now.date(), closed))     # 第 53 輪 F53-3：只顯示，不算異常
     rev = revenue_status(now.date(), revenue, state.get("revenue_on"), closed) if revenue is not None else None
     if rev:
         out.append(rev[1] if rev[0] != ABNORMAL else f"{rev[1]}，❌ 異常")
@@ -528,6 +534,56 @@ def share_state(cur) -> tuple:
     return True, latest, n.get(False, 0), n.get(True, 0)
 
 
+def news_exists(cur) -> bool:
+    """第 53 輪：material_news 是否已建立（setup-db 之前收集、匯出、check 都不查這張表）。"""
+    row = cur.execute("SELECT OBJECT_ID('material_news')").fetchone()
+    return bool(row and row[0] is not None)
+
+
+def news_state(cur, since) -> tuple:
+    """第 53 輪：(表是否存在, {市場: (第一個發言日, 最新發言日, {發言日: 筆數}, 全部筆數)})；每日筆數只算 since 之後。check 與匯出共用。"""
+    if not news_exists(cur):
+        return False, {}
+    out = {mk: (f, l, {}, n) for mk, f, l, n in cur.execute(
+        "SELECT market, MIN(speak_date), MAX(speak_date), COUNT(*) FROM material_news GROUP BY market").fetchall()}
+    for mk, d, n in cur.execute("SELECT market, speak_date, COUNT(*) FROM material_news WHERE speak_date >= ? GROUP BY market, speak_date",
+                                since).fetchall():
+        out[mk][2][d] = n
+    return True, out
+
+
+def news_gaps(counts: dict, f, l, start, closed) -> list:
+    """第 53 輪：max(f, start) ～ l 之間一則都沒有的交易日（舊到新）；休市日（含臨時休市）不算。"""
+    if f is None or l is None:
+        return []
+    return [d for d in trading_days(max(f, start), l, closed) if not counts.get(d)]
+
+
+def news_line(news, records, today: date, closed) -> str:
+    """第 53 輪 F53-3：check 的重大訊息一行（只顯示，不算異常）。records = load_state 的 news。"""
+    ok, mks = news
+    if not ok:
+        return "重大訊息：尚未建立資料表，請執行一次 python -m twstock setup-db"
+    if not records:
+        return "重大訊息最後成功：尚無執行紀錄"
+    label = {"TWSE": "上市", "TPEx": "上櫃"}
+    def one(mk):
+        if mk not in records:
+            return f"{label[mk]} 尚無紀錄"
+        on, t, d, n = records[mk]
+        return f"{label[mk]} {on}（出表 {t:%m/%d}，發言日 {d:%m/%d}，{n:,} 筆）"
+    line = f"重大訊息最後成功：{one('TWSE')}、{one('TPEx')}"
+    gaps = [(mk, news_gaps(c, f, l, today - timedelta(days=29), closed)) for mk, (f, l, c, _) in sorted(mks.items(), key=lambda x: x[0] != "TWSE")]
+    if any(x for _, x in gaps):
+        line += "；⚠️ 近 30 天漏收：" + "，".join(f"{label[mk]} " + "、".join(f"{d:%m/%d}" for d in x) for mk, x in gaps if x) + "，漏收的日子無法回補"
+    prev = trading_days(today - timedelta(days=45), today - timedelta(days=1), closed)
+    for mk, (f, l, c, _) in sorted(mks.items(), key=lambda x: x[0] != "TWSE"):
+        lag = len(trading_days(l + timedelta(days=1), prev[-1], closed)) if prev else 0
+        if lag >= 2:
+            line += f"；⚠️ {label[mk]}已 {lag} 個交易日沒有收到新的發言日"
+    return line
+
+
 def revenue_counts(cur) -> dict:
     """{(年, 月): 家數}；SQL 與 collectors.catchup._revenue_counts 相同。"""
     return {(y, m): n for y, m, n in cur.execute(
@@ -554,11 +610,12 @@ def run_check(n: int, now: datetime) -> int:
         revenue = revenue_counts(cur)
         financials = financial_counts(cur)
         share = share_state(cur)                                    # 第 43 輪 F43-1
+        news = news_state(cur, now.date() - timedelta(days=45))     # 第 53 輪 F53-3
         adhoc = [r[0] for r in cur.execute("SELECT holiday_date FROM market_holidays WHERE source = 'adhoc' AND holiday_date BETWEEN ? AND ? "
                                            "ORDER BY holiday_date", start, days[-1]).fetchall()]
     finally:
         conn.close()
-    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue, financials, share=share)
+    text, rc = check_report(days, snap, now, state, closed, adhoc, schedule_status(), revenue, financials, share=share, news=news)
     print(text)
     return rc
 
